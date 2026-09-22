@@ -155,7 +155,13 @@ class CameraSource(
         val evIndex = controls.exposureCompensationIndex
         if (evIndex != null) {
             val range = cam.cameraInfo.exposureState.exposureCompensationRange
-            cam.cameraControl.setExposureCompensation(evIndex.coerceIn(range.lower, range.upper))
+            // CameraX CameraControl has no EV API; runtime EV goes through the
+            // Camera2 interop control (stabilized in camera-camera2 1.3).
+            androidx.camera.camera2.interop.Camera2CameraControl.from(cam.cameraControl)
+                .setCaptureRequestOption(
+                    CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION,
+                    evIndex.coerceIn(range.lower, range.upper),
+                )
         }
     }
 
