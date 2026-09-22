@@ -21,11 +21,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -35,7 +32,6 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -46,17 +42,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.vcamstudio.app.ui.theme.StudioAccent
 import com.vcamstudio.app.ui.theme.StudioBg
 import com.vcamstudio.app.ui.theme.StudioBorder
 import com.vcamstudio.app.ui.theme.StudioSurface
-import com.vcamstudio.app.ui.theme.healthColor
+import com.vcamstudio.engine.render.model.LensFacing
 import com.vcamstudio.engine.render.model.LayerDefinition
 import com.vcamstudio.engine.render.model.SceneDefinition
 import com.vcamstudio.engine.render.model.TransitionType
@@ -70,7 +66,7 @@ import com.vcamstudio.engine.render.model.TransitionType
 @Composable
 fun StudioScreen(
     lifecycleOwner: LifecycleOwner,
-    vm: StudioViewModel = androidx.hilt.navigation.compose.hiltViewModel(),
+    vm: StudioViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(lifecycleOwner) { vm.attachLifecycleOwner(lifecycleOwner) }
     val state by vm.uiState.collectAsStateWithLifecycle()
@@ -104,15 +100,12 @@ fun StudioScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text("VCam Studio", style = MaterialTheme.typography.titleMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        StatusChip(
-                            text = "%.0f fps".format(state.diagnostics.fps),
-                            color = StudioAccent,
-                        )
-                        StatusChip(
-                            text = state.health.name,
-                            color = healthColor(state.health),
-                        )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        StatusChip("%.0f fps".format(state.diagnostics.fps), StudioAccent)
+                        StatusChip(state.health.name, healthColor(state.health))
                         Text(
                             "⚙",
                             style = MaterialTheme.typography.titleMedium,
@@ -147,15 +140,15 @@ fun StudioScreen(
                 onMove = vm::moveLayer,
             )
             DockBar(
-                onCamera = { vm.addCameraLayer(com.vcamstudio.engine.render.model.LensFacing.FRONT) },
-                onCameraBack = { vm.addCameraLayer(com.vcamstudio.engine.render.model.LensFacing.BACK) },
+                onCameraFront = { vm.addCameraLayer(LensFacing.FRONT) },
+                onCameraBack = { vm.addCameraLayer(LensFacing.BACK) },
                 onImage = {
                     imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                 },
                 onVideo = {
                     videoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly))
                 },
-                onText = { vm.setSheet(StudioViewModel.Sheet.NONE); textDialogVisible = true },
+                onText = { textDialogVisible = true },
                 onColor = { colorDialogVisible = true },
                 onMic = vm::toggleMic,
                 onDiag = { vm.setSheet(StudioViewModel.Sheet.DIAGNOSTICS) },
@@ -163,7 +156,6 @@ fun StudioScreen(
         }
     }
 
-    // ---- sheets
     when (state.sheet) {
         StudioViewModel.Sheet.INSPECTOR -> InspectorSheet(
             layer = state.selectedLayer,
@@ -172,7 +164,7 @@ fun StudioScreen(
             onDismiss = { vm.setSheet(StudioViewModel.Sheet.NONE) },
             onUpdateLayer = vm::updateLayer,
             onUpdateText = vm::updateText,
-            onUpdateCameraControls = { id, mutate -> vm.updateCameraControls(id, mutate) },
+            onUpdateCameraControls = vm::updateCameraControls,
             onRemove = vm::removeLayer,
             onMoveUp = { vm.moveLayer(it, true) },
             onMoveDown = { vm.moveLayer(it, false) },
@@ -191,9 +183,6 @@ fun StudioScreen(
         StudioViewModel.Sheet.NONE -> Unit
     }
 
-    // ---- dialogs (local UI state)
-    var textDialogVisible by remember { mutableStateOf(false) }
-    var colorDialogVisible by remember { mutableStateOf(false) }
     if (textDialogVisible) {
         TextInputDialog(
             title = "Add text layer",
@@ -209,8 +198,6 @@ fun StudioScreen(
     }
 }
 
-// ------------------------------------------------------------------- stage
-
 @Composable
 private fun StageArea(state: StudioViewModel.UiState, vm: StudioViewModel, modifier: Modifier = Modifier) {
     val scene = state.activeScene
@@ -223,36 +210,36 @@ private fun StageArea(state: StudioViewModel.UiState, vm: StudioViewModel, modif
         Surface(
             color = Color.Black,
             shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, StudioBorder),
             modifier = Modifier
                 .aspectRatio(
                     scene?.let { it.width.toFloat() / it.height.toFloat() } ?: 9f / 16f,
                 )
-                .fillMaxSize()
-                .clip(RoundedCornerShape(12.dp))
-                .border(BorderStroke(1.dp, StudioBorder), RoundedCornerShape(12.dp)),
+                .fillMaxSize(),
         ) {
-            AndroidView(
-                factory = { ctx ->
-                    StageView(ctx).apply {
-                        onSurfaceReady = { surface, w, h -> vm.attachStage(surface, w, h) }
-                        onSurfaceGone = { vm.detachStage() }
-                        onTap = { x, y, vw, vh -> vm.tapToFocus(x, y, vw, vh) }
+            Box(Modifier.fillMaxSize()) {
+                AndroidView(
+                    factory = { ctx ->
+                        StageView(ctx).apply {
+                            onSurfaceReady = { surface, w, h -> vm.attachStage(surface, w, h) }
+                            onSurfaceGone = { vm.detachStage() }
+                            onTap = { x, y, vw, vh -> vm.tapToFocus(x, y, vw, vh) }
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+                val hasCamera = scene?.layers?.any { it is LayerDefinition.Camera } == true
+                if (!hasCamera) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            "Tap 📷 in the dock to add a camera layer",
+                            color = Color(0xFF8B949E),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
                     }
-                },
-                modifier = Modifier.fillMaxSize(),
-            )
-            val hasCamera = scene?.layers?.any { it is LayerDefinition.Camera } == true
-            if (!hasCamera) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        "Tap 📷 in the dock to add a camera layer",
-                        color = Color(0xFF8B949E),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
                 }
             }
         }
-        // Resolution chip overlay
         StatusChip(
             text = scene?.let { "${it.width}×${it.height}" } ?: "—",
             color = StudioAccent,
@@ -291,8 +278,6 @@ private fun TransitionRow(
         }
     }
 }
-
-// ------------------------------------------------------------------ scenes
 
 @Composable
 private fun ScenesStrip(
@@ -345,8 +330,6 @@ private fun ScenesStrip(
     }
 }
 
-// ------------------------------------------------------------------ layers
-
 @Composable
 private fun LayersRail(
     scene: SceneDefinition?,
@@ -396,12 +379,20 @@ private fun LayersRail(
                 )
                 if (selected) {
                     Row {
-                        Text("▲", modifier = Modifier
-                            .clickable { onMove(layer.id, true) }
-                            .padding(4.dp), style = MaterialTheme.typography.labelSmall)
-                        Text("▼", modifier = Modifier
-                            .clickable { onMove(layer.id, false) }
-                            .padding(4.dp), style = MaterialTheme.typography.labelSmall)
+                        Text(
+                            "▲",
+                            modifier = Modifier
+                                .clickable { onMove(layer.id, true) }
+                                .padding(4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                        Text(
+                            "▼",
+                            modifier = Modifier
+                                .clickable { onMove(layer.id, false) }
+                                .padding(4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
                     }
                 }
             }
@@ -424,11 +415,9 @@ private fun layerName(layer: LayerDefinition): String = when (layer) {
     is LayerDefinition.Color -> layer.name
 }
 
-// -------------------------------------------------------------------- dock
-
 @Composable
 private fun DockBar(
-    onCamera: () -> Unit,
+    onCameraFront: () -> Unit,
     onCameraBack: () -> Unit,
     onImage: () -> Unit,
     onVideo: () -> Unit,
@@ -445,14 +434,14 @@ private fun DockBar(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            DockButton("📷", "Front") { onCamera() }
-            DockButton("🎥", "Back") { onCameraBack() }
-            DockButton("🖼", "Image") { onImage() }
-            DockButton("🎬", "Video") { onVideo() }
-            DockButton("🅣", "Text") { onText() }
-            DockButton("🎨", "Color") { onColor() }
-            DockButton("🎙", "Mic") { onMic() }
-            DockButton("📊", "Diag") { onDiag() }
+            DockButton("📷", "Front", onCameraFront)
+            DockButton("🎥", "Back", onCameraBack)
+            DockButton("🖼", "Image", onImage)
+            DockButton("🎬", "Video", onVideo)
+            DockButton("🅣", "Text", onText)
+            DockButton("🎨", "Color", onColor)
+            DockButton("🎙", "Mic", onMic)
+            DockButton("📊", "Diag", onDiag)
         }
     }
 }
@@ -471,8 +460,6 @@ private fun DockButton(icon: String, label: String, onClick: () -> Unit) {
     }
 }
 
-// ----------------------------------------------------------------- dialogs
-
 @Composable
 private fun TextInputDialog(title: String, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
     var text by remember { mutableStateOf("") }
@@ -480,7 +467,7 @@ private fun TextInputDialog(title: String, onConfirm: (String) -> Unit, onDismis
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            OutlinedTextField(value = text, onValueChange = { text = it }, singleLine = false)
+            OutlinedTextField(value = text, onValueChange = { text = it })
         },
         confirmButton = { TextButton(onClick = { onConfirm(text) }) { Text("Add") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },

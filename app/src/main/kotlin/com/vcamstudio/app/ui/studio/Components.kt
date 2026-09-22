@@ -40,9 +40,9 @@ fun LabeledSlider(
     label: String,
     value: Float,
     valueRange: ClosedFloatingPointRange<Float>,
-    onValueChange: (Float) -> Unit,
     steps: Int = 0,
     valueText: String = "%.2f".format(value),
+    onValueChange: (Float) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth()) {
         Row(

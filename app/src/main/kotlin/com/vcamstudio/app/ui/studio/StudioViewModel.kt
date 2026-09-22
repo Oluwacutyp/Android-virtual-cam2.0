@@ -98,6 +98,8 @@ class StudioViewModel @Inject constructor(
     private val videoControllers = LinkedHashMap<String, VideoLayerController>()
     private val videoParams = LinkedHashMap<String, VideoParams>()
     private val imageCache = LinkedHashMap<String, android.graphics.Bitmap>()
+    /** Engine-owned surfaces per camera layer id, kept for fast rebinds. */
+    private val cameraSurfaces = LinkedHashMap<String, android.view.Surface>()
 
     private var lifecycleOwner: LifecycleOwner? = null
 
@@ -155,6 +157,14 @@ class StudioViewModel @Inject constructor(
 
     fun attachLifecycleOwner(owner: LifecycleOwner) {
         lifecycleOwner = owner
+    }
+
+    fun attachStage(surface: android.view.Surface, width: Int, height: Int) {
+        engine.attachPreview(surface, width, height)
+    }
+
+    fun detachStage() {
+        engine.detachPreview()
     }
 
     // ---------------------------------------------------------------- scenes
@@ -438,6 +448,7 @@ class StudioViewModel @Inject constructor(
         val owner = lifecycleOwner ?: return
         val cameraLayer = scene.layers.filterIsInstance<LayerDefinition.Camera>().firstOrNull { it.id == sourceId }
         if (cameraLayer != null) {
+            cameraSurfaces[sourceId] = surface
             val controls = cameraControls.value[sourceId] ?: ProControls()
             cameraSource.bind(surface, controls, owner)
             return
@@ -471,13 +482,8 @@ class StudioViewModel @Inject constructor(
 
     private fun rebindCamera(layerId: String, controls: ProControls) {
         val owner = lifecycleOwner ?: return
-        // Rebind with the existing engine surface: engine keeps it registered.
-        val scene = uiState.value.activeScene ?: return
-        val layer = scene.layers.filterIsInstance<LayerDefinition.Camera>().firstOrNull { it.id == layerId } ?: return
-        // The surface is engine-owned; request a fresh handle through engine by
-        // re-setting the scene would drop the source. Instead reuse CameraSource
-        // rebind with the surface it already has:
-        cameraSource.rebindWithCurrentSurface(controls, owner)
+        val surface = cameraSurfaces[layerId] ?: return
+        cameraSource.bind(surface, controls, owner)
     }
 
     private fun releaseVideoController(sourceId: String) {

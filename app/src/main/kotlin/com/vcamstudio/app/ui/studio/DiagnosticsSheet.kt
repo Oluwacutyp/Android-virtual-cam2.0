@@ -25,7 +25,6 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.vcamstudio.app.ui.theme.StudioAccent
-import com.vcamstudio.app.ui.theme.healthColor
 import com.vcamstudio.engine.render.render.DiagnosticsSnapshot
 
 /**
@@ -116,7 +115,8 @@ private fun Histogram(histogram: List<Int>) {
                     Modifier
                         .weight(1f)
                         .height(64.dp)
-                        .background(MaterialTheme.colorScheme.surfaceVariant, clip = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)),
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
                 ) {
                     val frac = count.toFloat() / max
                     Box(

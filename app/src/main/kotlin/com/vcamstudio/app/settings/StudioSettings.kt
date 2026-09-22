@@ -35,7 +35,7 @@ class StudioSettings @Inject constructor(
     private val resolutionKey = stringPreferencesKey("scene_resolution_width")
 
     val sceneResolution: Flow<SceneResolution> = context.dataStore.data.map { prefs ->
-        SceneResolution.fromWidth(prefs[resolutionKey] ?: SceneResolution.P_720.width)
+        SceneResolution.fromWidth(prefs[resolutionKey]?.toIntOrNull() ?: SceneResolution.P_720.width)
     }
 
     suspend fun setSceneResolution(resolution: SceneResolution) {

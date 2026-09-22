@@ -39,6 +39,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {
@@ -68,6 +69,7 @@ dependencies {
     debugImplementation(libs.compose.ui.tooling)
 
     implementation(libs.datastore.preferences)
+    implementation(libs.timber)
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
