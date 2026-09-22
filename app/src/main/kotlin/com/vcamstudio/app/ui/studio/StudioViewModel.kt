@@ -506,10 +506,3 @@ private fun LayerDefinition.duplicateWithNewId(): LayerDefinition = when (this) 
     is LayerDefinition.Text -> this
     is LayerDefinition.Color -> copy(id = id + "-copy")
 }
-is) {
-    is LayerDefinition.Camera -> copy(id = id + "-copy")
-    is LayerDefinition.Image -> this // sourceId shared is fine (bitmap already registered)
-    is LayerDefinition.Video -> this
-    is LayerDefinition.Text -> this
-    is LayerDefinition.Color -> copy(id = id + "-copy")
-}
