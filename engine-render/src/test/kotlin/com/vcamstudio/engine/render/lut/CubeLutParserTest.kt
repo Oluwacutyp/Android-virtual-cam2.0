@@ -39,7 +39,7 @@ class CubeLutParserTest {
     }
 
     @Test
-    fun `domain remap normalizes to 0..1`() {
+    fun `domain remap normalizes to full range`() {
         val cube = """
             LUT_3D_SIZE 2
             DOMAIN_MIN 0.25 0.0 0.0
