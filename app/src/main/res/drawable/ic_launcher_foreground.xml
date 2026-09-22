@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- VCam Studio mark: a cyan play-triangle nested in a V — "broadcast studio". -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- V frame -->
+    <path
+        android:fillColor="#22D3EE"
+        android:pathData="M30,34 L39,34 L54,68 L69,34 L78,34 L58,78 L50,78 Z" />
+    <!-- play head -->
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M50,44 L64,53 L50,62 Z" />
+</vector>

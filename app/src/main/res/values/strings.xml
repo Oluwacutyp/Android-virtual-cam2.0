@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VCam Studio</string>
+    <string name="permission_title">Studio permissions</string>
+    <string name="permission_camera">Camera — feeds the live compositor stage.</string>
+    <string name="permission_mic">Microphone — audio meters and (later) voice tools.</string>
+    <string name="permission_body">VCam Studio processes everything on your device. Nothing is uploaded. Grant the permissions to open the studio.</string>
+    <string name="permission_action">Open studio</string>
+    <string name="permission_denied">Permissions denied. The studio needs camera access to work; you can grant them in system settings.</string>
+</resources>

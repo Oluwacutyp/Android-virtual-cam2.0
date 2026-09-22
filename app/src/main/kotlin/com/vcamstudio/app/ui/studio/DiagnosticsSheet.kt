@@ -1,0 +1,143 @@
+package com.vcamstudio.app.ui.studio
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.dp
+import com.vcamstudio.app.ui.theme.StudioAccent
+import com.vcamstudio.app.ui.theme.healthColor
+import com.vcamstudio.engine.render.render.DiagnosticsSnapshot
+
+/**
+ * Live engine vitals: FPS, frame-time histogram, drop counters, recovery log.
+ * This screen is the proof behind the "never black" guarantee.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DiagnosticsSheet(
+    diagnostics: DiagnosticsSnapshot,
+    dumpProvider: () -> String,
+    onForceRecovery: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        LazyColumn(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatusChip(diagnostics.health.name, healthColor(diagnostics.health))
+                    StatusChip("%.0f fps".format(diagnostics.fps), StudioAccent)
+                    StatusChip("presented ${diagnostics.presentedFrames}", MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            item { SectionTitle("Frame times") }
+            item {
+                Text(
+                    "p50 %.1f ms · p95 %.1f ms · max %.1f ms".format(
+                        diagnostics.p50Ms, diagnostics.p95Ms, diagnostics.maxMs,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            item { Histogram(diagnostics.histogram) }
+            item { SectionTitle("Pipeline") }
+            item {
+                Text(
+                    buildString {
+                        appendLine("dropped frames: ${diagnostics.droppedFrames}")
+                        appendLine("last present: ${diagnostics.lastPresentAgeMs} ms ago")
+                        appendLine("scene: ${diagnostics.sceneSize?.width}×${diagnostics.sceneSize?.height}")
+                        appendLine("preview: ${diagnostics.previewSize?.width}×${diagnostics.previewSize?.height}")
+                        appendLine("external sources: ${diagnostics.externalSourceCount}")
+                        appendLine("GPU: ${diagnostics.glRenderer}")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            item { SectionTitle("Recovery log (${diagnostics.recoveries.size})") }
+            items(diagnostics.recoveries.asReversed().take(8)) { event ->
+                Text(
+                    "@${event.atMs} — ${event.reason}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onForceRecovery) { Text("Force recovery test") }
+                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(dumpProvider())) }) {
+                        Text("Copy dump")
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(24.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun Histogram(histogram: List<Int>) {
+    val max = (histogram.maxOrNull() ?: 0).coerceAtLeast(1)
+    val labels = listOf("8", "17", "25", "33", "50", "67", "100", "100+")
+    Column {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(64.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            histogram.forEach { count ->
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(64.dp)
+                        .background(MaterialTheme.colorScheme.surfaceVariant, clip = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)),
+                ) {
+                    val frac = count.toFloat() / max
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height((frac * 64).dp)
+                            .background(StudioAccent, androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+                            .align(androidx.compose.ui.Alignment.BottomCenter),
+                    )
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            labels.forEach {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
