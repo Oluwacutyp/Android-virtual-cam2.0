@@ -108,20 +108,3 @@ private fun BusRow(mixer: AudioMixer, id: AudioBusId, label: String) {
         ) { mixer.setBusGain(id, it) }
     }
 }
-
-@Composable
-private fun LevelBar(level: Float, modifier: Modifier = Modifier) {
-    Box(
-        modifier
-            .height(8.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        Box(
-            Modifier
-                .fillMaxHeight()
-                .fillMaxWidth(level.coerceIn(0.005f, 1f))
-                .background(MaterialTheme.colorScheme.primary),
-        )
-    }
-}
