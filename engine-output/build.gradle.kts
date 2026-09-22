@@ -26,5 +26,6 @@ android {
 }
 
 dependencies {
+    implementation(project(":core-common")) // coroutines flows via core-common api
     testImplementation(libs.junit)
 }
