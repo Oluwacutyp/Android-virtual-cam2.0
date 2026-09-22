@@ -56,15 +56,13 @@ class ExternalTextureSource(
     }
 
     /** True once at least one frame has been consumed (layers draw nothing before this). */
-    fun hasContent(): Boolean = hasFrame
-
-    fun bindTexture() = GLES30.glBindTexture(target, textureId)
+    override fun hasContent(): Boolean = hasFrame
 
     override fun release() {
         surface.release()
         surfaceTexture.setOnFrameAvailableListener(null)
         surfaceTexture.release()
-        GLES30.glDeleteTextures(1, intArrayOf(textureId), 0)
+        GLES30.glDeleteTextures(1, intArrayOf(glTextureId), 0)
     }
 
     private fun glGenOesTexture(): Int {

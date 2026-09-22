@@ -1,7 +1,7 @@
 package com.vcamstudio.engine.render.render
 
 import android.opengl.GLES30
-import android.os.Choreographer
+import android.view.Choreographer
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
@@ -98,6 +98,7 @@ internal class RenderThread(
     private var transitionSpec: TransitionSpec = TransitionSpec.CUT
     private var transitionStartMs = -1L
     private var pendingTransitionCapture = false
+    private var sceneNeedsRender = false
 
     private var sceneFboA: Framebuffer? = null
     private var sceneFboB: Framebuffer? = null
@@ -446,6 +447,9 @@ internal class RenderThread(
         }
     }
 
+    private fun transitionActive(): Boolean =
+        transitionStartMs >= 0 && transitionSpec.type == TransitionType.FADE
+
     private fun transitionFraction(nowMs: Long): Float? {
         if (transitionStartMs < 0 || transitionSpec.type == TransitionType.CUT) return null
         val elapsed = nowMs - transitionStartMs
@@ -461,7 +465,7 @@ internal class RenderThread(
 
     private fun postMain(block: () -> Unit) = mainHandler.post(block)
 
-    fun watchdogStatus(): WatchdogStatus = WatchdogStatus(expectsFrames, lastPresentMonotonicMs)
+    fun watchdogStatus(): Watchdog.WatchdogStatus = Watchdog.WatchdogStatus(expectsFrames, lastPresentMonotonicMs)
 
     companion object {
         private const val TAG = "vcam-render"

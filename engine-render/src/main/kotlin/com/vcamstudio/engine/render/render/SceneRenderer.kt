@@ -1,5 +1,6 @@
 package com.vcamstudio.engine.render.render
 
+import android.opengl.GLES11Ext
 import android.opengl.GLES30
 import android.opengl.Matrix
 import com.vcamstudio.engine.render.geometry.LayerGeometry
@@ -213,7 +214,7 @@ internal class SceneRenderer(private val programs: Shaders.Programs) {
     // -------------------------------------------------------------- helpers
 
     private fun programFor(source: TextureSource): GlProgram =
-        if (source.target == GLES30.GL_TEXTURE_EXTERNAL_OES) programs.texOes else programs.tex2d
+        if (source.target == GLES11Ext.GL_TEXTURE_EXTERNAL_OES) programs.texOes else programs.tex2d
 
     private fun bindSource(program: GlProgram, source: TextureSource) {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
@@ -299,16 +300,17 @@ internal class SceneRenderer(private val programs: Shaders.Programs) {
 
     // ---------------------------------------------------------- quad upload
 
-    private fun uploadQuad(quad: LayerGeometry.Quad, sceneW: Float, sceneH: Float) {
+    private fun uploadQuad(quad: LayerGeometry.Quad, sceneW: Float, sceneH: Float, uvFlipY: Boolean = false) {
         val local = LOCAL_CORNERS
         var s = 0
         for (i in 0 until 4) {
             val cx = quad.cornersPx[s]
             val cy = quad.cornersPx[s + 1]
+            val v = if (uvFlipY) 1f - quad.uvs[s + 1] else quad.uvs[s + 1]
             staging[s] = cx / sceneW * 2f - 1f
             staging[s + 1] = 1f - cy / sceneH * 2f
             staging[s + 2] = quad.uvs[s]
-            staging[s + 3] = quad.uvs[s + 1]
+            staging[s + 3] = v
             staging[s + 4] = local[i][0]
             staging[s + 5] = local[i][1]
             s += STRIDE_FLOATS

@@ -146,11 +146,16 @@ class CameraSource(
     /** Applies runtime-tunable controls (zoom, EV, torch). */
     fun applyRuntime(controls: ProControls) {
         val cam = camera ?: return
-        controls.zoomRatio.takeIf { it != 1f }?.let { cam.cameraControl.setZoomRatio(it) }
-        controls.torch.takeIf { cam.cameraInfo.hasFlashUnit() }?.let { cam.cameraControl.enableTorch(it) }
-        controls.exposureCompensationIndex?.let { idx ->
+        if (controls.zoomRatio != 1f) {
+            cam.cameraControl.setZoomRatio(controls.zoomRatio)
+        }
+        if (controls.torch && cam.cameraInfo.hasFlashUnit()) {
+            cam.cameraControl.enableTorch(true)
+        }
+        val evIndex = controls.exposureCompensationIndex
+        if (evIndex != null) {
             val range = cam.cameraInfo.exposureState.exposureCompensationRange
-            cam.cameraControl.setExposureCompensation(idx.coerceIn(range.lower, range.upper))
+            cam.cameraControl.setExposureCompensation(evIndex.coerceIn(range.lower, range.upper))
         }
     }
 

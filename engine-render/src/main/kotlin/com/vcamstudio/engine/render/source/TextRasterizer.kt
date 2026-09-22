@@ -63,7 +63,7 @@ object TextRasterizer {
         }
         var baseline = padY + sizePx * 0.85f
         for (line in lines) {
-            drawFitted(line, anchorX, baseline, maxWidth, paint)
+            canvas.drawFitted(line, anchorX, baseline, maxWidth, paint)
             baseline += sizePx + lineSpacing
         }
         return bitmap

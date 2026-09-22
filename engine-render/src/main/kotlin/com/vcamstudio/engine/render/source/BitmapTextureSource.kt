@@ -19,7 +19,7 @@ class BitmapTextureSource(
 
     override val target: Int = GLES30.GL_TEXTURE_2D
 
-    private val textureId: Int = glGenTexture()
+    override val glTextureId: Int = glGenTexture()
     @Volatile
     private var pending: Bitmap? = null
     private var hasContent = false
