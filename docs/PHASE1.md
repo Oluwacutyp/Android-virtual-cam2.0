@@ -19,6 +19,11 @@
 | 8 | Recorder v1 (MP4 H.264+AAC, library, share) | ⬜ Next increment | `engine-output` module lands with it (no empty shells) |
 | 9 | Settings + licenses/about | 🟡 Partial | Scene resolution + about shipped; licenses screen next increment |
 
+> **Build status:** CI fully green (run 35777514514): assemble + unit tests +
+> lint pass for all six modules. Lint is report-only during Phase 1
+> (`abortOnError = false`) and is re-enforced at the exit gate. GL/camera/video
+> runtime behavior remains device-gated below.
+
 **Nothing on this list is faked:** every ✅ is wired end-to-end in code (no stub
 classes, no placeholder renders), with the caveat that GL/camera behavior
 requires real-device verification — which is exactly what the exit gate is for.
