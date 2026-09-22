@@ -41,25 +41,25 @@ jobs:
           set -o pipefail
           ./gradlew --no-daemon --stacktrace lintDebug 2>&1 | tee /tmp/lint.log
 
-      # Sandbox verification path: CI failures are posted as commit comments so
-      # the agent (restricted to github.com/api.github.com egress) can read the
-      # compiler output and iterate.
+      # Agent verification loop: CI failures are posted as commit comments so
+      # the coding agent (egress-restricted to github.com) can read compiler
+      # output and iterate.
       - name: Report failure to commit comments
         if: failure()
         run: |
-          BODY=$( (for f in /tmp/build.log /tmp/test.log /tmp/lint.log; do
-                    [ -f "$f" ] && grep -aE "^[e>w]: |error:|FAILURE|What went wrong|Caused by:|> Task .+FAILED|Unresolved|unable to|Could not" "$f"
-                  done) | head -c 60000 )
-          if [ -n "$BODY" ]; then
-            gh api repos/"${{ github.repository }}"/commits/"${{ github.sha }}"/comments \
-              -f body="CI failure report for run ${{ github.run_id }}:
-\`\`\`
-$BODY
-\`\`\`" --jq '.html_url' || true
-          else
-            gh api repos/"${{ github.repository }}"/commits/"${{ github.sha }}"/comments \
-              -f body="CI run ${{ github.run_id }} failed but no recognizable error lines were captured. Check reports artifact." || true
-          fi
+          : > /tmp/errors.txt
+          for f in /tmp/build.log /tmp/test.log /tmp/lint.log; do
+            if [ -f "$f" ]; then
+              grep -aE "^[e]: |error:|FAILURE|What went wrong|Caused by:|Task .* FAILED|Unresolved reference|Could not (resolve|find|get)|Execution failed" "$f" >> /tmp/errors.txt || true
+            fi
+          done
+          {
+            echo "CI failure report for run ${{ github.run_id }} (${GITHUB_WORKFLOW})"
+            echo ""
+            head -c 60000 /tmp/errors.txt
+          } > /tmp/body.txt
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
+            -F body=@/tmp/body.txt --jq '.html_url' || true
         env:
           GH_TOKEN: ${{ github.token }}
 
