@@ -64,7 +64,8 @@ class AudioMixerTest {
         val out = ShortArray(frames * 2)
         mixer.read(out)
         val peak = out.maxOf { kotlin.math.abs(it.toInt()) } / 32767f
-        assertTrue("peak=$peak", peak in 0.17f..0.34f)
+        // 0.5 amplitude × 0.25 master = 0.125 expected peak.
+        assertTrue("peak=$peak", peak in 0.10f..0.15f)
     }
 
     @Test

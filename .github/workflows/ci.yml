@@ -50,7 +50,7 @@ jobs:
           : > /tmp/errors.txt
           for f in /tmp/build.log /tmp/test.log /tmp/lint.log; do
             if [ -f "$f" ]; then
-              grep -aE "^[e]: |error:|Error:|FAILURE|What went wrong|Caused by:|Task .* FAILED|Unresolved reference|Could not (resolve|find|get)|Execution failed|Lint found" "$f" >> /tmp/errors.txt || true
+              grep -aE "^[e]: |error:|Error:|FAILURE|What went wrong|Caused by:|Task .* FAILED|Unresolved reference|Could not (resolve|find|get)|Execution failed|Lint found|> .* FAILED" "$f" >> /tmp/errors.txt || true
             fi
           done
           {
