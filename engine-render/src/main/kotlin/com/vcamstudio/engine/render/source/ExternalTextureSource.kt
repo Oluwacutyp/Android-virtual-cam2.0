@@ -49,8 +49,8 @@ class ExternalTextureSource(
         if (!framePending.compareAndSet(true, false)) return false
         surfaceTexture.updateTexImage()
         surfaceTexture.getTransformMatrix(transformMatrix)
-        width = surfaceTexture.width
-        height = surfaceTexture.height
+        // Note: SurfaceTexture has no public size getters; dimensions stay at
+        // the requested buffer size (the producer honors setDefaultBufferSize).
         hasFrame = true
         return true
     }

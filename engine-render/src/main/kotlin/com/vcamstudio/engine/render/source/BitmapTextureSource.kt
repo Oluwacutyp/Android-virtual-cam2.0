@@ -22,7 +22,7 @@ class BitmapTextureSource(
     override val glTextureId: Int = glGenTexture()
     @Volatile
     private var pending: Bitmap? = null
-    private var hasContent = false
+    private var hasContentFlag = false
 
     /** Thread-safe: stages a bitmap for upload on the next render tick. */
     fun setBitmap(bitmap: Bitmap) {
