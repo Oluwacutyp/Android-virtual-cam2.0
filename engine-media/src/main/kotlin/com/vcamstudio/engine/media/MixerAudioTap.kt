@@ -1,7 +1,7 @@
 package com.vcamstudio.engine.media
 
 import android.util.Log
-import androidx.media3.common.audio.TeeAudioProcessor
+import androidx.media3.exoplayer.audio.TeeAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import java.nio.ByteBuffer
 import java.nio.ByteOrder

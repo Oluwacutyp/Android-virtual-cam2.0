@@ -5,10 +5,11 @@ import android.net.Uri
 import android.util.Log
 import android.view.Surface
 import androidx.media3.common.C
-import androidx.media3.common.audio.TeeAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.TeeAudioProcessor
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaItem.ClippingConfiguration
 import androidx.media3.common.PlaybackException
