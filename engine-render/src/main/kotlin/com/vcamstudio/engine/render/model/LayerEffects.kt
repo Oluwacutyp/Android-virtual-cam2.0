@@ -45,7 +45,10 @@ data class LayerEffects(
     val blur: BlurFx = BlurFx(),
     val sharpen: SharpenFx = SharpenFx(),
     val vignette: VignetteFx = VignetteFx(),
+    /** Named 3D LUT (see RenderEngine.registerLut); null = no LUT. */
+    val lutId: String? = null,
 ) {
     val isNeutral: Boolean
-        get() = colorGrade.isNeutral && !blur.isEnabled && !sharpen.isEnabled && !vignette.isEnabled
+        get() = colorGrade.isNeutral && !blur.isEnabled && !sharpen.isEnabled &&
+            !vignette.isEnabled && lutId == null
 }

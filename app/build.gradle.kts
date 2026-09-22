@@ -60,6 +60,7 @@ dependencies {
     implementation(project(":engine-capture"))
     implementation(project(":engine-media"))
     implementation(project(":engine-audio"))
+    implementation(project(":engine-output"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

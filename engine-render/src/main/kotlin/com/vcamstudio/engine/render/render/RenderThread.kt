@@ -184,6 +184,14 @@ internal class RenderThread(
         }
     }
 
+    fun registerLut(name: String, lut: com.vcamstudio.engine.render.lut.Lut3D) {
+        renderer?.lutCache?.put(name, lut.size, lut.data)
+    }
+
+    fun removeLut(name: String) {
+        renderer?.lutCache?.remove(name)
+    }
+
     fun requestOutputRecovery(reason: String) {
         collector.addRecovery(RecoveryEvent(clock.nowMs(), reason))
         Log.w(TAG, "output recovery requested: $reason")
@@ -470,6 +478,7 @@ internal class RenderThread(
     companion object {
         private const val TAG = "vcam-render"
         const val PREVIEW_OUTPUT_ID = "preview"
+        const val RECORDING_OUTPUT_ID = "recording"
         const val DEFAULT_SOURCE_W = 1280
         const val DEFAULT_SOURCE_H = 720
     }

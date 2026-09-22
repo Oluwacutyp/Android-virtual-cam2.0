@@ -5,6 +5,10 @@ import android.net.Uri
 import android.util.Log
 import android.view.Surface
 import androidx.media3.common.C
+import androidx.media3.common.audio.TeeAudioProcessor
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaItem.ClippingConfiguration
 import androidx.media3.common.PlaybackException
@@ -23,6 +27,7 @@ import androidx.media3.exoplayer.ExoPlayer
 class VideoLayerController(
     context: Context,
     val sourceId: String,
+    audioTap: MixerAudioTap? = null,
 ) {
 
     /** Effective display size (pixel-width-ratio applied), reported to the UI. */
@@ -32,7 +37,24 @@ class VideoLayerController(
     var onVideoSizeChanged: ((width: Int, height: Int) -> Unit)? = null
     var onError: ((message: String) -> Unit)? = null
 
-    private val player: ExoPlayer = ExoPlayer.Builder(context).build().apply {
+    private val player: ExoPlayer = run {
+        val renderersFactory = if (audioTap != null) {
+            object : DefaultRenderersFactory(context) {
+                @OptIn(UnstableApi::class)
+                override fun buildAudioSink(
+                    context: Context,
+                    enableFloatOutput: Boolean,
+                    enableAudioTrackPlaybackParams: Boolean,
+                ): AudioSink = DefaultAudioSink.Builder(context)
+                    .setEnableFloatOutput(enableFloatOutput)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .setAudioProcessors(arrayOf(TeeAudioProcessor(audioTap)))
+                    .build()
+            }
+        } else {
+            DefaultRenderersFactory(context)
+        }
+        ExoPlayer.Builder(context, renderersFactory).build().apply {
         addListener(object : Player.Listener {
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 val w = (videoSize.width * videoSize.pixelWidthHeightRatio).toInt().coerceAtLeast(1)
@@ -46,6 +68,7 @@ class VideoLayerController(
                 onError?.invoke(error.message ?: "playback error")
             }
         })
+        }
     }
 
     val durationMs: Long

@@ -14,10 +14,10 @@
 | 3 | Camera source (front/back, mirror, pro panel v1) | ✅ Done (needs device validation) | CameraX + Camera2Interop (WB/AF/FPS bind-time; zoom/torch/EV runtime); ISO lands with pro-camera increment |
 | 4 | Image / video / color / text layers | ✅ Done (needs device validation) | Video: loop/mute/volume/speed via Media3; text via Canvas bridge |
 | 5 | Scene system (multi-scene, layers, reorder, blend modes, cut/fade) | ✅ Done (needs device validation) | 13 blend modes; FADE with duration; scene dup/delete; reorder |
-| 6 | Effects v1 (grade, sharpen, vignette, blur, LUTs) | 🟡 Partial | Grade/sharpen/vignette/blur shipped; **LUT import + `.cube` parsing = next increment** |
-| 7 | Audio v1 (mic capture + meter, video audio mixing, limiter) | 🟡 Partial | Mic level meter shipped (real AudioRecord RMS); **mixer/monitor/limiter + video-audio muxing = next increment** |
-| 8 | Recorder v1 (MP4 H.264+AAC, library, share) | ⬜ Next increment | `engine-output` module lands with it (no empty shells) |
-| 9 | Settings + licenses/about | 🟡 Partial | Scene resolution + about shipped; licenses screen next increment |
+| 6 | Effects v1 (grade, sharpen, vignette, blur, LUTs) | ✅ Done (needs device validation) | `.cube` import + GL_TEXTURE_3D LUT pass per layer; golden-frame harness still lands with `:tools-dev` at the exit gate |
+| 7 | Audio v1 (mic capture + meter, video audio mixing, limiter) | ✅ Done (needs device validation) | 4-bus mixer (48 kHz stereo) + peak limiter; mic + video-layer PCM taps feed the recorder; MUSIC/TTS faders wired, sources land in Phase 3 |
+| 8 | Recorder v1 (MP4 H.264+AAC, library, share) | ✅ Done (needs device validation) | `:engine-output`: H.264 surface-input encoder fed by the render engine + AAC from the mixer; share via FileProvider |
+| 9 | Settings + licenses/about | ✅ Done | Scene resolution, about, licenses/attribution screen |
 
 > **Build status:** CI fully green (run 35777514514): assemble + unit tests +
 > lint pass for all six modules. Lint is report-only during Phase 1

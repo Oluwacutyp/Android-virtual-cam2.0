@@ -5,8 +5,10 @@ import com.vcamstudio.core.clock.Clock
 import com.vcamstudio.core.clock.SystemClockImpl
 import com.vcamstudio.core.dispatch.DefaultDispatcherProvider
 import com.vcamstudio.core.dispatch.DispatcherProvider
+import com.vcamstudio.engine.audio.AudioMixer
 import com.vcamstudio.engine.audio.MicLevelMonitor
 import com.vcamstudio.engine.capture.CameraSource
+import com.vcamstudio.engine.output.RecordingController
 import com.vcamstudio.engine.render.render.RenderEngine
 import dagger.Module
 import dagger.Provides
@@ -48,4 +50,12 @@ object AppModule {
     @Provides
     @Singleton
     fun micLevelMonitor(scope: CoroutineScope): MicLevelMonitor = MicLevelMonitor(scope)
+
+    @Provides
+    @Singleton
+    fun audioMixer(): AudioMixer = AudioMixer()
+
+    @Provides
+    @Singleton
+    fun recordingController(): RecordingController = RecordingController()
 }

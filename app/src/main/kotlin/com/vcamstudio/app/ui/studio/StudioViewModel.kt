@@ -1,5 +1,6 @@
 package com.vcamstudio.app.ui.studio
 
+import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModel
@@ -7,12 +8,17 @@ import androidx.lifecycle.viewModelScope
 import com.vcamstudio.app.settings.SceneResolution
 import com.vcamstudio.app.settings.StudioSettings
 import com.vcamstudio.core.dispatch.DispatcherProvider
+import com.vcamstudio.engine.audio.AudioBusId
+import com.vcamstudio.engine.audio.AudioMixer
 import com.vcamstudio.engine.audio.MicLevelMonitor
 import com.vcamstudio.engine.capture.CameraSource
 import com.vcamstudio.engine.capture.LensFacing
 import com.vcamstudio.engine.capture.ProControls
 import com.vcamstudio.engine.media.ImageLoader
+import com.vcamstudio.engine.media.MixerAudioTap
 import com.vcamstudio.engine.media.VideoLayerController
+import com.vcamstudio.engine.output.RecordingController
+import com.vcamstudio.engine.render.lut.CubeLutParser
 import com.vcamstudio.engine.render.model.BlendMode
 import com.vcamstudio.engine.render.model.ColorGrade
 import com.vcamstudio.engine.render.model.LayerDefinition
@@ -28,12 +34,14 @@ import com.vcamstudio.engine.render.model.TransitionSpec
 import com.vcamstudio.engine.render.model.TransitionType
 import com.vcamstudio.engine.render.source.TextRasterizer
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.util.UUID
@@ -50,9 +58,12 @@ class StudioViewModel @Inject constructor(
     private val mic: MicLevelMonitor,
     private val settings: StudioSettings,
     private val dispatchers: DispatcherProvider,
+    private val mixer: AudioMixer,
+    private val recorder: RecordingController,
+    @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
-    enum class Sheet { NONE, INSPECTOR, DIAGNOSTICS, SETTINGS }
+    enum class Sheet { NONE, INSPECTOR, DIAGNOSTICS, SETTINGS, MIXER }
 
     data class VideoParams(
         val uri: Uri,
@@ -77,6 +88,11 @@ class StudioViewModel @Inject constructor(
         val sheet: Sheet = Sheet.NONE,
         val sceneResolution: SceneResolution = SceneResolution.P_720,
         val toast: String? = null,
+        val recording: RecordingController.State = RecordingController.State.Idle,
+        val masterGain: Float = 1f,
+        val limiterEnabled: Boolean = true,
+        val lutNames: List<String> = emptyList(),
+        val lastRecordingPath: String? = null,
     ) {
         val activeScene: SceneDefinition?
             get() = scenes.firstOrNull { it.id == activeSceneId }
@@ -94,6 +110,9 @@ class StudioViewModel @Inject constructor(
     private val cameraControls = MutableStateFlow<Map<String, ProControls>>(emptyMap())
     private val toast = MutableStateFlow<String?>(null)
     private val sceneResolution = MutableStateFlow(SceneResolution.P_720)
+    private val lutNames = MutableStateFlow<List<String>>(emptyList())
+    private val lastRecordingPath = MutableStateFlow<String?>(null)
+    private var audioPumpJob: kotlinx.coroutines.Job? = null
 
     private val videoControllers = LinkedHashMap<String, VideoLayerController>()
     private val videoParams = LinkedHashMap<String, VideoParams>()
@@ -107,15 +126,22 @@ class StudioViewModel @Inject constructor(
         combine(scenes, activeSceneId, selectedLayerId, sheet) { s, a, sel, sh ->
             Quad(s, a, sel, sh)
         },
-        combine(cameraSource.state, cameraControls, transitionType, fadeDurationMs) { cs, cc, tt, fd ->
-            Quad(cs, cc, tt, fd)
+        combine(
+            cameraSource.state, cameraControls, transitionType, fadeDurationMs, toast,
+        ) { cs, cc, tt, fd, msg ->
+            Quint(cs, cc, tt, fd, msg)
         },
-        combine(engine.diagnostics, engine.health, mic.levelRms, mic.running) { d, h, lvl, run ->
-            Quad(d, h, lvl, run)
+        combine(
+            engine.diagnostics, engine.health, mic.levelRms, mic.running, recorder.state,
+        ) { d, h, lvl, run, rec ->
+            Quint(d, h, lvl, run, rec)
         },
-        sceneResolution,
-        toast,
-    ) { core, cameraStuff, diagStuff, resolution, msg ->
+        combine(
+            sceneResolution, lutNames, lastRecordingPath, mixer.masterGain, mixer.limiterEnabled,
+        ) { res, luts, lastRec, mg, lim ->
+            Quint(res, luts, lastRec, mg, lim)
+        },
+    ) { core, cameraStuff, diagStuff, extra ->
         UiState(
             scenes = core.a,
             activeSceneId = core.b,
@@ -125,16 +151,22 @@ class StudioViewModel @Inject constructor(
             cameraControls = cameraStuff.b,
             transitionType = cameraStuff.c,
             fadeDurationMs = cameraStuff.d,
+            toast = cameraStuff.e,
             diagnostics = diagStuff.a,
             health = diagStuff.b,
             micLevel = diagStuff.c,
             micRunning = diagStuff.d,
-            sceneResolution = resolution,
-            toast = msg,
+            recording = diagStuff.e,
+            sceneResolution = extra.a,
+            lutNames = extra.b,
+            lastRecordingPath = extra.c,
+            masterGain = extra.d,
+            limiterEnabled = extra.e,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, UiState())
 
     private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
+    private data class Quint<A, B, C, D, E>(val a: A, val b: B, val c: C, val d: D, val e: E)
 
     init {
         // Engine -> app: external surfaces for camera/video sources.
@@ -144,6 +176,9 @@ class StudioViewModel @Inject constructor(
         engine.onExternalSourceReleased = { sourceId ->
             onExternalSourceReleased(sourceId)
         }
+
+        // Mic PCM (48 kHz mono) feeds the mixer MIC bus for recording.
+        mic.pcmSink = { pcm, _ -> mixer.offerPcm(AudioBusId.MIC, pcm, 1) }
 
         viewModelScope.launch {
             settings.sceneResolution.collect { sceneResolution.value = it }
@@ -377,6 +412,109 @@ class StudioViewModel @Inject constructor(
         if (mic.running.value) mic.stop() else mic.start()
     }
 
+    // -------------------------------------------------------------- recording
+
+    fun toggleRecording() {
+        when (recorder.state.value) {
+            is RecordingController.State.Recording -> stopRecording()
+            is RecordingController.State.Idle -> startRecording()
+            else -> Unit // Starting/Stopping transitions are in flight
+        }
+    }
+
+    private fun startRecording() {
+        val scene = uiState.value.activeScene ?: return
+        val dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES) ?: context.filesDir
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
+            .format(java.util.Date())
+        val file = java.io.File(dir, "vcam_$stamp.mp4")
+        mixer.reset()
+        val started = recorder.start(
+            file, scene.width, scene.height,
+            onSurfaceReady = { surface ->
+                engine.attachRecordingOutput(surface, scene.width, scene.height)
+                startAudioPump()
+            },
+            onFailed = { msg -> toast.value = "Recorder: $msg" },
+        )
+        if (!started) toast.value = "Recorder busy"
+    }
+
+    private fun stopRecording() {
+        stopAudioPump()
+        recorder.stop { file ->
+            engine.detachRecordingOutput()
+            if (file != null && file.length() > 0) {
+                lastRecordingPath.value = file.absolutePath
+                toast.value = "Saved ${file.name}"
+            } else {
+                toast.value = "Recording failed — nothing written"
+            }
+        }
+    }
+
+    /** 20 ms pump: mixer -> recorder AAC feed (runs while recording). */
+    private fun startAudioPump() {
+        audioPumpJob = viewModelScope.launch(dispatchers.io) {
+            val out = ShortArray(AudioMixer.FRAME_FRAMES * 2)
+            while (isActive && recorder.state.value is RecordingController.State.Recording) {
+                mixer.read(out)
+                recorder.offerAudio(out.copyOf())
+            }
+        }
+    }
+
+    private fun stopAudioPump() {
+        audioPumpJob?.cancel()
+        audioPumpJob = null
+    }
+
+    // ------------------------------------------------------------------ mixer
+
+    fun setMasterGain(v: Float) = mixer.setMasterGain(v)
+    fun setLimiterEnabled(v: Boolean) = mixer.setLimiterEnabled(v)
+    fun setBusGain(id: AudioBusId, v: Float) = mixer.setBusGain(id, v)
+    fun setBusMute(id: AudioBusId, v: Boolean) = mixer.setBusMute(id, v)
+    val audioMixer: AudioMixer get() = mixer
+
+    // -------------------------------------------------------------------- LUT
+
+    fun onLutPicked(uri: Uri) {
+        viewModelScope.launch(dispatchers.io) {
+            try {
+                val text = context.contentResolver.openInputStream(uri)!!
+                    .bufferedReader().use { it.readText() }
+                val lut = CubeLutParser.parse(text)
+                val name = (uri.lastPathSegment ?: "lut")
+                    .substringAfterLast('/')
+                    .removeSuffix(".cube")
+                    .ifBlank { "lut" }
+                engine.registerLut(name, lut)
+                lutNames.value = (lutNames.value - name) + name
+                launch(dispatchers.main) { toast.value = "LUT \"$name\" imported (${lut.size}³)" }
+            } catch (t: Throwable) {
+                Timber.e(t, "LUT import failed")
+                launch(dispatchers.main) { toast.value = "LUT import failed: ${t.message}" }
+            }
+        }
+    }
+
+    fun setLayerLut(layerId: String, lutName: String?) {
+        updateLayer(layerId) { def ->
+            when (def) {
+                is LayerDefinition.Camera -> def.copy(effects = def.effects.copy(lutId = lutName))
+                is LayerDefinition.Image -> def.copy(effects = def.effects.copy(lutId = lutName))
+                is LayerDefinition.Video -> def.copy(effects = def.effects.copy(lutId = lutName))
+                is LayerDefinition.Text -> def.copy(effects = def.effects.copy(lutId = lutName))
+                is LayerDefinition.Color -> def.copy(effects = def.effects.copy(lutId = lutName))
+            }
+        }
+    }
+
+    fun clearLastRecording() {
+        lastRecordingPath.value = null
+    }
+
     // ---------------------------------------------------------------- sheets
 
     fun setSheet(value: Sheet) {
@@ -458,7 +596,10 @@ class StudioViewModel @Inject constructor(
         if (videoLayer != null && params != null) {
             releaseVideoController(sourceId)
             val context = appContext ?: return
-            val controller = VideoLayerController(context, sourceId)
+            val controller = VideoLayerController(
+                context, sourceId,
+                MixerAudioTap { pcm, ch, _ -> mixer.offerPcm(AudioBusId.MEDIA, pcm, ch) },
+            )
             controller.onError = { msg -> toast.value = "Video playback error: $msg" }
             videoControllers[sourceId] = controller
             controller.load(
@@ -498,6 +639,8 @@ class StudioViewModel @Inject constructor(
     override fun onCleared() {
         engine.onExternalSourceReady = null
         engine.onExternalSourceReleased = null
+        audioPumpJob?.cancel()
+        if (recorder.isBusy) recorder.stop()
         videoControllers.values.forEach { it.release() }
         videoControllers.clear()
         mic.stop()

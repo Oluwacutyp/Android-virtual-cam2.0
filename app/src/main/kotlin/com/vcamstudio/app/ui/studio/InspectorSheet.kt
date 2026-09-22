@@ -51,6 +51,8 @@ fun InspectorSheet(
     onRemove: (String) -> Unit,
     onMoveUp: (String) -> Unit,
     onMoveDown: (String) -> Unit,
+    lutNames: List<String> = emptyList(),
+    onSetLut: (String?) -> Unit = {},
 ) {
     if (layer == null) return
     Column(
@@ -77,6 +79,10 @@ fun InspectorSheet(
         TransformSection(layer, onUpdateLayer)
         CompositingSection(layer, onUpdateLayer)
         EffectsSection(layer, onUpdateLayer)
+
+        if (layer !is LayerDefinition.Color) {
+            LutSection(layer.effects.lutId, lutNames, onSetLut)
+        }
 
         when (layer) {
             is LayerDefinition.Camera -> if (cameraControls != null) {
@@ -363,4 +369,18 @@ private inline fun withEffects(def: LayerDefinition, mutate: (com.vcamstudio.eng
     is LayerDefinition.Video -> def.copy(effects = mutate(def.effects))
     is LayerDefinition.Text -> def.copy(effects = mutate(def.effects))
     is LayerDefinition.Color -> def.copy(effects = mutate(def.effects))
+}
+
+@Composable
+private fun LutSection(current: String?, names: List<String>, onSelect: (String?) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        SectionTitle("LUT")
+        Dropdown(
+            label = "Color LUT (.cube)",
+            options = listOf<String?>(null) + names,
+            selected = current,
+            display = { it ?: "None" },
+            onSelect = onSelect,
+        )
+    }
 }

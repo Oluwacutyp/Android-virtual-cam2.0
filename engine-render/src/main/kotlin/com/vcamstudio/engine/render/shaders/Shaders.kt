@@ -96,7 +96,7 @@ uniform float uCornerPx;
      * @param withSharpen 3x3 unsharp mask requires random-access sampling,
      *   which some drivers dislike on OES samplers — enabled for 2D only.
      */
-    fun textureFxFragment(samplerType: String, withSharpen: Boolean): String {
+    fun textureFxFragment(samplerType: String, withSharpen: Boolean, withLut: Boolean = false): String {
         val ext = if (samplerType == "samplerExternalOES") {
             "#extension GL_OES_EGL_image_external_essl3 : require\n"
         } else {
@@ -109,12 +109,14 @@ uniform float uCornerPx;
             append("precision highp float;\n")
             append("in vec2 vUV;\nin vec2 vLocal;\nout vec4 fragColor;\n")
             append(FX_UNIFORMS.replace("SAMPLER", samplerType))
+            if (withLut) append("uniform sampler3D uLut3d;\nuniform float uLutMix;\n")
             append(ROUNDED_ALPHA)
             append(APPLY_GRADE)
             append("void main() {\n")
             append("    vec3 c = texture(uTex, vUV).rgb;\n")
             append(sharpen)
             append("    c = applyGrade(c);\n")
+            if (withLut) append("    if (uLutMix > 0.001) c = mix(c, texture(uLut3d, c).rgb, uLutMix);\n")
             append(VIGNETTE)
             append("    float a = uOpacity * roundedAlpha(vLocal, uQuadSizePx, uCornerPx);\n")
             append("    fragColor = vec4(c * a, a);\n")
@@ -225,6 +227,8 @@ void main() {
     fun buildPrograms(): Programs = Programs(
         tex2d = GlProgram(VERTEX_PASS_THROUGH, textureFxFragment("sampler2D", withSharpen = true)),
         texOes = GlProgram(VERTEX_PASS_THROUGH, textureFxFragment("samplerExternalOES", withSharpen = false)),
+        tex2dLut = GlProgram(VERTEX_PASS_THROUGH, textureFxFragment("sampler2D", withSharpen = true, withLut = true)),
+        texOesLut = GlProgram(VERTEX_PASS_THROUGH, textureFxFragment("samplerExternalOES", withSharpen = false, withLut = true)),
         fill = GlProgram(VERTEX_PASS_THROUGH, FRAG_FILL),
         blur = GlProgram(VERTEX_PASS_THROUGH, FRAG_BLUR),
         blend = GlProgram(VERTEX_PASS_THROUGH, FRAG_BLEND),
@@ -234,13 +238,16 @@ void main() {
     class Programs(
         val tex2d: GlProgram,
         val texOes: GlProgram,
+        val tex2dLut: GlProgram,
+        val texOesLut: GlProgram,
         val fill: GlProgram,
         val blur: GlProgram,
         val blend: GlProgram,
         val copy: GlProgram,
     ) {
         fun releaseAll() {
-            tex2d.release(); texOes.release(); fill.release()
+            tex2d.release(); texOes.release(); tex2dLut.release(); texOesLut.release()
+            fill.release()
             blur.release(); blend.release(); copy.release()
         }
     }

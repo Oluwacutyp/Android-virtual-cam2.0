@@ -17,9 +17,9 @@ import kotlin.math.log10
 import kotlin.math.sqrt
 
 /**
- * Minimal Phase 1 microphone meter: RMS level 0..1 (with dB-scaled response)
- * for the audio mixer strip. Full routing/DSP arrives with the Phase 1 audio
- * increment; this meter is real capture, not a placeholder animation.
+ * Real microphone capture at 48 kHz mono: drives the level meter (dB-scaled)
+ * and, when [pcmSink] is set, feeds the audio mixer's MIC bus with 20 ms
+ * PCM16 chunks. This is the bus the recorder's AAC track is built from.
  */
 class MicLevelMonitor(
     private val scope: CoroutineScope,
@@ -30,13 +30,17 @@ class MicLevelMonitor(
     private val _running = MutableStateFlow(false)
     val running: StateFlow<Boolean> = _running.asStateFlow()
 
+    /** Optional PCM tap: (mono PCM16 samples, sampleCount) at 48 kHz, 20 ms cadence. */
+    @Volatile
+    var pcmSink: ((ShortArray, Int) -> Unit)? = null
+
     private var job: Job? = null
     private var recorder: AudioRecord? = null
 
     @SuppressLint("MissingPermission") // caller must hold RECORD_AUDIO
     fun start() {
         if (_running.value) return
-        val sampleRate = 16_000
+        val sampleRate = 48_000
         val minBuf = AudioRecord.getMinBufferSize(
             sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
         )
@@ -64,7 +68,7 @@ class MicLevelMonitor(
         _running.value = true
 
         job = scope.launch(Dispatchers.IO) {
-            val buffer = ShortArray(1024)
+            val buffer = ShortArray(960) // 20 ms mono @ 48 kHz
             while (isActive && _running.value) {
                 val n = record.read(buffer, 0, buffer.size)
                 if (n <= 0) continue
@@ -78,6 +82,7 @@ class MicLevelMonitor(
                 val db = if (rms > 1e-5) (20.0 * log10(rms)) else -60.0
                 val level = ((db + 60.0) / 60.0).coerceIn(0.0, 1.0).toFloat()
                 _levelRms.value = level
+                pcmSink?.invoke(buffer.copyOf(n), n)
             }
         }
     }

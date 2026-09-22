@@ -7,6 +7,7 @@ import com.vcamstudio.core.clock.Clock
 import com.vcamstudio.core.clock.SystemClockImpl
 import com.vcamstudio.core.dispatch.DefaultDispatcherProvider
 import com.vcamstudio.core.dispatch.DispatcherProvider
+import com.vcamstudio.engine.render.lut.Lut3D
 import com.vcamstudio.engine.render.model.SceneDefinition
 import com.vcamstudio.engine.render.model.TransitionSpec
 import kotlinx.coroutines.CoroutineScope
@@ -67,9 +68,14 @@ class RenderEngine(
         thread.post { thread.initEngine() }
         watchdog.start()
         scope.launch {
+            var ticks = 0
             while (isActive) {
                 delay(1_000)
                 publishDiagnostics()
+                // Every 10s the full VCAM-DIAG dump lands in logcat under
+                // vcam-engine — tools/stress-test.sh parses exactly this.
+                ticks++
+                if (ticks % 10 == 0) Log.i(TAG, dump())
             }
         }
         Log.i(TAG, "RenderEngine started")
@@ -117,6 +123,24 @@ class RenderEngine(
     /** Manual recovery trigger (Diagnostics screen button / watchdog). */
     fun requestRecovery(reason: String) {
         thread.post { thread.requestOutputRecovery(reason) }
+    }
+
+    /** Registers/updates a named 3D LUT (applied per-layer via LayerEffects.lutId). */
+    fun registerLut(name: String, lut: Lut3D) {
+        thread.post { thread.registerLut(name, lut) }
+    }
+
+    fun removeLut(name: String) {
+        thread.post { thread.removeLut(name) }
+    }
+
+    /** Attaches the encoder input surface as a second output (recording). */
+    fun attachRecordingOutput(surface: Surface, width: Int, height: Int) {
+        thread.post { thread.attachOutput(RenderThread.RECORDING_OUTPUT_ID, surface, width, height) }
+    }
+
+    fun detachRecordingOutput() {
+        thread.post { thread.detachOutput(RenderThread.RECORDING_OUTPUT_ID) }
     }
 
     // ----------------------------------------------------------- callbacks

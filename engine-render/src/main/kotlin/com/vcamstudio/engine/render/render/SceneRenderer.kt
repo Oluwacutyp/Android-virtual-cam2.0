@@ -6,6 +6,7 @@ import android.opengl.Matrix
 import com.vcamstudio.engine.render.geometry.LayerGeometry
 import com.vcamstudio.engine.render.gl.Framebuffer
 import com.vcamstudio.engine.render.gl.GlProgram
+import com.vcamstudio.engine.render.gl.LutCache
 import com.vcamstudio.engine.render.gl.checkGlError
 import com.vcamstudio.engine.render.model.BlendMode
 import com.vcamstudio.engine.render.model.FitMode
@@ -32,7 +33,10 @@ import kotlin.math.sqrt
  * Bitmap textures from GLUtils and OES producer matrices are handled in the
  * layer draw path, so they composite consistently.
  */
-internal class SceneRenderer(private val programs: Shaders.Programs) {
+internal class SceneRenderer(
+    private val programs: Shaders.Programs,
+    val lutCache: LutCache = LutCache(),
+) {
 
     // Separate buffers per attribute — no offset arithmetic anywhere.
     private val staging = FloatArray(STRIDE_FLOATS * 4)
@@ -72,7 +76,7 @@ internal class SceneRenderer(private val programs: Shaders.Programs) {
         sceneW: Int,
         sceneH: Int,
     ) {
-        val program = programFor(source)
+        val program = programFor(source, layer.effects.lutId)
         val transform = layer.transform
         val quad = LayerGeometry.compute(
             transform, source.width.toFloat(), source.height.toFloat(), sceneW.toFloat(), sceneH.toFloat(),
@@ -84,6 +88,7 @@ internal class SceneRenderer(private val programs: Shaders.Programs) {
         program.use()
         uploadQuad(quad, sceneW.toFloat(), sceneH.toFloat())
         bindSource(program, source)
+        bindLut(program, layer.effects.lutId)
         setFxUniforms(program, layer, source.width, source.height, drawW, drawH)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
         checkGlError("drawLayerDirect(${layer.id})")
@@ -98,7 +103,7 @@ internal class SceneRenderer(private val programs: Shaders.Programs) {
         sceneW: Int,
         sceneH: Int,
     ) {
-        val program = programFor(source)
+        val program = programFor(source, layer.effects.lutId)
         val transform = layer.transform
         val quad = LayerGeometry.compute(
             transform, source.width.toFloat(), source.height.toFloat(), sceneW.toFloat(), sceneH.toFloat(),
@@ -114,6 +119,7 @@ internal class SceneRenderer(private val programs: Shaders.Programs) {
         program.use()
         uploadQuad(quad, sceneW.toFloat(), sceneH.toFloat())
         bindSource(program, source)
+        bindLut(program, layer.effects.lutId)
         setFxUniforms(program, layer, source.width, source.height, drawW, drawH, opacity = 1f)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
 
@@ -213,8 +219,29 @@ internal class SceneRenderer(private val programs: Shaders.Programs) {
 
     // -------------------------------------------------------------- helpers
 
-    private fun programFor(source: TextureSource): GlProgram =
-        if (source.target == GLES11Ext.GL_TEXTURE_EXTERNAL_OES) programs.texOes else programs.tex2d
+    private fun programFor(source: TextureSource, lutId: String?): GlProgram {
+        val oes = source.target == GLES11Ext.GL_TEXTURE_EXTERNAL_OES
+        return when {
+            oes && lutId != null -> programs.texOesLut
+            oes -> programs.texOes
+            lutId != null -> programs.tex2dLut
+            else -> programs.tex2d
+        }
+    }
+
+    /** Binds the layer's LUT (unit 1) or zeroes the mix for plain passes. */
+    private fun bindLut(program: GlProgram, lutId: String?) {
+        val tex = lutId?.let { lutCache.get(it) }
+        if (tex != null) {
+            GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_3D, tex)
+            program.setInt("uLut3d", 1)
+            program.setFloat("uLutMix", 1f)
+        } else {
+            program.setFloat("uLutMix", 0f)
+        }
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+    }
 
     private fun bindSource(program: GlProgram, source: TextureSource) {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
@@ -261,7 +288,7 @@ internal class SceneRenderer(private val programs: Shaders.Programs) {
         program.setFloat("uTemperature", grade.temperature)
         program.setFloat("uTint", grade.tint)
         // Sharpen needs random-access sampling: 2D textures only.
-        val sharpen = if (program === programs.tex2d) fx.sharpen.amount else 0f
+        val sharpen = if (program === programs.tex2d || program === programs.tex2dLut) fx.sharpen.amount else 0f
         program.setFloat("uSharpen", sharpen)
         program.setVec3("uVignette", fx.vignette.start, fx.vignette.end, fx.vignette.strength)
         program.setVec2("uQuadSizePx", drawW, drawH)

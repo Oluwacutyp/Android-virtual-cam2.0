@@ -52,6 +52,7 @@ import com.vcamstudio.app.ui.theme.StudioAccent
 import com.vcamstudio.app.ui.theme.StudioBg
 import com.vcamstudio.app.ui.theme.StudioBorder
 import com.vcamstudio.app.ui.theme.StudioSurface
+import com.vcamstudio.engine.output.RecordingController
 import com.vcamstudio.engine.render.model.LensFacing
 import com.vcamstudio.engine.render.model.LayerDefinition
 import com.vcamstudio.engine.render.model.SceneDefinition
@@ -80,11 +81,35 @@ fun StudioScreen(
     val videoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
     ) { uri -> uri?.let(vm::onVideoPicked) }
+    val lutPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let(vm::onLutPicked) }
+    val shareLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { }
 
     LaunchedEffect(state.toast) {
         state.toast?.let {
             Toast.makeText(context, it, Toast.LENGTH_LONG).show()
             vm.dismissToast()
+        }
+    }
+
+    LaunchedEffect(state.lastRecordingPath) {
+        state.lastRecordingPath?.let { path ->
+            val file = java.io.File(path)
+            if (file.exists()) {
+                val uri = androidx.core.content.FileProvider.getUriForFile(
+                    context, "com.vcamstudio.fileprovider", file,
+                )
+                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                    type = "video/mp4"
+                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                shareLauncher.launch(android.content.Intent.createChooser(intent, "Share recording"))
+            }
+            vm.clearLastRecording()
         }
     }
 
@@ -104,6 +129,7 @@ fun StudioScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        RecChip(state.recording, vm::toggleRecording)
                         StatusChip("%.0f fps".format(state.diagnostics.fps), StudioAccent)
                         StatusChip(state.health.name, healthColor(state.health))
                         Text(
@@ -150,7 +176,9 @@ fun StudioScreen(
                 },
                 onText = { textDialogVisible = true },
                 onColor = { colorDialogVisible = true },
+                onLut = { lutPicker.launch(arrayOf("*/*")) },
                 onMic = vm::toggleMic,
+                onMix = { vm.setSheet(StudioViewModel.Sheet.MIXER) },
                 onDiag = { vm.setSheet(StudioViewModel.Sheet.DIAGNOSTICS) },
             )
         }
@@ -168,6 +196,8 @@ fun StudioScreen(
             onRemove = vm::removeLayer,
             onMoveUp = { vm.moveLayer(it, true) },
             onMoveDown = { vm.moveLayer(it, false) },
+            lutNames = state.lutNames,
+            onSetLut = { name -> state.selectedLayerId?.let { vm.setLayerLut(it, name) } },
         )
         StudioViewModel.Sheet.DIAGNOSTICS -> DiagnosticsSheet(
             diagnostics = state.diagnostics,
@@ -178,6 +208,14 @@ fun StudioScreen(
         StudioViewModel.Sheet.SETTINGS -> SettingsSheet(
             resolution = state.sceneResolution,
             onResolution = vm::setSceneResolution,
+            onDismiss = { vm.setSheet(StudioViewModel.Sheet.NONE) },
+        )
+        StudioViewModel.Sheet.MIXER -> MixerSheet(
+            mixer = vm.audioMixer,
+            masterGain = state.masterGain,
+            limiterEnabled = state.limiterEnabled,
+            onMasterGain = vm::setMasterGain,
+            onLimiter = vm::setLimiterEnabled,
             onDismiss = { vm.setSheet(StudioViewModel.Sheet.NONE) },
         )
         StudioViewModel.Sheet.NONE -> Unit
@@ -423,7 +461,9 @@ private fun DockBar(
     onVideo: () -> Unit,
     onText: () -> Unit,
     onColor: () -> Unit,
+    onLut: () -> Unit,
     onMic: () -> Unit,
+    onMix: () -> Unit,
     onDiag: () -> Unit,
 ) {
     Surface(color = StudioSurface) {
@@ -440,6 +480,8 @@ private fun DockBar(
             DockButton("🎬", "Video", onVideo)
             DockButton("🅣", "Text", onText)
             DockButton("🎨", "Color", onColor)
+            DockButton("🌈", "LUT", onLut)
+            DockButton("🎚", "Mix", onMix)
             DockButton("🎙", "Mic", onMic)
             DockButton("📊", "Diag", onDiag)
         }
@@ -516,4 +558,31 @@ private fun ColorPickDialog(onPick: (Int) -> Unit, onDismiss: () -> Unit) {
         confirmButton = {},
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+@Composable
+private fun RecChip(state: RecordingController.State, onToggle: () -> Unit) {
+    when (state) {
+        is RecordingController.State.Recording -> {
+            var elapsed by remember(state.startedAtMs) {
+                mutableStateOf(((System.currentTimeMillis() - state.startedAtMs) / 1000).toInt())
+            }
+            LaunchedEffect(state.startedAtMs) {
+                while (true) {
+                    kotlinx.coroutines.delay(1_000)
+                    elapsed++
+                }
+            }
+            StatusChip(
+                text = "● REC %02d:%02d".format(elapsed / 60, elapsed % 60),
+                color = Color(0xFFF59E0B),
+                modifier = Modifier.clickable(onClick = onToggle),
+            )
+        }
+        else -> StatusChip(
+            text = "○ REC",
+            color = StudioBorder,
+            modifier = Modifier.clickable(onClick = onToggle),
+        )
+    }
 }

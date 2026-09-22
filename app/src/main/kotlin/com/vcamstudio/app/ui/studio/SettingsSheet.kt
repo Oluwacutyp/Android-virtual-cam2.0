@@ -8,12 +8,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -27,7 +32,12 @@ fun SettingsSheet(
     onResolution: (SceneResolution) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var showLicenses by remember { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = onDismiss) {
+        if (showLicenses) {
+            LicensesSheet()
+            return@ModalBottomSheet
+        }
         LazyColumn(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
             item { SectionTitle("Scene resolution") }
             items(SceneResolution.entries.size) { index ->
@@ -41,6 +51,17 @@ fun SettingsSheet(
                     RadioButton(selected = resolution == entry, onClick = { onResolution(entry) })
                 }
             }
+            item { SectionTitle("Open-source licenses") }
+            item {
+                Text(
+                    "View licenses & attribution (all bundled components are Apache-2.0)",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showLicenses = true }
+                        .padding(vertical = 8.dp),
+                )
+            }
             item { SectionTitle("About") }
             item {
                 Text(
@@ -50,7 +71,7 @@ fun SettingsSheet(
                         appendLine("100% free · no watermark · no subscription · fully offline.")
                         appendLine("Everything renders on your device; nothing is uploaded.")
                         appendLine()
-                        appendLine("Open-source licenses: Settings → Licenses lands with the Phase 1 wrap-up increment.")
+                        appendLine("Open-source licenses: every bundled component is Apache-2.0 — tap below.")
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

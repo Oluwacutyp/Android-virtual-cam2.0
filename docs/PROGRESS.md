@@ -98,3 +98,43 @@ Honest verification: Kotlin/AGP compile+test+lint green on real runners;
 GL/camera/video runtime behavior still device-gated (stress script + owner
 device matrix). Remaining Phase 1 scope: LUT `.cube` import + golden-frame
 harness, 4-bus mixer + limiter, MP4 recorder (`engine-output`), licenses screen.
+
+
+## Increment 3 — LUT import, 4-bus mixer + limiter, MP4 recorder (2026-09-22)
+
+Completes the Phase 1 feature scope (device exit gate still pending):
+
+- **LUT import**: pure-Kotlin `.cube` parser (`engine-render/lut/CubeLutParser`,
+  JVM golden tests for red-fastest order, DOMAIN remap, malformed input);
+  `LutCache` uploads `GL_TEXTURE_3D` (RGB16F, linear — core-filterable in
+  ES 3.0); new `tex2dLut`/`texOesLut` shader variants apply the LUT after the
+  color grade inside `textureFx` (uniform `uLutMix`); `LayerEffects.lutId`
+  routes per-layer selection; dock LUT button imports via SAF, inspector
+  dropdown applies per layer.
+- **4-bus mixer + limiter** (`engine-audio`): `AudioMixer` 48 kHz stereo,
+  20 ms frames, per-bus gain/mute/level + master + `Limiter` (feedback peak
+  limiter, attack 1.5 ms / release 80 ms, ceiling ≈ -0.13 dBFS). MIC bus fed
+  by `MicLevelMonitor` (now 48 kHz capture + PCM tap); MEDIA bus fed by
+  Media3 `TeeAudioProcessor` tap on every video layer's audio sink
+  (`MixerAudioTap`; non-48k-stereo formats dropped with a log). MUSIC/TTS
+  buses are wired and silent until Phase 3 sources. JVM tests: mix math,
+  mute, underflow, master, limiter ceiling, ring underflow.
+- **MP4 recorder** (new `:engine-output` module): `RecordingSession` =
+  H.264 (MediaCodec surface input — engine draws the scene into
+  `EGL_RECORDABLE_ANDROID` surface via the generic output path) + AAC-LC
+  (48 kHz stereo from the mixer pump) + `MediaMuxer`; dual-track muxer gated
+  on both track formats; pre-start samples dropped, never corrupt files.
+  `RecordingController` = state machine (Idle/Starting/Recording/Stopping)
+  + executor lifecycle. UI: REC chip in the top bar with duration ticker,
+  auto share chooser via FileProvider on stop.
+- **Mixer UI**: 4 faders + mute + live level bars + master + limiter toggle
+  (`MixerSheet`, dock "Mix" button).
+- **Licenses screen**: Settings → licenses/attribution (all bundled
+  components Apache-2.0) — closes deliverable 9.
+- **Stress readiness**: engine now logs the full `VCAM-DIAG v1` dump to
+  logcat (tag `vcam-engine`) every 10 s — exactly what
+  `tools/stress-test.sh` greps (`presented=`, `health=`, `swapBuffers failed`,
+  `GL error`).
+
+Honest verification: all of the above is compile/test-verified on CI;
+codec/GL/camera runtime behavior remains device-gated (exit criteria).
