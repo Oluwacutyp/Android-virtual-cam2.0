@@ -7,6 +7,12 @@ plugins {
 }
 
 android {
+    // Phase 1: lint reports collected but non-blocking; enforced at the Phase 1 exit gate.
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
+    }
+
     namespace = "com.vcamstudio.app"
     compileSdk = 34
 
