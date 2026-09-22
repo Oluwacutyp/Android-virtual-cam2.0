@@ -81,7 +81,7 @@ class CubeLutParserTest {
     }
 
     @Test
-    fun `1d lut rejects`() {
+    fun `one-dimensional lut rejects`() {
         assertThrows(IllegalArgumentException::class.java) {
             CubeLutParser.parse("LUT_1D_SIZE 32\n0 0 0")
         }
