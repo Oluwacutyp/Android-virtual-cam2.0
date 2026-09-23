@@ -2,6 +2,7 @@ package com.vcamstudio.engine.render.render
 
 import android.opengl.GLES11Ext
 import android.opengl.GLES30
+import android.util.Log
 import com.vcamstudio.engine.render.geometry.LayerGeometry
 import com.vcamstudio.engine.render.geometry.SourceUvMath
 import com.vcamstudio.engine.render.gl.Framebuffer
@@ -77,7 +78,11 @@ internal class SceneRenderer(
         sceneW: Int,
         sceneH: Int,
     ) {
-        val program = programFor(source, layer.effects.lutId)
+        // DEV DIAGNOSTIC (round 16A): UV-gradient pass replaces sampling for
+        // external sources when enabled from the dev diagnostics toggle.
+        val program =
+            if (uvDebugPass && source is ExternalTextureSource) programs.uvDebug
+            else programFor(source, layer.effects.lutId)
         val transform = layer.transform
         val quad = LayerGeometry.compute(
             transform, source.width.toFloat(), source.height.toFloat(), sceneW.toFloat(), sceneH.toFloat(),
@@ -104,7 +109,11 @@ internal class SceneRenderer(
         sceneW: Int,
         sceneH: Int,
     ) {
-        val program = programFor(source, layer.effects.lutId)
+        // DEV DIAGNOSTIC (round 16A): same UV-gradient substitution as the
+        // direct path (see drawLayerDirect).
+        val program =
+            if (uvDebugPass && source is ExternalTextureSource) programs.uvDebug
+            else programFor(source, layer.effects.lutId)
         val transform = layer.transform
         val quad = LayerGeometry.compute(
             transform, source.width.toFloat(), source.height.toFloat(), sceneW.toFloat(), sceneH.toFloat(),
@@ -285,8 +294,16 @@ internal class SceneRenderer(
             uvBuf.put(i * 2 + 1, uvWork[i * 2 + 1])
         }
         uvBuf.position(0)
-        if (source is ExternalTextureSource) captureOesDebug(source, uvRotationDeg, mirrorX)
+        if (source is ExternalTextureSource) captureOesDebug(program, source, uvRotationDeg, mirrorX)
     }
+
+    /**
+     * DEV DIAGNOSTIC (round 16A): when true, external-source layers render
+     * with the UV-gradient program (no OES sample). Dev builds only — the
+     * toggle lives in the diagnostics sheet behind a debuggable check.
+     */
+    @Volatile
+    var uvDebugPass: Boolean = false
 
     // ---- orientation diagnostics: 1 Hz snapshot surfaced in the engine dump ----
 
@@ -299,23 +316,74 @@ internal class SceneRenderer(
     var oesDebug: String? = null
         private set
 
-    private fun captureOesDebug(src: ExternalTextureSource, rot: Float, mirror: Boolean) {
+    /** The exact shader sources of the program last used for the camera draw. */
+    @Volatile
+    var lastOesProgramSources: Pair<String, String>? = null
+        private set
+
+    private fun captureOesDebug(program: GlProgram, src: ExternalTextureSource, rot: Float, mirror: Boolean) {
         val now = System.nanoTime() / 1_000_000L
         if (now - lastOesDebugMs < 1000) return
         lastOesDebugMs = now
+        lastOesProgramSources = program.vertexSource to program.fragmentSource
         val st = src.transformMatrix
         fun f(v: Float) = String.format(Locale.US, "%.4f", v)
-        oesDebug = buildString {
+        // (B) vertex dump: gl_Position = vec4(aPos, 0, 1) with aPos exactly as
+        // uploaded by uploadQuad — read the live position buffer (pass-through
+        // vertex shader, so these ARE the post-MVP clip xy values).
+        val clip = (0 until 4).joinToString(";", "[", "]") { i ->
+            String.format(Locale.US, "%.3f,%.3f", posBuf.get(i * 2), posBuf.get(i * 2 + 1))
+        }
+        val finite = (0 until 8).all {
+            val p = posBuf.get(it); val w = uvWork.get(it)
+            !p.isNaN() && !p.isInfinite() && !w.isNaN() && !w.isInfinite()
+        }
+        // (D) bind audit: target binding, declared sampler TYPE, sampler unit.
+        val bound = IntArray(1)
+        GLES30.glGetIntegerv(GLES11Ext.GL_TEXTURE_BINDING_EXTERNAL_OES, bound, 0)
+        val uniformCount = IntArray(1)
+        GLES30.glGetProgramiv(program.handle, GLES30.GL_ACTIVE_UNIFORMS, uniformCount, 0)
+        val size = IntArray(1)
+        val type = IntArray(1)
+        var samplerType = "uTex:absent"
+        var samplerUnit = -1
+        for (i in 0 until uniformCount[0]) {
+            val name = GLES30.glGetActiveUniform(program.handle, i, 64, size, type)
+            if (name.endsWith("uTex") || name == "uTex") {
+                samplerType = when (type[0]) {
+                    GLES11Ext.GL_SAMPLER_EXTERNAL_OES -> "OES"
+                    GLES30.GL_SAMPLER_2D -> "2D"
+                    else -> "0x" + Integer.toHexString(type[0])
+                }
+                val unit = IntArray(1)
+                GLES30.glGetUniformiv(program.handle, GLES30.glGetUniformLocation(program.handle, "uTex"), unit, 0)
+                samplerUnit = unit[0]
+            }
+        }
+        val bindOk = bound[0] == src.glTextureId
+        // (F) ST interpretation check data: transposed matrix + NET class.
+        val stT = FloatArray(16) { c -> st[(c % 4) * 4 + c / 4] }
+        val net = SourceUvMath.classifyNet(st, rot, mirror)
+        val line = buildString {
             append("OES_ORIENT src=").append(src.width).append('x').append(src.height)
             append(" uvRot=").append(rot).append(" mirrorX=").append(mirror)
             append(" ST=[").append((0 until 16).joinToString(",") { f(st[it]) }).append("]")
+            append(" ST_T=[").append((0 until 16).joinToString(",") { f(stT[it]) }).append("]")
             append(" baseUV=").append((0 until 4).joinToString(";", "[", "]") { i ->
                 String.format(Locale.US, "%.3f,%.3f", uvBase[i * 2], uvBase[i * 2 + 1])
             })
             append(" finalUV=").append((0 until 4).joinToString(";", "[", "]") { i ->
                 String.format(Locale.US, "%.3f,%.3f", uvWork[i * 2], uvWork[i * 2 + 1])
             })
+            append(" CLIP=").append(clip)
+            append(" finite=").append(finite)
+            append(" bind=[tgtOk=").append(bindOk)
+            append(",boundId=").append(bound[0]).append(",srcId=").append(src.glTextureId)
+            append(",sampler=").append(samplerType).append(",unit=").append(samplerUnit).append("]")
+            append(" NET=").append(net)
         }
+        oesDebug = line
+        Log.i("vcam-render", line)
     }
 
     private fun setFxUniforms(

@@ -82,6 +82,14 @@ internal class RenderThread(
 
     /** Latest 1 Hz OES orientation capture (ST matrix + UVs) for the dump. */
     fun oesDebugLine(): String? = renderer?.oesDebug
+
+    /** Exact shader sources of the program last used for the camera draw. */
+    fun oesShaderSources(): Pair<String, String>? = renderer?.lastOesProgramSources
+
+    /** DEV DIAGNOSTIC (round 16A): toggle the UV-gradient pass for OES layers. */
+    fun setUvDebugPass(enabled: Boolean) {
+        renderer?.uvDebugPass = enabled
+    }
     private var initialized = false
 
     @Volatile
@@ -569,15 +577,25 @@ internal class RenderThread(
         }
         // Every ~300 renders: prove whether the scene FBO actually contains
         // pixels (decides "draw path broken" vs "present path broken" from a
-        // dump alone). Center pixel of the composited scene.
+        // dump alone). Round 16C: sample all four corners (+2px inset) AND
+        // the center — a wedge present in the FBO shows up as black corners
+        // here; a clean FBO + wedged presentation isolates the present pass.
         if (renderedFrameCount % 300L == 1L) {
-            val px = java.nio.ByteBuffer.allocateDirect(4)
-            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, currentFbo().handle)
-            GLES30.glReadPixels(
-                scene.width / 2, scene.height / 2, 1, 1,
-                GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, px,
+            val probes = listOf(
+                2 to 2,                                   // TL
+                scene.width - 3 to 2,                     // TR
+                scene.width - 3 to scene.height - 3,      // BR
+                2 to scene.height - 3,                    // BL
+                scene.width / 2 to scene.height / 2,      // center
             )
-            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+            val probeVals = probes.map { (x, y) ->
+                val px = java.nio.ByteBuffer.allocateDirect(4)
+                GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, currentFbo().handle)
+                GLES30.glReadPixels(x, y, 1, 1, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, px)
+                GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+                intArrayOf(px.get(0), px.get(1), px.get(2), px.get(3))
+            }
+            val center = probeVals[4]
             val err = GLES30.glGetError()
             val first = scene.layers.firstOrNull { it.visible && it.opacity > 0.01f }
             val tInfo = first?.let {
@@ -588,7 +606,9 @@ internal class RenderThread(
             noteEvent(
                 "DRAW_STATS drawn=$drawn noContent=$noContent noSource=$noSource$tInfo " +
                     "PRESENT_QUAD=${lastPresentQuad.toList().map { (it * 10).toInt() / 10f }} " +
-                    "SCENE_PIXEL=[${px.get(0)},${px.get(1)},${px.get(2)},${px.get(3)}] glErr=0x${Integer.toHexString(err)}",
+                    "SCENE_PIXEL=[${center[0]},${center[1]},${center[2]},${center[3]}] " +
+                    "SCENE_PIXELS=[" + probeVals.take(4).joinToString(",") { p -> "[${p[0]},${p[1]},${p[2]},${p[3]}]" } +
+                    "] glErr=0x${Integer.toHexString(err)}",
             )
         }
     }

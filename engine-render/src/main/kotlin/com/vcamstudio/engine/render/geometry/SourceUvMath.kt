@@ -117,4 +117,33 @@ object SourceUvMath {
 
     /** The no-wedge invariant: every UV inside [0,1]. */
     fun inBounds(uvs: FloatArray): Boolean = uvs.all { it in 0f..1f }
+
+    /**
+     * DIAGNOSTIC (round 16, report-only): classifies the NET linear map the
+     * pipeline applies in sampling space (ST -> mirror -> rotate composed).
+     * Answers from a dump alone whether the source rotations cancel (e.g. a
+     * producer ST that already carries a 90-degree rotation composed with
+     * uvRot=270 nets to mirror/identity) or double-apply.
+     */
+    fun classifyNet(st: FloatArray?, rotDeg: Float, mirrorX: Boolean): String {
+        val p0 = transform(floatArrayOf(0.5f, 0.5f), st, rotDeg, mirrorX, clamp = false)
+        val px = transform(floatArrayOf(0.7f, 0.5f), st, rotDeg, mirrorX, clamp = false)
+        val py = transform(floatArrayOf(0.5f, 0.7f), st, rotDeg, mirrorX, clamp = false)
+        val ax = px[0] - p0[0] // image of +u
+        val ay = px[1] - p0[1]
+        val bx = py[0] - p0[0] // image of +v
+        val by = py[1] - p0[1]
+        fun near(v: Float, target: Float) = kotlin.math.abs(v - target) < 0.05f
+        fun col(ax: Float, ay: Float, bx: Float, by: Float): String? = when {
+            near(ax, 1f) && near(ay, 0f) && near(bx, 0f) && near(by, 1f) -> "IDENTITY"
+            near(ax, -1f) && near(ay, 0f) && near(bx, 0f) && near(by, 1f) -> "MIRROR_H"
+            near(ax, 1f) && near(ay, 0f) && near(bx, 0f) && near(by, -1f) -> "MIRROR_V"
+            near(ax, -1f) && near(ay, 0f) && near(bx, 0f) && near(by, -1f) -> "ROT180"
+            near(ax, 0f) && near(ay, 1f) && near(bx, -1f) && near(by, 0f) -> "ROT90CCW"
+            near(ax, 0f) && near(ay, -1f) && near(bx, 1f) && near(by, 0f) -> "ROT90CW"
+            else -> null
+        }
+        return col(ax, ay, bx, by)
+            ?: ("OTHER[u=(" + ax + "," + ay + ") v=(" + bx + "," + by + ")]")
+    }
 }

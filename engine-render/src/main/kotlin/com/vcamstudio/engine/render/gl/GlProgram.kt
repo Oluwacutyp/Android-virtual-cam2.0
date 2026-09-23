@@ -8,7 +8,7 @@ import android.opengl.GLES32
  * Compilation/link errors throw [GlException] carrying the driver's info log —
  * shader bugs are caught at engine start, never rendered as garbage.
  */
-class GlProgram(vertexSource: String, fragmentSource: String) {
+class GlProgram(val vertexSource: String, val fragmentSource: String) {
 
     val handle: Int = createProgram(vertexSource, fragmentSource)
     private val uniformCache = HashMap<String, Int>()

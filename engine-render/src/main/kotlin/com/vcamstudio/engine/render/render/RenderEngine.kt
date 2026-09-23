@@ -176,6 +176,11 @@ class RenderEngine(
         _diagnostics.value = collector.snapshot(now, health, status.lastPresentMonotonicMs)
     }
 
+    /** DEV DIAGNOSTIC (round 16A): render external sources as a UV gradient. */
+    fun setUvDebugPass(enabled: Boolean) {
+        thread.post { thread.setUvDebugPass(enabled) }
+    }
+
     /** Machine-parsable dump (used by tools/stress-test.sh and the Diagnostics UI). */
     fun dump(): String {
         val d = _diagnostics.value
@@ -201,6 +206,14 @@ class RenderEngine(
             appendLine("sources=${d.externalSourceCount}")
             appendLine("renderer=${d.glRenderer}")
             thread.oesDebugLine()?.let { appendLine(it) }
+            // (E) the EXACT shader sources compiled and last used for the
+            // camera draw — verbatim, no summaries.
+            thread.oesShaderSources()?.let { (vs, fs) ->
+                appendLine("VERTEX_SHADER_BEGIN")
+                append(vs)
+                appendLine("FRAGMENT_SHADER_BEGIN")
+                append(fs)
+            }
             appendLine("gl=${d.glVersion}")
             appendLine("egl=${d.eglApi}")
             d.initError?.let { appendLine("initError=$it") }

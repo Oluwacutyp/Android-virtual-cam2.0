@@ -670,6 +670,14 @@ class StudioViewModel @Inject constructor(
 
     fun diagnosticsDump(): String = engine.dump()
 
+    /** DEV DIAGNOSTIC (round 16A): render external sources as a UV gradient. */
+    val uvDebugPass = MutableStateFlow(false)
+
+    fun setUvDebugPass(enabled: Boolean) {
+        uvDebugPass.value = enabled
+        engine.setUvDebugPass(enabled)
+    }
+
     // -------------------------------------------------------------- internals
 
     private fun appendLayer(layer: LayerDefinition) {

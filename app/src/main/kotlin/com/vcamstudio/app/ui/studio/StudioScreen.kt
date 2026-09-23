@@ -218,6 +218,8 @@ fun StudioScreen(
             onForceRecovery = vm::forceRecoveryTest,
             rawMode = state.rawMode,
             onPreviewMode = vm::setPreviewMode,
+            uvDebugPass = vm.uvDebugPass.collectAsStateWithLifecycle().value,
+            onUvDebug = vm::setUvDebugPass,
             onDismiss = { vm.setSheet(StudioViewModel.Sheet.NONE) },
         )
         StudioViewModel.Sheet.SETTINGS -> SettingsSheet(

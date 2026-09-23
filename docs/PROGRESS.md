@@ -571,3 +571,72 @@ tools/stress-test.sh dump parsing is unaffected by the new OES_ORIENT line,
 and layer add/remove never touches output surfaces (attach/detach fire only
 from the preview stage-view and recording lifecycle), closing directive D's
 "layer add/remove must not destroy a still-valid EGL surface" by structure.
+
+
+## Increment 16 — DIAGNOSTIC ROUND: A-F instrumentation, zero fixes (2026-09-23)
+
+Owner directive: stop fixing, instrument. Screenshots post-r13: one black
+preview, one wedge. Dump from the healthy Adreno 730 device analyzed; the
+dump is INTERNALLY SELF-CONSISTENT (finalUV reproduces exactly from the
+logged ST + baseUV + uvRot=270 + mirror via the documented pipeline), so
+nothing in it is mislabeled.
+
+**Contradiction resolutions (math, not opinion):**
+1. The on-device ST matrix IS a pure 90-degree rotation: (u,v)->(v,1-u),
+   det=+1 (no flip). The r15 premise "ST carries no rotation" is FALSIFIED
+   for this device-state. HOWEVER uvRot=270 is not "still live doubled":
+   composing ST(rot cw90) then mirror then rotate(270 ccw) nets EXACTLY to a
+   horizontal mirror (verified numerically; net rotation cancels). This
+   matches this round's screenshots showing black/wedge rather than a
+   sideways/upside-down image. The earlier theta=270 calibration was measured
+   against builds whose ST was evidently flip-type - THE ST IS DYNAMIC
+   (device/config/state-dependent), so any fixed formula stays fragile.
+   NET= classifier (below) will report the composition per dump.
+2. finalUV == mirrorX(baseUV) is NOT a stale/pre-rotation log: it is the
+   true pipeline output - the ST 90-degree rotation and uvRot 270 cancel
+   (mirror∘R270∘R90 == mirror for symmetric windows), so the final values
+   legitimately equal mirrorX(baseUV). Label correct, pipeline correct,
+   summary and dump simultaneously true - a cancellation identity.
+3. baseUV width 0.316 == FILL computed in the SCENE frame (1280x720 source
+   filling a 720x1280 scene box at the layer stage). The owner's 0.355 is the
+   single-stage output-frame crop. The architecture FILLs twice (layer into
+   scene, scene into output): total coverage is preserved (no bars/stretch,
+   PRESENT_QUAD [0,0,1028,1629] confirms), at the cost of extra zoom
+   (u 0.316 x v 0.700 vs ideal 0.355 x 1.0). Design tradeoff (dual-aspect
+   outputs - preview vs recorder - cannot both get maximal FILL at the layer
+   stage); REPORTED, not changed.
+4. (F) Row-major (transposed) interpretation of this ST maps corners OUTSIDE
+   [0,1] ((-1,0),(0,1)...), which would render garbage/black everywhere -
+   the device shows healthy changing pixels, so the column-major CPU
+   interpretation is consistent. Architectural note: the shader NEVER sees
+   ST in this engine - UVs are CPU-transformed (SourceUvMath) before upload;
+   the only order risk was CPU-side, cross-checked by the finalUV identity.
+   The visual F-check remains available via the UV-gradient pass (A).
+
+**Shipped instrumentation (mandated A-F; no behavior changes):**
+- A: UV DEBUG PASS - dev-only toggle in Diagnostics (debuggable-gated);
+  renders external-source layers with FRAG_UV_DEBUG (vec4(vUV,0,1), no OES
+  sample). Smooth full-quad gradient = geometry/interp fine; missing
+  triangle/wedge/degenerate = geometry-side, not sampling.
+- B: VERTEX DUMP - CLIP=[4 post-MVP xy] (pass-through VS: aPos IS
+  gl_Position.xy) + finite=NaN/Inf flag over positions and final UVs, 1 Hz
+  into OES_ORIENT + logcat tag vcam-render.
+- C: MULTI-POINT SCENE PROBE - SCENE_PIXELS=[TL,TR,BR,BL] (+2px inset) plus
+  the existing SCENE_PIXEL center, same cadence. Wedge in the FBO shows as
+  black corners; clean FBO + wedged presentation isolates the present pass.
+- D: OES BIND AUDIT - 1 Hz: GL_TEXTURE_BINDING_EXTERNAL_OES == source id
+  (tgtOk), declared sampler TYPE via glGetActiveUniform (OES vs 2D - the
+  partial-quad-black driver class), sampler unit value (unit=).
+- E: SHADER LOG - GlProgram retains the EXACT sources compiled; the dump
+  carries VERTEX_SHADER_BEGIN/FRAGMENT_SHADER_BEGIN with the verbatim text
+  of the program last used for the camera draw.
+- F: ST INTERPRETATION CHECK - ST_T (transposed) logged alongside ST, and
+  NET=<classifier> reporting the composed sampling map (IDENTITY/MIRROR_H/
+  MIRROR_V/ROT180/ROT90CW/ROT90CCW/OTHER[vectors]) so a dump alone decides
+  cancel-vs-double. Report-only; no auto-correction.
+
+NOT FIXED (per directive): the wedge and black screenshots have no dump from
+the failing moment and no code path in the current build can produce a
+diagonal (geometry rotation was removed; corners are axis-aligned; UV math
+closed over [0,1] and now clamped). Next report MUST include a dump taken
+while the defect is on screen - with A-F that dump is decisive.

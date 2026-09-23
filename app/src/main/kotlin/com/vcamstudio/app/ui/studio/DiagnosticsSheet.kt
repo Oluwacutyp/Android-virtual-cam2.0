@@ -40,9 +40,13 @@ fun DiagnosticsSheet(
     onForceRecovery: () -> Unit,
     rawMode: Boolean,
     onPreviewMode: (Boolean) -> Unit,
+    uvDebugPass: Boolean,
+    onUvDebug: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
+    val isDebugBuild = androidx.compose.ui.platform.LocalContext.current
+        .applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
     ModalBottomSheet(onDismissRequest = onDismiss) {
         LazyColumn(
             Modifier
@@ -65,6 +69,23 @@ fun DiagnosticsSheet(
                     Text("Preview path", style = MaterialTheme.typography.labelMedium)
                     FilterChip(selected = rawMode, onClick = { onPreviewMode(true) }, label = { Text("RAW (CameraX)") })
                     FilterChip(selected = !rawMode, onClick = { onPreviewMode(false) }, label = { Text("GL compositor") })
+                }
+            }
+            if (isDebugBuild) {
+                item {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "DEV: UV gradient pass (round-16A probe)",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        androidx.compose.material3.Switch(
+                            checked = uvDebugPass,
+                            onCheckedChange = onUvDebug,
+                        )
+                    }
                 }
             }
             diagnostics.initError?.let { err ->

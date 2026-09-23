@@ -124,6 +124,24 @@ uniform float uCornerPx;
         }
     }
 
+    /**
+     * DEV DIAGNOSTIC (round 16A): outputs the interpolated UV varying as
+     * color — no texture sample at all. A correct pipeline shows a smooth
+     * full-quad R=x,G=y gradient; a missing triangle, a diagonal wedge, or
+     * a degenerate gradient isolates the bug to geometry/vertex paths, NOT
+     * sampling. Used only when the dev UV-pass toggle is on.
+     */
+    const val FRAG_UV_DEBUG = """#version 300 es
+precision highp float;
+precision mediump int;
+in vec2 vUV;
+in vec2 vLocal;
+out vec4 fragColor;
+void main() {
+    fragColor = vec4(vUV, 0.0, 1.0);
+}
+"""
+
     const val FRAG_FILL = """#version 300 es
 precision highp float;
 precision mediump int;
@@ -237,6 +255,7 @@ void main() {
         blur = GlProgram(VERTEX_PASS_THROUGH, FRAG_BLUR),
         blend = GlProgram(VERTEX_PASS_THROUGH, FRAG_BLEND),
         copy = GlProgram(VERTEX_PASS_THROUGH, FRAG_COPY),
+        uvDebug = GlProgram(VERTEX_PASS_THROUGH, FRAG_UV_DEBUG),
     )
 
     class Programs(
@@ -248,11 +267,13 @@ void main() {
         val blur: GlProgram,
         val blend: GlProgram,
         val copy: GlProgram,
+        val uvDebug: GlProgram,
     ) {
         fun releaseAll() {
             tex2d.release(); texOes.release(); tex2dLut.release(); texOesLut.release()
             fill.release()
             blur.release(); blend.release(); copy.release()
+            uvDebug.release()
         }
     }
 }
