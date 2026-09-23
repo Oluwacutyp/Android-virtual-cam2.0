@@ -87,7 +87,7 @@ internal class SceneRenderer(
         target.bindViewport()
         program.use()
         uploadQuad(quad, sceneW.toFloat(), sceneH.toFloat())
-        bindSource(program, source)
+        bindSource(program, source, layer.transform.uvRotationDeg)
         bindLut(program, layer.effects.lutId)
         setFxUniforms(program, layer, source.width, source.height, drawW, drawH)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
@@ -118,7 +118,7 @@ internal class SceneRenderer(
 
         program.use()
         uploadQuad(quad, sceneW.toFloat(), sceneH.toFloat())
-        bindSource(program, source)
+        bindSource(program, source, layer.transform.uvRotationDeg)
         bindLut(program, layer.effects.lutId)
         setFxUniforms(program, layer, source.width, source.height, drawW, drawH, opacity = 1f)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
@@ -210,10 +210,14 @@ internal class SceneRenderer(
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
 
-    /** Letterbox quad that fits scene content into a differently-shaped output. */
-    fun letterboxQuad(sceneW: Int, sceneH: Int, outW: Int, outH: Int): LayerGeometry.Quad =
+    /**
+     * Present quad that COVERS the output (FILL): the scene fully covers the
+     * preview with no letterbox bars (edges crop when aspects differ). For
+     * same-aspect outputs (the recorder) FILL is identical to FIT.
+     */
+    fun fillQuad(sceneW: Int, sceneH: Int, outW: Int, outH: Int): LayerGeometry.Quad =
         LayerGeometry.compute(
-            LayerTransform(width = 1f, height = 1f, fitMode = FitMode.FIT),
+            LayerTransform(width = 1f, height = 1f, fitMode = FitMode.FILL),
             sceneW.toFloat(), sceneH.toFloat(), outW.toFloat(), outH.toFloat(),
         )
 
@@ -243,13 +247,30 @@ internal class SceneRenderer(
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
     }
 
-    private fun bindSource(program: GlProgram, source: TextureSource) {
+    private fun bindSource(program: GlProgram, source: TextureSource, uvRotationDeg: Float = 0f) {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         GLES30.glBindTexture(source.target, source.glTextureId)
         program.setInt("uTex", 0)
         if (source is ExternalTextureSource) {
             applyStMatrixToUv(source.transformMatrix)
         }
+        // Rotation LAST: R(uvRot) composed over the ST matrix (and geometry
+        // mirror), so the flip inside ST can't invert the rotation direction.
+        if (uvRotationDeg != 0f) applyUvRotation(uvRotationDeg)
+    }
+
+    /** Rotates the (already ST-transformed) sampling window about its center. */
+    private fun applyUvRotation(degrees: Float) {
+        val rad = Math.toRadians(degrees.toDouble())
+        val c = cos(rad).toFloat()
+        val s = sin(rad).toFloat()
+        for (i in 0 until 4) {
+            val u = uvBuf.get(i * 2) - 0.5f
+            val v = uvBuf.get(i * 2 + 1) - 0.5f
+            uvBuf.put(i * 2, 0.5f + u * c - v * s)
+            uvBuf.put(i * 2 + 1, 0.5f + u * s + v * c)
+        }
+        uvBuf.position(0)
     }
 
     /** Transforms the uploaded UVs through a SurfaceTexture producer matrix. */

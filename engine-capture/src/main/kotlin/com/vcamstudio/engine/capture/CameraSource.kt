@@ -237,6 +237,9 @@ class CameraSource(
     /** Sensor rotation of the active camera (0/90/180/270) for UV correction. */
     fun rotationDegrees(): Int = camera?.cameraInfo?.sensorRotationDegrees ?: 90
 
+    /** Lens facing of the active camera (front layers must mirror). */
+    fun isFrontCamera(): Boolean = boundControls?.lensFacing == LensFacing.FRONT
+
     private suspend fun <T> ListenableFuture<T>.await(): T =
         suspendCancellableCoroutine { cont ->
             addListener(

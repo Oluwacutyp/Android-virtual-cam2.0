@@ -193,13 +193,21 @@ class StudioViewModel @Inject constructor(
             // GL compositor shows upright content (RAW/PreviewView does its own).
             cameraSource.state.collect { st ->
                 if (st !is CameraSource.State.Bound) return@collect
-                val rot = cameraSource.rotationDegrees().toFloat()
+                // UV rotation = INVERSE of sensor rotation: the renderer
+                // counter-rotates the sampling window so content reads
+                // upright. Calibrated on-device: ST-only showed content 90deg
+                // off; +270 overshot to upside-down => (360 - sensor) % 360.
+                // Front camera also mirrors (selfie preview convention).
+                val rot = ((360 - cameraSource.rotationDegrees()) % 360).toFloat()
+                val mirror = cameraSource.isFrontCamera()
                 var changed = false
                 scenes.value = scenes.value.map { s ->
                     s.copy(layers = s.layers.map { l ->
-                        if (l is LayerDefinition.Camera && l.transform.uvRotationDeg != rot) {
+                        if (l is LayerDefinition.Camera &&
+                            (l.transform.uvRotationDeg != rot || l.transform.mirrorX != mirror)
+                        ) {
                             changed = true
-                            l.copy(transform = l.transform.copy(uvRotationDeg = rot))
+                            l.copy(transform = l.transform.copy(uvRotationDeg = rot, mirrorX = mirror))
                         } else l
                     })
                 }
@@ -729,10 +737,14 @@ class StudioViewModel @Inject constructor(
             controller.onError = { msg -> toast.value = "Video playback error: $msg" }
             controller.onVideoSizeChanged = { w, h, rot ->
                 engine.resizeSource(sourceId, w, h)
+                // Same inverse rule as the camera: unappliedRotationDegrees is
+                // the CW rotation the stream needs for upright display; the
+                // sampling window counter-rotates.
+                val uvRot = ((360 - rot) % 360).toFloat()
                 val layerId = videoLayer.id
                 updateLayer(layerId) { def ->
-                    if (def is LayerDefinition.Video && def.transform.uvRotationDeg != rot.toFloat()) {
-                        def.copy(transform = def.transform.copy(uvRotationDeg = rot.toFloat()))
+                    if (def is LayerDefinition.Video && def.transform.uvRotationDeg != uvRot) {
+                        def.copy(transform = def.transform.copy(uvRotationDeg = uvRot))
                     } else def
                 }
             }

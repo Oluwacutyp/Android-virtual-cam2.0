@@ -267,7 +267,17 @@ internal class RenderThread(
     // ----------------------------------------------------------------- outputs
 
     fun attachOutput(id: String, surface: Surface, width: Int, height: Int) {
-        val old = outputs.remove(id)
+        val old = outputs[id]
+        if (old != null && old.surface === surface && surface.isValid && old.eglSurface != null) {
+            // Same live surface re-attached (view resize): keep the EGL window
+            // surface — only the size changed. No destroy/recreate churn.
+            old.width = width
+            old.height = height
+            if (id == PREVIEW_OUTPUT_ID) collector.previewSize = Size(width, height)
+            noteEvent("SURFACE_RESIZED id=$id ${width}x$height (egl surface kept)")
+            return
+        }
+        outputs.remove(id)
         old?.eglSurface?.release() // previous EGL window surface released BEFORE recreate
         val out = Output(id, surface, width, height, eglSurface = null, needsReinit = true)
         out.createFailures = 0
@@ -673,7 +683,7 @@ internal class RenderThread(
             GLES30.glClearColor(0f, 0f, 0f, 1f)
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
 
-            val quad = r.letterboxQuad(scene.width, scene.height, out.width, out.height)
+            val quad = r.fillQuad(scene.width, scene.height, out.width, out.height)
             lastPresentQuad = quad.cornersPx.copyOf()
             val t = transFrac
             if (t != null && prevFbo != null) {

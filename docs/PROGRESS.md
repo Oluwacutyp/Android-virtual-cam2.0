@@ -467,3 +467,31 @@ Kept: uvRot=270 orientation fix (visible in dumps, verify once unfrozen),
 video resize path, RAW default. Success criteria (owner): presented climbing
 with lastPresentAgeMs<100, no watchdog stall spam, no freezes on RAW<->GL or
 video add, orientation correct on both devices.
+
+
+## Increment 14 — orientation math fixed properly + viewport FILL + surface short-circuit (2026-09-23)
+
+Owner-directed critical fix round (orientation + viewport fill + lifecycle only):
+
+1. **Camera/video orientation — composition-order bug + calibrated value.**
+   The UV rotation was baked into geometry BEFORE the SurfaceTexture matrix
+   applies (rotation∘flip != flip∘rotation — a flip in ST inverts the
+   effective rotation direction; the round-10 270 was over-rotated by 180 in
+   composition). Now: geometry keeps only crop+mirror; SceneRenderer applies
+   R(uvRot) AFTER the ST matrix (applyUvRotation on the transformed uvBuf).
+   Value calibrated from the user's two device data points (ST-only: 90deg
+   off; +270: upside-down => correct = 90 for these sensors):
+   uvRot = (360 - sensorRotationDegrees) % 360; video uses the same inverse
+   rule with VideoSize.unappliedRotationDegrees (same metadata MMR would
+   read). Front camera adds mirrorX = true (selfie convention); back none.
+2. **Viewport FILL (no letterbox bars)**: present path now builds the
+   output quad with FitMode.FILL (fillQuad) — the scene COVERS the preview
+   surface; 720x1280 into 1028x1675 crops edges instead of the previous FIT
+   bars (the ~43px offsets in PRESENT_QUAD were correct FIT math, now FILL
+   by design). Same-aspect outputs (recorder) are unchanged (FILL==FIT).
+3. **Surface lifecycle**: attachOutput short-circuits when the same live
+   Surface re-attaches (view resize) — keeps the EGL window surface
+   (SURFACE_RESIZED logged) instead of destroy/recreate churn. Watchdog
+   liveness semantics (render counts) already landed in increment 13; the
+   stall chains in these dumps were stale ring entries from the round-10
+   build plus legit history — current state showed lastPresentAgeMs=4-19.
