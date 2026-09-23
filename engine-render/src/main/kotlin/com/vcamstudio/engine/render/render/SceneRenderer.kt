@@ -17,6 +17,8 @@ import com.vcamstudio.engine.render.source.BitmapTextureSource
 import com.vcamstudio.engine.render.source.ExternalTextureSource
 import com.vcamstudio.engine.render.source.TextureSource
 import java.nio.ByteBuffer
+import kotlin.math.cos
+import kotlin.math.sin
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import kotlin.math.min
