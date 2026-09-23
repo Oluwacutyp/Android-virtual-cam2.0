@@ -94,7 +94,8 @@ internal class RenderThread(
         var needsReinit: Boolean,
     ) {
         var firstPresentLogged: Boolean = false
-        var makeCurrentWarned: Boolean = false
+        var makeCurrentFailures: Int = 0
+        var swapFailures: Int = 0
     }
 
     // ---- scene state (render thread only)
@@ -228,7 +229,7 @@ internal class RenderThread(
         old?.eglSurface?.release()
         outputs[id] = Output(id, surface, width, height, eglSurface = null, needsReinit = true)
         if (id == PREVIEW_OUTPUT_ID) collector.previewSize = Size(width, height)
-        Log.i(TAG, "SURFACE_ATTACHED id=$id ${width}x$height (${outputs.size} total)")
+        Log.i(TAG, "SURFACE_ATTACHED id=$id ${width}x$height valid=${surface.isValid} (${outputs.size} total)")
     }
 
     fun detachOutput(id: String) {
@@ -262,7 +263,8 @@ internal class RenderThread(
         return try {
             out.eglSurface = EglWindowSurface(egl!!, out.surface)
             out.needsReinit = false
-            out.makeCurrentWarned = false
+            out.makeCurrentFailures = 0
+            out.swapFailures = 0
             Log.i(TAG, "EGL_WINDOW_CREATED id=${out.id}")
             true
         } catch (t: Throwable) {
@@ -337,8 +339,15 @@ internal class RenderThread(
         applyPendingScene()
 
         loopIterations++
-        if (loopIterations % 300 == 0L) {
-            Log.i(TAG, "FRAME_TICK loops=$loopIterations rendered=$renderedFrameCount outputs=${outputs.size}")
+        if (loopIterations % 60 == 0L) {
+            val mcFails = outputs.values.sumOf { it.makeCurrentFailures }
+            val swapFails = outputs.values.sumOf { it.swapFailures }
+            val allValid = outputs.values.all { it.surface.isValid }
+            Log.i(
+                TAG,
+                "FRAME_TICK loops=$loopIterations rendered=$renderedFrameCount outputs=${outputs.size} " +
+                    "makeCurrentFails=$mcFails swapFails=$swapFails surfacesValid=$allValid",
+            )
         }
 
         var dirty = false
@@ -500,13 +509,22 @@ internal class RenderThread(
             }
             val es = out.eglSurface!!
             if (!es.makeCurrent()) {
-                if (!out.makeCurrentWarned) {
-                    out.makeCurrentWarned = true
-                    Log.w(TAG, "MAKE_CURRENT_FAILED id=${out.id} err=${EGL14.eglGetError()}")
+                out.makeCurrentFailures++
+                val f = out.makeCurrentFailures
+                if (f == 1 || f == 30 || f % 300 == 0) {
+                    Log.e(
+                        TAG,
+                        "MAKE_CURRENT_FAILED id=${out.id} n=$f err=${EGL14.eglGetError()} surfaceValid=${out.surface.isValid}",
+                    )
+                }
+                if (f == 30) {
+                    // Persistent current-bind failure: force a fresh EGL surface.
+                    out.needsReinit = true
+                    Log.w(TAG, "OUTPUT_RECYCLE id=${out.id} after 30 makeCurrent failures")
                 }
                 continue
             }
-            out.makeCurrentWarned = false
+            out.makeCurrentFailures = 0
 
             GLES30.glViewport(0, 0, out.width, out.height)
             GLES30.glClearColor(0f, 0f, 0f, 1f)
@@ -530,17 +548,29 @@ internal class RenderThread(
             es.setPresentationTime(frameTimeNanos)
             if (es.swap()) {
                 anySwapOk = true
-                checkGlError("present(${out.id})")
+                out.swapFailures = 0
+                // A GL error AFTER a successful swap must never abort the
+                // frame loop or fake a zero presented-count (round-4 bug).
+                runCatching { checkGlError("present(${out.id})") }
+                    .onFailure {
+                        Log.w(TAG, "POST_SWAP_GL_ERROR id=${out.id}: ${it.message} (swap OK, frame counted)")
+                    }
                 if (!out.firstPresentLogged) {
                     out.firstPresentLogged = true
                     Log.i(TAG, "FIRST_PRESENT ${out.id} ${out.width}x${out.height}")
                 }
             } else {
+                out.swapFailures++
+                val f = out.swapFailures
                 Log.w(
                     TAG,
-                    "SWAP_FAILED id=${out.id} err=0x${Integer.toHexString(EGL14.eglGetError())} — scheduling recovery",
+                    "SWAP_FAILED id=${out.id} n=$f err=0x${Integer.toHexString(EGL14.eglGetError())} surfaceValid=${out.surface.isValid}",
                 )
-                out.needsReinit = true
+                if (f >= 30) {
+                    out.needsReinit = true
+                    out.swapFailures = 0
+                    Log.w(TAG, "OUTPUT_RECYCLE id=${out.id} after 30 swap failures")
+                }
             }
         }
 
@@ -567,13 +597,18 @@ internal class RenderThread(
             }
             val es = out.eglSurface!!
             if (!es.makeCurrent()) {
-                if (!out.makeCurrentWarned) {
-                    out.makeCurrentWarned = true
-                    Log.w(TAG, "MAKE_CURRENT_FAILED id=${out.id} err=${EGL14.eglGetError()} (blank)")
+                out.makeCurrentFailures++
+                val f = out.makeCurrentFailures
+                if (f == 1 || f == 30 || f % 300 == 0) {
+                    Log.e(
+                        TAG,
+                        "MAKE_CURRENT_FAILED id=${out.id} n=$f err=${EGL14.eglGetError()} surfaceValid=${out.surface.isValid} (blank)",
+                    )
                 }
+                if (f == 30) out.needsReinit = true
                 continue
             }
-            out.makeCurrentWarned = false
+            out.makeCurrentFailures = 0
             GLES30.glViewport(0, 0, out.width, out.height)
             GLES30.glClearColor(0f, 0f, 0f, 1f)
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)

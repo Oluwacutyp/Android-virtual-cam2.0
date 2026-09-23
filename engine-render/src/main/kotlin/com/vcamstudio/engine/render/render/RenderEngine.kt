@@ -175,7 +175,7 @@ class RenderEngine(
         val d = _diagnostics.value
         return buildString {
             appendLine("VCAM-DIAG v1")
-            appendLine("health=$d.health")
+            appendLine("health=${d.health}")
             appendLine("fps=${"%.1f".format(d.fps)}")
             appendLine("presented=${d.presentedFrames}")
             appendLine("rendered=${thread.renderedFrameCount}")
@@ -189,9 +189,9 @@ class RenderEngine(
             appendLine("scene=${d.sceneSize?.let { "${it.width}x${it.height}" } ?: "none"}")
             appendLine("preview=${d.previewSize?.let { "${it.width}x${it.height}" } ?: "none"}")
             appendLine("sources=${d.externalSourceCount}")
-            appendLine("renderer=$d.glRenderer")
-            appendLine("gl=$d.glVersion")
-            appendLine("egl=$d.eglApi")
+            appendLine("renderer=${d.glRenderer}")
+            appendLine("gl=${d.glVersion}")
+            appendLine("egl=${d.eglApi}")
             d.initError?.let { appendLine("initError=$it") }
             d.recoveries.forEach { appendLine("recovery=@${it.atMs} ${it.reason}") }
         }

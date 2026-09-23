@@ -33,6 +33,7 @@ class ExternalTextureSource(
 
     private val framePending = AtomicBoolean(false)
     private var hasFrame = false
+    private var frameCount = 0L
 
     @Suppress("DEPRECATION") // single-arg ctor is the supported pattern for GL-owned textures
     val surfaceTexture: SurfaceTexture = SurfaceTexture(glTextureId).also {
@@ -61,6 +62,10 @@ class ExternalTextureSource(
             android.util.Log.i("vcam-render", "FIRST_CAMERA_FRAME $sourceId")
         }
         hasFrame = true
+        frameCount++
+        if (frameCount == 1L || frameCount % 60L == 0L) {
+            android.util.Log.i("vcam-render", "FRAME_FLOW $sourceId n=$frameCount")
+        }
         return true
     }
 

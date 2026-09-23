@@ -245,3 +245,36 @@ banner did exactly its job: made a silent boot failure impossible to miss.
 
 Status: fix is logically airtight but NOT claimed device-verified until the
 user confirms the live camera renders. Round 4 device test pending.
+
+
+## Increment 7 — round 4 triage: shader precision (Camon 20) + present-path hardening (Samsung) (2026-09-23)
+
+Two devices, two precise diagnoses:
+
+1. **Tecno Camon 20 — ENGINE INIT FAILED: S0032 no default precision for
+   'uLut3d'.** GLSL ES 3.0 defines NO default precision for sampler3D
+   (sampler2D has one; sampler3D does not), so the LUT fragment variant
+   failed to compile on Mali. Fixed exactly as diagnosed: the LUT variant now
+   emits `precision mediump sampler3D;` before the uniform, and every
+   fragment shader now declares `precision mediump int;` alongside its
+   existing `precision highp float;`.
+2. **Samsung Adreno 730 — HEALTHY, rendered=6, presented=0.** Engine up,
+   scene rendered, 2 sources created, preview attached — but zero presents.
+   Audit found one REAL present-path bug: `anySwapOk = true` was set before
+   `checkGlError("present(...)")`, so a post-swap GL error threw out of
+   presentAll and the frame was never counted (presented=fake-0). Now
+   post-swap errors are caught and logged — the frame counts. Additionally,
+   persistent makeCurrent/swap failures (the other two states that produce
+   this exact dump signature while staying HEALTHY) now carry per-output
+   failure counters: logged at n=1/30/300 with the EGL error and surface
+   validity, EGL surface recycled at 30 consecutive failures. FRAME_TICK now
+   fires every 60 loops with makeCurrentFails/swapFails/surfacesValid, and
+   FRAME_FLOW logs camera frame arrival per source (to confirm the producer
+   side). SURFACE_ATTACHED logs surface validity.
+3. **Dump formatting fixed**: `$d.health` in Kotlin templates does not call
+   the property — the dump printed the whole snapshot toString. All four
+   fields now use `${...}` interpolation.
+
+Acceptance for Phase 1 gate (owner): Camon 20 boots without shader error;
+Samsung shows live camera + video with presented > 0 and fps > 0. Not claimed
+fixed until device-confirmed.

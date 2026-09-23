@@ -106,10 +106,10 @@ uniform float uCornerPx;
         return buildString {
             append("#version 300 es\n")
             append(ext)
-            append("precision highp float;\n")
+            append("precision highp float;\nprecision mediump int;\n")
             append("in vec2 vUV;\nin vec2 vLocal;\nout vec4 fragColor;\n")
             append(FX_UNIFORMS.replace("SAMPLER", samplerType))
-            if (withLut) append("uniform sampler3D uLut3d;\nuniform float uLutMix;\n")
+            if (withLut) append("precision mediump sampler3D;\nuniform sampler3D uLut3d;\nuniform float uLutMix;\n")
             append(ROUNDED_ALPHA)
             append(APPLY_GRADE)
             append("void main() {\n")
@@ -126,6 +126,7 @@ uniform float uCornerPx;
 
     const val FRAG_FILL = """#version 300 es
 precision highp float;
+precision mediump int;
 in vec2 vUV;
 in vec2 vLocal;
 out vec4 fragColor;
@@ -143,6 +144,7 @@ void main() {
     /** Separable 5-tap gaussian (linear-sample optimized). uDir = step*radius. */
     const val FRAG_BLUR = """#version 300 es
 precision highp float;
+precision mediump int;
 in vec2 vUV;
 out vec4 fragColor;
 uniform sampler2D uTex;
@@ -164,6 +166,7 @@ void main() {
      */
     const val FRAG_BLEND = """#version 300 es
 precision highp float;
+precision mediump int;
 in vec2 vUV;
 out vec4 fragColor;
 uniform sampler2D uSrc;
@@ -214,6 +217,7 @@ void main() {
     /** Passthrough copy (present-to-window, FBO copies, transition fading). */
     const val FRAG_COPY = """#version 300 es
 precision highp float;
+precision mediump int;
 in vec2 vUV;
 out vec4 fragColor;
 uniform sampler2D uTex;
