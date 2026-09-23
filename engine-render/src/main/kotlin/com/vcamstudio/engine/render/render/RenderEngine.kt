@@ -134,6 +134,11 @@ class RenderEngine(
         thread.post { thread.removeLut(name) }
     }
 
+    /** Video aspect known: resize the shared external buffer. */
+    fun resizeSource(sourceId: String, width: Int, height: Int) {
+        thread.post { thread.resizeSource(sourceId, width, height) }
+    }
+
     /** Attaches the encoder input surface as a second output (recording). */
     fun attachRecordingOutput(surface: Surface, width: Int, height: Int) {
         thread.post { thread.attachOutput(RenderThread.RECORDING_OUTPUT_ID, surface, width, height) }

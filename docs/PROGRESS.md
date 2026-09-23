@@ -404,3 +404,35 @@ BOTH vendors**; RAW camera + image overlay visually confirmed. Remaining:
 
 Acceptance (owner): GL preview visibly non-black; video overlay works. The
 SCENE_PIXEL readback makes the next report conclusive either way.
+
+
+## Increment 12 — round 9: orientation (UV rotation), video aspect, present pacing (2026-09-23)
+
+Round 9 milestone: GL compositor RENDERS CONTENT on both devices (59-100 fps,
+HEALTHY, SCENE_PIXEL readbacks show real scene colors). Remaining visual
+defects and fixes:
+
+1. **90-degree rotated content (both devices, camera AND video)**: camera
+   sensor buffers and video streams store frames rotated (rotation lives in
+   metadata, not pixels, for surface outputs). Added `uvRotationDeg` to
+   LayerTransform: LayerGeometry rotates the sampling window around the UV
+   center; CameraSource exposes cameraInfo.rotationDegrees (VM applies to all
+   camera layers on Bound); VideoLayerController now reports
+   VideoSize.unappliedRotationDegrees (VM applies + commits).
+2. **Video aspect/framing**: video layers kept the default 1280x720 buffer
+   regardless of the real stream size -> wrong aspect. New
+   RenderEngine.resizeSource: onVideoSizeChanged resizes the shared
+   SurfaceTexture buffer to the true video size (SOURCE_RESIZED logged).
+3. **Jitter / present pacing**: presentAttempts was exactly 2x presented —
+   Choreographer at 120Hz presented every vsync while content changed at
+   ~60. Present-on-change: redundant swaps skipped (TextureView holds the
+   last frame); also fixed a latent multi-output bug where
+   transitionFraction() (state-mutating) advanced once PER OUTPUT per frame.
+4. **Decisive geometry telemetry**: DRAW_STATS now includes the first
+   visible layer's full transform AND the actual on-screen PRESENT_QUAD
+   corners — if the diagonal wedge survives this round, the dump shows
+   whether the quad itself is a bowtie or the sampling is wrong.
+
+RAW stays the default stable path; Camera Pro rebind-debounce from round 8
+unchanged. Acceptance: GL camera correctly framed on both devices (no
+diagonal wedge), video overlay visible + oriented, GL watchable.

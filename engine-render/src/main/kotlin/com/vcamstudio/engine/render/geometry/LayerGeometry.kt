@@ -103,6 +103,18 @@ object LayerGeometry {
             var v = cornerV[i]
             if (transform.mirrorX) u = (u0 + u1) - u
             if (transform.mirrorY) v = (v0 + v1) - v
+            // Producer-stored rotation (camera sensor / video metadata):
+            // rotate the sampling window around the UV center so the content
+            // reads upright regardless of buffer orientation.
+            if (transform.uvRotationDeg != 0f) {
+                val ru = u - 0.5f
+                val rv = v - 0.5f
+                val rad = Math.toRadians(transform.uvRotationDeg.toDouble())
+                val c = cos(rad).toFloat()
+                val s = sin(rad).toFloat()
+                u = 0.5f + ru * c - rv * s
+                v = 0.5f + ru * s + rv * c
+            }
             uvs[i * 2] = u
             uvs[i * 2 + 1] = v
         }

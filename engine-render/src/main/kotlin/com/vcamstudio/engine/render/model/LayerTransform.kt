@@ -18,6 +18,8 @@ data class LayerTransform(
     val mirrorX: Boolean = false,
     val mirrorY: Boolean = false,
     val fitMode: FitMode = FitMode.FILL,
+    /** UV rotation for producer-stored-rotated buffers (camera sensor, video). */
+    val uvRotationDeg: Float = 0f,
     /** Corner radius as a fraction of the smaller displayed dimension (0..0.5). */
     val cornerRadius: Float = 0f,
 ) {

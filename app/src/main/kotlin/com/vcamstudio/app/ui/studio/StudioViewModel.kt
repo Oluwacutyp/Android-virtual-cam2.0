@@ -189,6 +189,24 @@ class StudioViewModel @Inject constructor(
             settings.sceneResolution.collect { sceneResolution.value = it }
         }
         viewModelScope.launch {
+            // Camera bound -> apply sensor rotation to camera-layer UVs so the
+            // GL compositor shows upright content (RAW/PreviewView does its own).
+            cameraSource.state.collect { st ->
+                if (st !is CameraSource.State.Bound) return@collect
+                val rot = cameraSource.rotationDegrees().toFloat()
+                var changed = false
+                scenes.value = scenes.value.map { s ->
+                    s.copy(layers = s.layers.map { l ->
+                        if (l is LayerDefinition.Camera && l.transform.uvRotationDeg != rot) {
+                            changed = true
+                            l.copy(transform = l.transform.copy(uvRotationDeg = rot))
+                        } else l
+                    })
+                }
+                if (changed) commit()
+            }
+        }
+        viewModelScope.launch {
             // Kick the engine alive with a first scene.
             engine.start()
             createSceneInternal()
@@ -700,6 +718,15 @@ class StudioViewModel @Inject constructor(
                 MixerAudioTap { pcm, ch, _ -> mixer.offerPcm(AudioBusId.MEDIA, pcm, ch) },
             )
             controller.onError = { msg -> toast.value = "Video playback error: $msg" }
+            controller.onVideoSizeChanged = { w, h, rot ->
+                engine.resizeSource(sourceId, w, h)
+                val layerId = videoLayer.id
+                updateLayer(layerId) { def ->
+                    if (def is LayerDefinition.Video && def.transform.uvRotationDeg != rot.toFloat()) {
+                        def.copy(transform = def.transform.copy(uvRotationDeg = rot.toFloat()))
+                    } else def
+                }
+            }
             videoControllers[sourceId] = controller
             controller.load(
                 surface = surface,

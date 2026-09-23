@@ -99,6 +99,7 @@ internal class RenderThread(
         var createFailures: Int = 0
         var lastCreateAttemptMs: Long = 0L
         var gaveUp: Boolean = false
+        var lastPresentedTex: Int = 0
     }
 
     // ---- scene state (render thread only)
@@ -128,6 +129,11 @@ internal class RenderThread(
     /** Swap attempts that reached the driver (dump: attempted vs succeeded). */
     @Volatile
     var presentAttemptCount: Long = 0
+        private set
+
+    /** Last on-screen letterbox quad (dump: catches geometric wedges). */
+    @Volatile
+    var lastPresentQuad: FloatArray = FloatArray(0)
         private set
     private var loopIterations = 0L
 
@@ -281,6 +287,16 @@ internal class RenderThread(
 
     fun removeLut(name: String) {
         renderer?.lutCache?.remove(name)
+    }
+
+    /** Producer aspect known (video size): resize the shared buffer. */
+    fun resizeSource(sourceId: String, width: Int, height: Int) {
+        val src = externalSources[sourceId] ?: return
+        if (src.width == width && src.height == height) return
+        runCatching { src.surfaceTexture.setDefaultBufferSize(width, height) }
+        src.setSize(width, height)
+        sceneNeedsRender = true
+        noteEvent("SOURCE_RESIZED $sourceId ${width}x$height")
     }
 
     fun requestOutputRecovery(reason: String) {
@@ -534,8 +550,15 @@ internal class RenderThread(
             )
             GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
             val err = GLES30.glGetError()
+            val first = scene.layers.firstOrNull { it.visible && it.opacity > 0.01f }
+            val tInfo = first?.let {
+                val t = it.transform
+                " L0=${it.javaClass.simpleName}(cx=${t.centerX},cy=${t.centerY},w=${t.width},h=${t.height}," +
+                    "uvRot=${t.uvRotationDeg},mx=${t.mirrorX})"
+            } ?: ""
             noteEvent(
-                "DRAW_STATS drawn=$drawn noContent=$noContent noSource=$noSource " +
+                "DRAW_STATS drawn=$drawn noContent=$noContent noSource=$noSource$tInfo " +
+                    "PRESENT_QUAD=${lastPresentQuad.toList().map { (it * 10).toInt() / 10f }} " +
                     "SCENE_PIXEL=[${px.get(0)},${px.get(1)},${px.get(2)},${px.get(3)}] glErr=0x${Integer.toHexString(err)}",
             )
         }
@@ -592,10 +615,14 @@ internal class RenderThread(
         }
 
         val nowMs = clock.nowMs()
+        val transFrac = transitionFraction(nowMs) // ONCE per frame (state-mutating)
         var anySwapOk = false
 
         for (out in outputs.values) {
             if (out.gaveUp) continue
+            // Present-on-change: TextureView holds the last frame; skipping
+            // redundant swaps removes 120Hz double-present jitter.
+            if (transFrac == null && out.lastPresentedTex == presentedSceneTex) continue
             if (!out.surface.isValid) {
                 // 0x300d class: producer surface already dead — force a fresh
                 // window surface instead of swapping at a corpse.
@@ -629,7 +656,8 @@ internal class RenderThread(
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
 
             val quad = r.letterboxQuad(scene.width, scene.height, out.width, out.height)
-            val t = transitionFraction(nowMs)
+            lastPresentQuad = quad.cornersPx.copyOf()
+            val t = transFrac
             if (t != null && prevFbo != null) {
                 GLES30.glEnable(GLES30.GL_BLEND)
                 GLES30.glBlendFuncSeparate(
@@ -654,6 +682,7 @@ internal class RenderThread(
                     .onFailure {
                         Log.w(TAG, "POST_SWAP_GL_ERROR id=${out.id}: ${it.message} (swap OK, frame counted)")
                     }
+                out.lastPresentedTex = presentedSceneTex
                 if (!out.firstPresentLogged) {
                     out.firstPresentLogged = true
                     noteEvent("FIRST_PRESENT ${out.id} ${out.width}x${out.height}")

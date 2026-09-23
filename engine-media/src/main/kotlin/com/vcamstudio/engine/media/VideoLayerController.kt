@@ -36,7 +36,7 @@ class VideoLayerController(
     var videoSizePx: Pair<Int, Int> = 0 to 0
         private set
 
-    var onVideoSizeChanged: ((width: Int, height: Int) -> Unit)? = null
+    var onVideoSizeChanged: ((width: Int, height: Int, unappliedRotationDegrees: Int) -> Unit)? = null
     var onError: ((message: String) -> Unit)? = null
 
     /** Engine external-texture surface, kept so GL mode can re-attach after RAW. */
@@ -65,7 +65,7 @@ class VideoLayerController(
                 val w = (videoSize.width * videoSize.pixelWidthHeightRatio).toInt().coerceAtLeast(1)
                 val h = videoSize.height.coerceAtLeast(1)
                 videoSizePx = w to h
-                onVideoSizeChanged?.invoke(w, h)
+                onVideoSizeChanged?.invoke(w, h, videoSize.unappliedRotationDegrees)
             }
 
             override fun onPlayerError(error: PlaybackException) {

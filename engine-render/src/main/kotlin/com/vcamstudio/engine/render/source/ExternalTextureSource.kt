@@ -27,6 +27,12 @@ class ExternalTextureSource(
     override var height: Int = bufferHeight
         private set
 
+    /** Called when the producer's real aspect becomes known (video size). */
+    internal fun setSize(w: Int, h: Int) {
+        width = w
+        height = h
+    }
+
     override val target: Int = GLES11Ext.GL_TEXTURE_EXTERNAL_OES
 
     override val glTextureId: Int = glGenOesTexture()
