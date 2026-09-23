@@ -311,6 +311,27 @@ private fun StageArea(state: StudioViewModel.UiState, vm: StudioViewModel, modif
                                 }
                             }
                         }
+                    state.activeScene?.layers
+                        ?.filterIsInstance<LayerDefinition.Video>()
+                        ?.forEach { layer ->
+                            AndroidView(
+                                factory = { ctx ->
+                                    androidx.media3.ui.PlayerView(ctx).apply {
+                                        useController = false
+                                        resizeMode =
+                                            androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
+                                        setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
+                                    }
+                                },
+                                update = { vm.bindVideoOverlay(layer.sourceId, it) },
+                                modifier = Modifier
+                                    .align(Alignment.Center)
+                                    .fillMaxSize(
+                                        layer.transform.width.coerceIn(0.05f, 1f),
+                                        layer.transform.height.coerceIn(0.05f, 1f),
+                                    ),
+                            )
+                        }
                     Text(
                         "RAW PREVIEW — switch to GL compositor in Diagnostics",
                         style = MaterialTheme.typography.labelSmall,
@@ -322,7 +343,7 @@ private fun StageArea(state: StudioViewModel.UiState, vm: StudioViewModel, modif
                 } else {
                     AndroidView(
                         factory = { ctx ->
-                            StageView(ctx).apply {
+                            TextureStageView(ctx).apply {
                                 onSurfaceReady = { surface, w, h -> vm.attachStage(surface, w, h) }
                                 onSurfaceGone = { vm.detachStage() }
                                 onTap = { x, y, vw, vh -> vm.tapToFocus(x, y, vw, vh) }

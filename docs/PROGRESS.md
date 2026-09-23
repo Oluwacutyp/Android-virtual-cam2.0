@@ -376,3 +376,31 @@ no uploadQuad crash; Image layer visible over RAW. GL compositor should now
 also render for the first time ever (presented>0) — verify via the RAW/GL
 toggle; any residual GL-path visual bugs are now debuggable with milestone
 logs instead of crashes.
+
+
+## Increment 11 — round 8: TextureView GL stage + FBO readback + video RAW overlay + 0x300d (2026-09-23)
+
+Round 8 milestone: **59 fps, presented 5800-7000+, HEALTHY, zero crashes on
+BOTH vendors**; RAW camera + image overlay visually confirmed. Remaining:
+
+1. **GL compositor presents (swaps OK, 59fps) but screen black** on both
+   devices. Two possible halves — black FBO content or invisible surface —
+   this round attacks BOTH:
+   - GL stage switched from SurfaceView to **TextureView**
+     (TextureStageView): lives inside the view hierarchy, so occlusion /
+     z-order / punch-through failures are structurally impossible.
+   - **DRAW_STATS + SCENE_PIXEL readback** in the dump ring every ~300
+     renders: per-layer drawn/noContent/noSource tallies plus the actual
+     center RGBA of the composited scene FBO — the next dump alone decides
+     whether the draw path or the present path is at fault.
+2. **Video overlay in RAW**: video layers now route their ExoPlayer into a
+   PlayerView overlay (RESIZE_MODE_FILL, transparent shutter) above the RAW
+   camera; switching to GL returns them to the engine external texture
+   (VideoLayerController.showOnPlayerView keeps the engine surface for
+   re-attach). media3-ui added (api, engine-media).
+3. **0x300d hardening**: present loop gates on surface validity before
+   makeCurrent (dead surface -> immediate window-surface recycle) and swap
+   failures on an invalid surface force reinit — no more swapping at corpses.
+
+Acceptance (owner): GL preview visibly non-black; video overlay works. The
+SCENE_PIXEL readback makes the next report conclusive either way.

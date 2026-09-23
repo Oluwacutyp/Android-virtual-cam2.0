@@ -17,6 +17,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
 
 /**
  * Drives one video layer: decodes with ExoPlayer and renders into an
@@ -38,7 +39,10 @@ class VideoLayerController(
     var onVideoSizeChanged: ((width: Int, height: Int) -> Unit)? = null
     var onError: ((message: String) -> Unit)? = null
 
-    private val player: ExoPlayer = run {
+    /** Engine external-texture surface, kept so GL mode can re-attach after RAW. */
+    private var engineSurface: Surface? = null
+
+    val player: ExoPlayer = run {
         val renderersFactory = if (audioTap != null) {
             object : DefaultRenderersFactory(context) {
                 @OptIn(UnstableApi::class)
@@ -96,6 +100,7 @@ class VideoLayerController(
         trimStartMs: Long = 0L,
         trimEndMs: Long = C.TIME_UNSET,
     ) {
+        engineSurface = surface
         player.setVideoSurface(surface)
         val item = MediaItem.Builder().setUri(uri)
         if (trimStartMs > 0 || trimEndMs != C.TIME_UNSET) {
@@ -112,6 +117,19 @@ class VideoLayerController(
         player.playbackParameters = player.playbackParameters.withSpeed(speed.coerceIn(0.25f, 4f))
         player.prepare()
         player.playWhenReady = true
+    }
+
+    /**
+     * RAW overlay routing: render into a [PlayerView] (view-hierarchy surface,
+     * visible over the RAW camera preview) or, with null, back into the engine
+     * external texture (GL compositor mode).
+     */
+    fun showOnPlayerView(view: PlayerView?) {
+        if (view == null) {
+            engineSurface?.let { player.setVideoSurface(it) }
+        } else {
+            view.player = player
+        }
     }
 
     fun setLoop(loop: Boolean) {

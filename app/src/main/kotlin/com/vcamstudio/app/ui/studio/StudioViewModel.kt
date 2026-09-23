@@ -230,11 +230,22 @@ class StudioViewModel @Inject constructor(
     /** RAW preview overlay: decoded bitmap for an image layer's source. */
     fun rawImageBitmap(sourceId: String): android.graphics.Bitmap? = imageCache[sourceId]
 
+    /** RAW overlay: route a video layer's player into the given PlayerView. */
+    fun bindVideoOverlay(sourceId: String, view: androidx.media3.ui.PlayerView) {
+        videoControllers[sourceId]?.showOnPlayerView(view)
+    }
+
     fun setPreviewMode(raw: Boolean) {
         if (rawMode.value == raw) return
         rawMode.value = raw
         Timber.i("PREVIEW_MODE ${if (raw) "RAW" else "GL"}")
-        if (raw) maybeBindRawCamera() else rebindCameraToEngine()
+        if (raw) {
+            maybeBindRawCamera()
+        } else {
+            // Video layers return from PlayerView overlays to the engine texture.
+            videoControllers.values.forEach { it.showOnPlayerView(null) }
+            rebindCameraToEngine()
+        }
     }
 
     private fun maybeBindRawCamera() {

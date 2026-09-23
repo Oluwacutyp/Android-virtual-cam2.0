@@ -30,5 +30,6 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     api(libs.media3.exoplayer)
     api(libs.media3.common)
+    api(libs.media3.ui)
     testImplementation(libs.junit)
 }

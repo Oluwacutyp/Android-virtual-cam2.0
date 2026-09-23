@@ -479,27 +479,39 @@ internal class RenderThread(
 
         r.beginScene(currentFbo(), scene.backgroundArgb)
 
+        var drawn = 0
+        var noContent = 0
+        var noSource = 0
         for (layer in scene.layers) {
             if (!layer.visible || layer.opacity <= 0.01f) continue
             when (layer) {
                 is LayerDefinition.Color -> {
                     r.drawColorLayer(layer, currentFbo(), scene.width, scene.height)
+                    drawn++
                 }
                 is LayerDefinition.Camera -> {
-                    val src = externalSources[layer.id] ?: continue
-                    drawTextureLayer(layer, src, scene)
+                    val src = externalSources[layer.id]
+                    if (src == null) noSource++
+                    else if (!src.hasContent()) noContent++
+                    else { drawTextureLayer(layer, src, scene); drawn++ }
                 }
                 is LayerDefinition.Image -> {
-                    val src = bitmapSources[layer.sourceId] ?: continue
-                    drawTextureLayer(layer, src, scene)
+                    val src = bitmapSources[layer.sourceId]
+                    if (src == null) noSource++
+                    else if (!src.hasContent()) noContent++
+                    else { drawTextureLayer(layer, src, scene); drawn++ }
                 }
                 is LayerDefinition.Video -> {
-                    val src = externalSources[layer.sourceId] ?: continue
-                    drawTextureLayer(layer, src, scene)
+                    val src = externalSources[layer.sourceId]
+                    if (src == null) noSource++
+                    else if (!src.hasContent()) noContent++
+                    else { drawTextureLayer(layer, src, scene); drawn++ }
                 }
                 is LayerDefinition.Text -> {
-                    val src = bitmapSources[layer.id] ?: continue
-                    drawTextureLayer(layer, src, scene)
+                    val src = bitmapSources[layer.id]
+                    if (src == null) noSource++
+                    else if (!src.hasContent()) noContent++
+                    else { drawTextureLayer(layer, src, scene); drawn++ }
                 }
             }
         }
@@ -509,6 +521,23 @@ internal class RenderThread(
         renderedFrameCount++
         if (renderedFrameCount == 1L) {
             noteEvent("FIRST_SCENE_RENDER ${scene.width}x${scene.height}")
+        }
+        // Every ~300 renders: prove whether the scene FBO actually contains
+        // pixels (decides "draw path broken" vs "present path broken" from a
+        // dump alone). Center pixel of the composited scene.
+        if (renderedFrameCount % 300L == 1L) {
+            val px = java.nio.ByteBuffer.allocateDirect(4)
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, currentFbo().handle)
+            GLES30.glReadPixels(
+                scene.width / 2, scene.height / 2, 1, 1,
+                GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, px,
+            )
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+            val err = GLES30.glGetError()
+            noteEvent(
+                "DRAW_STATS drawn=$drawn noContent=$noContent noSource=$noSource " +
+                    "SCENE_PIXEL=[${px.get(0)},${px.get(1)},${px.get(2)},${px.get(3)}] glErr=0x${Integer.toHexString(err)}",
+            )
         }
     }
 
@@ -567,6 +596,12 @@ internal class RenderThread(
 
         for (out in outputs.values) {
             if (out.gaveUp) continue
+            if (!out.surface.isValid) {
+                // 0x300d class: producer surface already dead — force a fresh
+                // window surface instead of swapping at a corpse.
+                out.needsReinit = true
+                if (!reinitOutput(out)) continue
+            }
             presentAttemptCount++ // reached the present path for this output
             if (out.needsReinit || out.eglSurface == null) {
                 if (!reinitOutput(out)) continue
@@ -629,6 +664,7 @@ internal class RenderThread(
                 noteEvent(
                     "SWAP_FAILED id=${out.id} n=$f err=0x${Integer.toHexString(EGL14.eglGetError())} surfaceValid=${out.surface.isValid}",
                 )
+                if (!out.surface.isValid) out.needsReinit = true
                 if (f >= 30) {
                     out.needsReinit = true
                     out.swapFailures = 0
