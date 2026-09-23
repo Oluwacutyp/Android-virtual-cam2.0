@@ -99,16 +99,13 @@ object LayerGeometry {
             corners[i * 2] = cx + rx * drawW
             corners[i * 2 + 1] = cy + ry * drawH
 
-            var u = cornerU[i]
-            var v = cornerV[i]
-            if (transform.mirrorX) u = (u0 + u1) - u
-            if (transform.mirrorY) v = (v0 + v1) - v
-            // NOTE: uvRotationDeg is NOT applied here. For external sources the
-            // SurfaceTexture matrix (flip/transform) must compose FIRST, then
-            // the rotation — SceneRenderer.applyUvRotation runs after ST for
-            // exactly that ordering (rotation∘flip != flip∘rotation).
-            uvs[i * 2] = u
-            uvs[i * 2 + 1] = v
+            // NOTE: mirrors and uvRotationDeg are NOT applied here. A UV
+            // transform composed BEFORE the producer ST matrix conjugates
+            // through its flip (rotation∘flip != flip∘rotation; a pre-ST
+            // mirror renders as a VERTICAL flip). Both now live exclusively
+            // in SceneRenderer.bindSource via SourceUvMath, post-ST.
+            uvs[i * 2] = cornerU[i]
+            uvs[i * 2 + 1] = cornerV[i]
         }
         return Quad(corners, uvs)
     }

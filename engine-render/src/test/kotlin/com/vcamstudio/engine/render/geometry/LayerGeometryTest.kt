@@ -62,14 +62,16 @@ class LayerGeometryTest {
     }
 
     @Test
-    fun `mirror x flips u coordinates`() {
+    fun `mirror x no longer flips u coordinates in geometry - renderer does post-ST`() {
         val quad = LayerGeometry.compute(
             LayerTransform(width = 1f, height = 1f, fitMode = FitMode.STRETCH, mirrorX = true),
             sourceWidthPx = 100f, sourceHeightPx = 100f,
             sceneWidthPx = sceneW, sceneHeightPx = sceneH,
         )
-        assertEquals(1f, quad.uvs[0], 1e-5f) // TL u = 1
-        assertEquals(0f, quad.uvs[2], 1e-5f) // TR u = 0
+        // Geometry is mirror-agnostic (a pre-ST mirror conjugates through the
+        // producer flip into a vertical image flip); SourceUvMath mirrors.
+        assertEquals(0f, quad.uvs[0], 1e-5f)
+        assertEquals(1f, quad.uvs[2], 1e-5f)
     }
 
     @Test

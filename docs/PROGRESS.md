@@ -495,3 +495,63 @@ Owner-directed critical fix round (orientation + viewport fill + lifecycle only)
    liveness semantics (render counts) already landed in increment 13; the
    stall chains in these dumps were stale ring entries from the round-10
    build plus legit history — current state showed lastPresentAgeMs=4-19.
+
+
+## Increment 15 — canonical ST→UV pipeline (SourceUvMath) + device-calibrated rotation values + wedge guard + golden-frame CI (2026-09-23)
+
+Round-14 directive: fix sideways camera, missing/incorrect front mirror, and the
+diagonal wedge; CI must catch this class going forward.
+
+**Diagnosis (machine-verified, see SourceOrientationGoldenTest):**
+- The sampling transform chain is closed under axis-aligned centered maps — a
+  90-degree UV rotation about the window center CANNOT leave [0,1]. The
+  handed-over "rotation pushes UVs off the texture" mechanism is refuted; the
+  wedge's true on-device trigger is still unidentified (r9 Camon precedent had
+  NO rotation and NO FILL, so it predates both). Mitigations shipped: hard
+  UV clamp (OOB OES sampling now impossible) + OES_ORIENT dump line (ST
+  matrix, base and final UVs, 1 Hz) so any recurrence is decidable from one dump.
+- REAL BUG (mirror): mirrorX was applied in geometry BEFORE the producer ST
+  matrix. flip∘mirrorH == mirrorV∘flip — the front-camera mirror rendered as a
+  VERTICAL flip. Mirrors moved to the renderer, post-ST.
+- REAL BUG (rotation value): device data triangulates the buffer content at
+  delta=270 CW: rot 0 -> 90 off (build r9/r12-A), rot 90 -> upside-down
+  (builds r10-12 "geometry 270 pre-ST" AND r13 "renderer 90 post-ST" are the
+  SAME sampling map by flip conjugation — the machine reproduces both at 180),
+  therefore upright = rot 270 == the sensor value itself. The round-13 formula
+  (360-sensor) had the sign inverted by ignoring the conjugation. CameraX's
+  Transform-output page confirms the buffer is NOT pre-rotated ("the output is
+  twofold: the buffer and the transformation info"), so the refuted handed-over
+  premise #1 (ST already carries the rotation) does not hold for this pipeline.
+- Present path was verified already rotation-free (drawTextureQuad); no change needed.
+- Front-camera mirror must compose AFTER rotation (post-rotation window mirror
+  == display-horizontal mirror; pre-rotation conjugates by 180 under 90-degree
+  rotations — machine-verified).
+
+**Changes:**
+- NEW engine-render geometry/SourceUvMath.kt — pure, unit-golden-tested
+  canonical chain: base window -> ST matrix -> rotate(window center) ->
+  mirrorU -> clamp[0,1]. SceneRenderer.bindSource is its only production caller.
+- SceneRenderer: bindSource(uvRotationDeg, mirrorX); applyUvRotation /
+  applyStMatrixToUv (android.opengl.Matrix path) deleted; OES_ORIENT dump line.
+- LayerGeometry: mirrors removed (geometry = placement/crop only).
+- StudioViewModel: camera uvRot = rotationDegrees() (sensor); video uvRot =
+  unappliedRotationDegrees (ExoPlayer contract; sampling-rotation ==
+  metadata value, golden-tested with 16:9 fixture).
+- RenderThread.oesDebugLine + RenderEngine.dump wiring.
+- NEW SourceOrientationGoldenTest (software rasterizer): upright/mirror
+  golden frames for back/front/video, the two shipped-defect memorials
+  (rot 0 -> 90, rot 90 -> 180), OOB sweep across producer matrices x
+  rotations, FILL coverage/symmetry, geometry mirror-agnosticism.
+
+**DEVICE VERIFICATION CHECKLIST (owner to confirm on both devices; standing
+rule: not fixed until confirmed):**
+- (a) Back camera upright at 720x1280 AND 1080x1920.
+- (b) Front camera upright AND mirrored in GL (selfie convention).
+- (c) Rotated phone videos upright and filling, no wedge.
+- (d) Fast RAW<->GL source toggle: no black periods, no wedge.
+- (e) FILL behavior: side/top crop allowed; diagonal wedge NOT.
+- (f) View resize (PiP, split screen, rotate): no SURFACE_RESIZED storm, no
+  EGL re-creation for the same live Surface.
+Dump request: send a diagnostics dump after this build - it now includes
+OES_ORIENT (uvRot, mirrorX, ST matrix, base/final UVs) + PRESENT_QUAD +
+SURFACE_RESIZED/SURFACE_ATTACHED events.

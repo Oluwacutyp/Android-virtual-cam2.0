@@ -79,6 +79,9 @@ internal class RenderThread(
     private var egl: EglCore? = null
     private var programs: Shaders.Programs? = null
     private var renderer: SceneRenderer? = null
+
+    /** Latest 1 Hz OES orientation capture (ST matrix + UVs) for the dump. */
+    fun oesDebugLine(): String? = renderer?.oesDebug
     private var initialized = false
 
     @Volatile

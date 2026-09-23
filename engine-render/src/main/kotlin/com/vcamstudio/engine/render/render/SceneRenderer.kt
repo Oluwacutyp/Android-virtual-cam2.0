@@ -2,8 +2,8 @@ package com.vcamstudio.engine.render.render
 
 import android.opengl.GLES11Ext
 import android.opengl.GLES30
-import android.opengl.Matrix
 import com.vcamstudio.engine.render.geometry.LayerGeometry
+import com.vcamstudio.engine.render.geometry.SourceUvMath
 import com.vcamstudio.engine.render.gl.Framebuffer
 import com.vcamstudio.engine.render.gl.GlProgram
 import com.vcamstudio.engine.render.gl.LutCache
@@ -17,10 +17,9 @@ import com.vcamstudio.engine.render.source.BitmapTextureSource
 import com.vcamstudio.engine.render.source.ExternalTextureSource
 import com.vcamstudio.engine.render.source.TextureSource
 import java.nio.ByteBuffer
-import kotlin.math.cos
-import kotlin.math.sin
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import java.util.Locale
 import kotlin.math.min
 import kotlin.math.sqrt
 
@@ -89,7 +88,7 @@ internal class SceneRenderer(
         target.bindViewport()
         program.use()
         uploadQuad(quad, sceneW.toFloat(), sceneH.toFloat())
-        bindSource(program, source, layer.transform.uvRotationDeg)
+        bindSource(program, source, layer.transform.uvRotationDeg, layer.transform.mirrorX)
         bindLut(program, layer.effects.lutId)
         setFxUniforms(program, layer, source.width, source.height, drawW, drawH)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
@@ -120,7 +119,7 @@ internal class SceneRenderer(
 
         program.use()
         uploadQuad(quad, sceneW.toFloat(), sceneH.toFloat())
-        bindSource(program, source, layer.transform.uvRotationDeg)
+        bindSource(program, source, layer.transform.uvRotationDeg, layer.transform.mirrorX)
         bindLut(program, layer.effects.lutId)
         setFxUniforms(program, layer, source.width, source.height, drawW, drawH, opacity = 1f)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
@@ -249,46 +248,73 @@ internal class SceneRenderer(
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
     }
 
-    private fun bindSource(program: GlProgram, source: TextureSource, uvRotationDeg: Float = 0f) {
+    private fun bindSource(
+        program: GlProgram,
+        source: TextureSource,
+        uvRotationDeg: Float = 0f,
+        mirrorX: Boolean = false,
+    ) {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         GLES30.glBindTexture(source.target, source.glTextureId)
         program.setInt("uTex", 0)
+        // Canonical source-orientation chain — SourceUvMath (golden-tested, the
+        // ONLY place source rotation/mirror happen):
+        //   ST matrix (buffer flip/crop) -> rotation about the window center
+        //   -> mirror -> clamp. Rotation/mirror AFTER the ST matrix (the flip
+        //   conjugates both: rotation∘flip != flip∘rotation, and a pre-ST
+        //   mirror renders as a VERTICAL flip — the old front-camera bug).
+        //   Sampling angle == the source's metadata rotation (device-
+        //   calibrated round 14: 0 -> 90 off, 90 -> upside-down, sensor -> up).
+        //   The final clamp makes OOB OES sampling (diagonal black wedge
+        //   class) impossible even if a future matrix misbehaves.
+        val st: FloatArray?
         if (source is ExternalTextureSource) {
-            applyStMatrixToUv(source.transformMatrix)
+            System.arraycopy(source.transformMatrix, 0, stScratch, 0, 16)
+            st = stScratch
+        } else {
+            st = null
         }
-        // Rotation LAST: R(uvRot) composed over the ST matrix (and geometry
-        // mirror), so the flip inside ST can't invert the rotation direction.
-        if (uvRotationDeg != 0f) applyUvRotation(uvRotationDeg)
-    }
-
-    /** Rotates the (already ST-transformed) sampling window about its center. */
-    private fun applyUvRotation(degrees: Float) {
-        val rad = Math.toRadians(degrees.toDouble())
-        val c = cos(rad).toFloat()
-        val s = sin(rad).toFloat()
         for (i in 0 until 4) {
-            val u = uvBuf.get(i * 2) - 0.5f
-            val v = uvBuf.get(i * 2 + 1) - 0.5f
-            uvBuf.put(i * 2, 0.5f + u * c - v * s)
-            uvBuf.put(i * 2 + 1, 0.5f + u * s + v * c)
+            uvBase[i * 2] = uvBuf.get(i * 2)
+            uvBase[i * 2 + 1] = uvBuf.get(i * 2 + 1)
+        }
+        SourceUvMath.transformInto(uvBase, st, uvRotationDeg, mirrorX, uvWork)
+        for (i in 0 until 4) {
+            uvBuf.put(i * 2, uvWork[i * 2])
+            uvBuf.put(i * 2 + 1, uvWork[i * 2 + 1])
         }
         uvBuf.position(0)
+        if (source is ExternalTextureSource) captureOesDebug(source, uvRotationDeg, mirrorX)
     }
 
-    /** Transforms the uploaded UVs through a SurfaceTexture producer matrix. */
-    private fun applyStMatrixToUv(st: FloatArray) {
-        val vec = FloatArray(4)
-        val out = FloatArray(4)
-        for (i in 0 until 4) {
-            vec[0] = uvBuf.get(i * 2)
-            vec[1] = uvBuf.get(i * 2 + 1)
-            vec[2] = 0f
-            vec[3] = 1f
-            Matrix.multiplyMV(out, 0, st, 0, vec, 0)
-            uvBuf.put(i * 2, out[0])
-            uvBuf.put(i * 2 + 1, out[1])
+    // ---- orientation diagnostics: 1 Hz snapshot surfaced in the engine dump ----
+
+    private val stScratch = FloatArray(16)
+    private val uvBase = FloatArray(8)
+    private val uvWork = FloatArray(8)
+    private var lastOesDebugMs = 0L
+
+    @Volatile
+    var oesDebug: String? = null
+        private set
+
+    private fun captureOesDebug(src: ExternalTextureSource, rot: Float, mirror: Boolean) {
+        val now = System.nanoTime() / 1_000_000L
+        if (now - lastOesDebugMs < 1000) return
+        lastOesDebugMs = now
+        val st = src.transformMatrix
+        fun f(v: Float) = String.format(Locale.US, "%.4f", v)
+        oesDebug = buildString {
+            append("OES_ORIENT src=").append(src.width).append('x').append(src.height)
+            append(" uvRot=").append(rot).append(" mirrorX=").append(mirror)
+            append(" ST=[").append((0 until 16).joinToString(",") { f(st[it]) }).append("]")
+            append(" baseUV=").append((0 until 4).joinToString(";", "[", "]") { i ->
+                String.format(Locale.US, "%.3f,%.3f", uvBase[i * 2], uvBase[i * 2 + 1])
+            })
+            append(" finalUV=").append((0 until 4).joinToString(";", "[", "]") { i ->
+                String.format(Locale.US, "%.3f,%.3f", uvWork[i * 2], uvWork[i * 2 + 1])
+            })
         }
-        uvBuf.position(0)
     }
 
     private fun setFxUniforms(

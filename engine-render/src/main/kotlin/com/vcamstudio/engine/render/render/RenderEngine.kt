@@ -200,6 +200,7 @@ class RenderEngine(
             appendLine("preview=${d.previewSize?.let { "${it.width}x${it.height}" } ?: "none"}")
             appendLine("sources=${d.externalSourceCount}")
             appendLine("renderer=${d.glRenderer}")
+            thread.oesDebugLine()?.let { appendLine(it) }
             appendLine("gl=${d.glVersion}")
             appendLine("egl=${d.eglApi}")
             d.initError?.let { appendLine("initError=$it") }
