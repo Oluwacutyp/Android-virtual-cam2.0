@@ -342,7 +342,7 @@ internal class SceneRenderer(
         presentDebug = "PRESENT_CLIP=" + (0 until 4).joinToString(";", "[", "]") { i ->
             String.format(Locale.US, "%.3f,%.3f", posBuf.get(i * 2), posBuf.get(i * 2 + 1))
         } + " finite=$finite"
-        Log.i("vcam-render", presentDebug)
+        Log.i("vcam-render", presentDebug!!)
     }
 
     /** The exact shader sources of the program last used for the camera draw. */
