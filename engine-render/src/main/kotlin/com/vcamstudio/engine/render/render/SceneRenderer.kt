@@ -259,10 +259,11 @@ internal class SceneRenderer(
         program.setInt("uTex", 0)
         // Canonical source-orientation chain — SourceUvMath (golden-tested, the
         // ONLY place source rotation/mirror happen):
-        //   ST matrix (buffer flip/crop) -> rotation about the window center
-        //   -> mirror -> clamp. Rotation/mirror AFTER the ST matrix (the flip
-        //   conjugates both: rotation∘flip != flip∘rotation, and a pre-ST
-        //   mirror renders as a VERTICAL flip — the old front-camera bug).
+        //   ST matrix (buffer flip/crop) -> mirror -> rotation about the
+        //   window center -> clamp. Both transforms AFTER the ST matrix (the
+        //   buffer flip conjugates them otherwise) and the mirror BEFORE the
+        //   rotation (the post-ST frame is display-aligned; mirroring in the
+        //   rotated frame conjugates into a vertical flip).
         //   Sampling angle == the source's metadata rotation (device-
         //   calibrated round 14: 0 -> 90 off, 90 -> upside-down, sensor -> up).
         //   The final clamp makes OOB OES sampling (diagonal black wedge

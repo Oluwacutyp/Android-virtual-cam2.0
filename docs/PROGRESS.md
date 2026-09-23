@@ -512,7 +512,10 @@ diagonal wedge; CI must catch this class going forward.
   matrix, base and final UVs, 1 Hz) so any recurrence is decidable from one dump.
 - REAL BUG (mirror): mirrorX was applied in geometry BEFORE the producer ST
   matrix. flip∘mirrorH == mirrorV∘flip — the front-camera mirror rendered as a
-  VERTICAL flip. Mirrors moved to the renderer, post-ST.
+  VERTICAL flip. Mirrors moved to the renderer, post-ST and PRE-rotation
+  (machine-verified twice: post-rotation mirroring conjugates by 180 under
+  90-degree sampling rotations; the golden test caught the first mis-order at
+  CI before any device run).
 - REAL BUG (rotation value): device data triangulates the buffer content at
   delta=270 CW: rot 0 -> 90 off (build r9/r12-A), rot 90 -> upside-down
   (builds r10-12 "geometry 270 pre-ST" AND r13 "renderer 90 post-ST" are the

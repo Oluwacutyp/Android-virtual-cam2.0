@@ -15,12 +15,16 @@ import kotlin.math.sin
  *  2. ST matrix of the external producer (SurfaceTexture: buffer flip +
  *     crop/scale). Never rotate before it — rotation∘flip != flip∘rotation,
  *     the flip conjugates a rotation into its inverse;
- *  3. rotation about the window center — counter-rotates the SAMPLING window
+ *  3. mirrorX — post-ST, PRE-rotation: the post-ST frame is display-aligned,
+ *     so mirroring there is a true horizontal display mirror. Mirroring
+ *     AFTER the rotation operates in the rotated (transposed) frame and
+ *     conjugates into a VERTICAL flip (machine-verified: the golden test
+ *     caught exactly that mis-order at CI); a mirror composed before the ST
+ *     matrix conjugates through the buffer flip the same way (the old
+ *     geometry-stage bug — "front camera not consistently mirrored").
+ *  4. rotation about the window center — counter-rotates the SAMPLING window
  *     so the buffer CONTENT reads upright (device-calibrated round 14:
  *     sampling angle == the source's metadata rotation, see PROGRESS.md);
- *  4. mirrorX — post-ST ONLY. A mirror composed before the ST flip
- *     conjugates into a VERTICAL image flip (flip∘mirrorH == mirrorV∘flip),
- *     which is exactly the "front camera not consistently mirrored" bug;
  *  5. clamp to [0,1] — sampling an external OES texture outside [0,1] is
  *     undefined (the "diagonal black wedge" class). With correct math the
  *     clamp is a no-op; it exists so a future math bug can never wedge the
@@ -88,12 +92,15 @@ object SourceUvMath {
         for (i in 0 until n) {
             var u = dest[i * 2]
             var v = dest[i * 2 + 1]
+            // Mirror FIRST (display-aligned post-ST frame -> horizontal
+            // display mirror); mirroring after the rotation conjugates into
+            // a vertical flip under 90-degree rotations.
+            if (mirrorX) u = mirrorU(u, su)
             if (rotDeg != 0f) {
                 val r = rotatePoint(u, v, su, sv, rotDeg)
                 u = r[0]
                 v = r[1]
             }
-            if (mirrorX) u = mirrorU(u, su)
             dest[i * 2] = if (clamp) u.coerceIn(0f, 1f) else u
             dest[i * 2 + 1] = if (clamp) v.coerceIn(0f, 1f) else v
         }
