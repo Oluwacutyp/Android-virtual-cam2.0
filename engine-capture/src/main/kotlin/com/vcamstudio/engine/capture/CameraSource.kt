@@ -235,7 +235,7 @@ class CameraSource(
     fun currentlyBound(): ProControls? = boundControls
 
     /** Sensor rotation of the active camera (0/90/180/270) for UV correction. */
-    fun rotationDegrees(): Int = camera?.cameraInfo?.rotationDegrees ?: 90
+    fun rotationDegrees(): Int = camera?.cameraInfo?.sensorRotationDegrees ?: 90
 
     private suspend fun <T> ListenableFuture<T>.await(): T =
         suspendCancellableCoroutine { cont ->
