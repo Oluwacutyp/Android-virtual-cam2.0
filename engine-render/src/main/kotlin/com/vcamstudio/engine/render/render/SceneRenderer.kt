@@ -217,6 +217,7 @@ internal class SceneRenderer(
         programs.copy.setFloat("uAlpha", alpha)
         // Source is an FBO (GL orientation) -> flip UVs so the image reads upright.
         uploadQuad(quad, surfaceW.toFloat(), surfaceH.toFloat(), uvFlipY = true)
+        capturePresentDebug()
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
 
@@ -315,6 +316,34 @@ internal class SceneRenderer(
     @Volatile
     var oesDebug: String? = null
         private set
+
+    /**
+     * DIAGNOSTIC (round 16B-ad): 1 Hz capture of the PRESENT pass's four clip
+     * positions (the camera-draw CLIP line cannot see this pass). The
+     * screenshot-measured wedge signature — apex exactly at the frame center,
+     * converging edges — is what a TRIANGLE_STRIP produces when its two
+     * left-column vertices render at clip (0,0): this line proves or refutes
+     * that live for the present path.
+     */
+    @Volatile
+    var presentDebug: String? = null
+        private set
+
+    private var lastPresentDebugMs = 0L
+
+    private fun capturePresentDebug() {
+        val now = System.nanoTime() / 1_000_000L
+        if (now - lastPresentDebugMs < 1000) return
+        lastPresentDebugMs = now
+        val finite = (0 until 8).all {
+            val v = posBuf.get(it)
+            !v.isNaN() && !v.isInfinite()
+        }
+        presentDebug = "PRESENT_CLIP=" + (0 until 4).joinToString(";", "[", "]") { i ->
+            String.format(Locale.US, "%.3f,%.3f", posBuf.get(i * 2), posBuf.get(i * 2 + 1))
+        } + " finite=$finite"
+        Log.i("vcam-render", presentDebug)
+    }
 
     /** The exact shader sources of the program last used for the camera draw. */
     @Volatile

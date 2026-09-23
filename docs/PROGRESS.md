@@ -640,3 +640,44 @@ the failing moment and no code path in the current build can produce a
 diagonal (geometry rotation was removed; corners are axis-aligned; UV math
 closed over [0,1] and now clamped). Next report MUST include a dump taken
 while the defect is on screen - with A-F that dump is decisive.
+
+
+## Increment 16 addendum 2 — screenshot forensics: wedge = two left vertices at clip (0,0) (2026-09-23)
+
+Two screenshots arrived (post-r13 build): (1) fully black preview, front
+camera, HEALTHY; (2) the wedge. Pixel-measured forensics of (2):
+
+- Black boundary starts AT the preview top-left corner, runs to an apex at
+  (0.500, 0.494) normalized = the EXACT frame center = NDC ORIGIN, then back
+  down to the bottom-left corner. Content occupies the right triangle
+  (center, TR, BR); black occupies (TL, center, BL).
+- The two boundary edges CONVERGE at the apex (slopes +0.99 / -1.01), they
+  are NOT parallel.
+
+Mechanism discrimination:
+- (c) rotated quad: ELIMINATED - a clipped rotated rectangle leaves PARALLEL
+  diagonal edges; measured edges converge.
+- (d) scissor/viewport: ELIMINATED - axis-aligned rectangles; no scissor in
+  the engine (grep).
+- (a)/(b) degenerate vertex: MATCHES EXACTLY. A TRIANGLE_STRIP (TL,TR,BR,BL)
+  whose LEFT-column vertices (0 and 3) render at clip (0,0) draws
+  tri1=(TL@C,TR,BR) = the right-side content triangle and a degenerate tri2,
+  leaving the black left wedge with its apex at the NDC origin - the measured
+  fingerprint. Zeros (not NaN) - NaN projects off-frame, no crisp wedge.
+
+Screenshots predate r14-r16; the current build removed the geometry-stage
+transforms, clamps final UVs, and carries the (A)-(F) probes. Device rerun
+on the current build + a dump taken WHILE the defect is on screen decides:
+
+  scene-side zeroed verts: OES_ORIENT CLIP=[... 0.000,0.000 ...] (or
+    finite=false) AND SCENE_PIXELS TL-corner probe black/content per wedge.
+  present-side: PRESENT_CLIP=[... 0.000,0.000 ...] with clean SCENE_PIXELS.
+  producer content (screenshot 1 full-black case): UV-gradient pass shows a
+    perfect ramp while the real camera is black -> sampled texels are black
+    in the buffer (front-sensor masked region / buffer-size mismatch), not
+    GL geometry; bind audit + ST/NET then locate the window.
+
+Shipped this addendum (report-only): rotationDeg now logged in the L0/
+DRAW_STATS line (rotated-quad visibility gap closed); PRESENT_CLIP 1 Hz
+capture of the present pass's four clip positions + finite flag, in the
+dump and logcat.

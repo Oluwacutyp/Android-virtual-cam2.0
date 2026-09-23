@@ -86,6 +86,9 @@ internal class RenderThread(
     /** Exact shader sources of the program last used for the camera draw. */
     fun oesShaderSources(): Pair<String, String>? = renderer?.lastOesProgramSources
 
+    /** 1 Hz present-pass clip capture (round-16B wedge signature). */
+    fun presentDebugLine(): String? = renderer?.presentDebug
+
     /** DEV DIAGNOSTIC (round 16A): toggle the UV-gradient pass for OES layers. */
     fun setUvDebugPass(enabled: Boolean) {
         renderer?.uvDebugPass = enabled
@@ -601,7 +604,7 @@ internal class RenderThread(
             val tInfo = first?.let {
                 val t = it.transform
                 " L0=${it.javaClass.simpleName}(cx=${t.centerX},cy=${t.centerY},w=${t.width},h=${t.height}," +
-                    "uvRot=${t.uvRotationDeg},mx=${t.mirrorX})"
+                    "uvRot=${t.uvRotationDeg},mx=${t.mirrorX},rot=${t.rotationDeg})"
             } ?: ""
             noteEvent(
                 "DRAW_STATS drawn=$drawn noContent=$noContent noSource=$noSource$tInfo " +
