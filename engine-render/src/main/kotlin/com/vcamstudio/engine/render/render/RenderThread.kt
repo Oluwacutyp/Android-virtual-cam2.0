@@ -593,7 +593,7 @@ internal class RenderThread(
                 GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, currentFbo().handle)
                 GLES30.glReadPixels(x, y, 1, 1, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, px)
                 GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
-                intArrayOf(px.get(0), px.get(1), px.get(2), px.get(3))
+                intArrayOf(px.get(0).toInt(), px.get(1).toInt(), px.get(2).toInt(), px.get(3).toInt())
             }
             val center = probeVals[4]
             val err = GLES30.glGetError()

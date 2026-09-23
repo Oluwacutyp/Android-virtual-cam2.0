@@ -347,8 +347,11 @@ internal class SceneRenderer(
         val type = IntArray(1)
         var samplerType = "uTex:absent"
         var samplerUnit = -1
+        val length = IntArray(1)
+        val nameBuf = ByteArray(64)
         for (i in 0 until uniformCount[0]) {
-            val name = GLES30.glGetActiveUniform(program.handle, i, 64, size, type)
+            GLES30.glGetActiveUniform(program.handle, i, 64, length, size, type, nameBuf)
+            val name = String(nameBuf, 0, length[0])
             if (name.endsWith("uTex") || name == "uTex") {
                 samplerType = when (type[0]) {
                     GLES11Ext.GL_SAMPLER_EXTERNAL_OES -> "OES"
