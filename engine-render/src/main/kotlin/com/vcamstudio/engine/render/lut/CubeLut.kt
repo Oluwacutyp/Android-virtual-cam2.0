@@ -141,9 +141,11 @@ object CubeLutParser {
         for (b in 0 until n) {
             for (g in 0 until n) {
                 for (r in 0 until n) {
-                    data[o] = curve[0 * n + r]
-                    data[o + 1] = curve[1 * n + g]
-                    data[o + 2] = curve[2 * n + b]
+                    // curve is [row][channel] (stride 3): channel c at row j =
+                    // curve[j*3 + c].
+                    data[o] = curve[r * 3 + 0]
+                    data[o + 1] = curve[g * 3 + 1]
+                    data[o + 2] = curve[b * 3 + 2]
                     o += 3
                 }
             }
