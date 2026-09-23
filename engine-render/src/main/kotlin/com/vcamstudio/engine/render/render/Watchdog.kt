@@ -19,6 +19,8 @@ class Watchdog(
     data class WatchdogStatus(
         val expectingFrames: Boolean,
         val lastPresentMonotonicMs: Long,
+        /** Fresh renders without swaps (present-on-change) are NOT stalls. */
+        val lastRenderMonotonicMs: Long = 0L,
     )
 
     private val executor = Executors.newSingleThreadScheduledExecutor { r ->
@@ -43,7 +45,9 @@ class Watchdog(
         try {
             val status = check()
             if (!status.expectingFrames) return
-            val last = status.lastPresentMonotonicMs
+            // "Alive" = a present OR a render. Present-on-change legitimately
+            // skips redundant swaps; that must never read as a stall.
+            val last = maxOf(status.lastPresentMonotonicMs, status.lastRenderMonotonicMs)
             if (last <= 0) return // never presented yet; startup grace handled by recovery logic
             val age = clock.nowMs() - last
             if (age > STALL_MS) {

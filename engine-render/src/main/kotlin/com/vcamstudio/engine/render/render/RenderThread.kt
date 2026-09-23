@@ -99,7 +99,8 @@ internal class RenderThread(
         var createFailures: Int = 0
         var lastCreateAttemptMs: Long = 0L
         var gaveUp: Boolean = false
-        var lastPresentedTex: Int = 0
+        /** Render counter at last successful swap (present-on-change gate). */
+        var lastPresentedRender: Long = -1L
     }
 
     // ---- scene state (render thread only)
@@ -129,6 +130,11 @@ internal class RenderThread(
     /** Swap attempts that reached the driver (dump: attempted vs succeeded). */
     @Volatile
     var presentAttemptCount: Long = 0
+        private set
+
+    /** Monotonic ts of the last renderScene — liveness signal for the watchdog. */
+    @Volatile
+    var lastRenderMonotonicMs: Long = 0
         private set
 
     /** Last on-screen letterbox quad (dump: catches geometric wedges). */
@@ -457,6 +463,15 @@ internal class RenderThread(
     private fun applyPendingScene() {
         val scene = pendingScene ?: return
         pendingScene = null
+        if (scene == currentScene) {
+            // Identical scene re-commit (UI burst/spam): no-op. A changed
+            // transition still lands.
+            if (transitionSpec != pendingTransition) {
+                transitionSpec = pendingTransition
+                sceneNeedsRender = true
+            }
+            return
+        }
         val old = currentScene
         if (old != null && old.id != scene.id && transitionSpec.type == TransitionType.FADE) {
             pendingTransitionCapture = true
@@ -535,6 +550,7 @@ internal class RenderThread(
 
         presentedSceneTex = currentFbo().texture.id
         renderedFrameCount++
+        lastRenderMonotonicMs = clock.nowMs()
         if (renderedFrameCount == 1L) {
             noteEvent("FIRST_SCENE_RENDER ${scene.width}x${scene.height}")
         }
@@ -620,9 +636,11 @@ internal class RenderThread(
 
         for (out in outputs.values) {
             if (out.gaveUp) continue
-            // Present-on-change: TextureView holds the last frame; skipping
-            // redundant swaps removes 120Hz double-present jitter.
-            if (transFrac == null && out.lastPresentedTex == presentedSceneTex) continue
+            // Present-on-change: skip only when NO new render happened since
+            // this output's last swap. (Regression note: gating on the scene
+            // TEXTURE id was wrong — simple scenes reuse the same FBO texture
+            // every frame, which froze presentation after the first swap.)
+            if (transFrac == null && out.lastPresentedRender == renderedFrameCount) continue
             if (!out.surface.isValid) {
                 // 0x300d class: producer surface already dead — force a fresh
                 // window surface instead of swapping at a corpse.
@@ -682,7 +700,7 @@ internal class RenderThread(
                     .onFailure {
                         Log.w(TAG, "POST_SWAP_GL_ERROR id=${out.id}: ${it.message} (swap OK, frame counted)")
                     }
-                out.lastPresentedTex = presentedSceneTex
+                out.lastPresentedRender = renderedFrameCount
                 if (!out.firstPresentLogged) {
                     out.firstPresentLogged = true
                     noteEvent("FIRST_PRESENT ${out.id} ${out.width}x${out.height}")
@@ -777,7 +795,9 @@ internal class RenderThread(
 
     private fun postMain(block: () -> Unit) = mainHandler.post(block)
 
-    fun watchdogStatus(): Watchdog.WatchdogStatus = Watchdog.WatchdogStatus(expectsFrames, lastPresentMonotonicMs)
+    fun watchdogStatus(): Watchdog.WatchdogStatus = Watchdog.WatchdogStatus(
+        expectsFrames, lastPresentMonotonicMs, lastRenderMonotonicMs,
+    )
 
     companion object {
         private const val TAG = "vcam-render"

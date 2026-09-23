@@ -436,3 +436,34 @@ defects and fixes:
 RAW stays the default stable path; Camera Pro rebind-debounce from round 8
 unchanged. Acceptance: GL camera correctly framed on both devices (no
 diagonal wedge), video overlay visible + oriented, GL watchable.
+
+
+## Increment 13 — round 10 REGRESSION: my present-on-change bug, found and fixed (2026-09-23)
+
+Round 10 regression, root cause MINE, identified from the user's dumps:
+`rendered=1046..3543` while `presentAttempts=2..4` and SCENE_PIXEL values kept
+CHANGING across 25s — the render thread was ALIVE the whole time. The round-10
+"present-on-change" gate compared the presented TEXTURE id; simple scenes
+(camera, NORMAL blend, no blur) draw straight into the same FBO texture every
+frame, so the gate saw "nothing changed" forever and skipped all presents
+after the first. The screen froze on the one swapped frame (often the
+pre-camera black scene). The watchdog then measured time-since-last-SWAP —
+20-50s of "stall" chains while renders flowed — fake stalls, 32 recovery
+events, UNHEALTHY.
+
+Fixes:
+1. Present gate now compares the RENDER COUNTER (lastPresentedRender vs
+   renderedFrameCount): every new render presents once; idle scenes present
+   nothing (correct); texture identity is irrelevant.
+2. Watchdog + health rule: a fresh render counts as liveness
+   (WatchdogStatus.lastRenderMonotonicMs; stall = no present AND no render
+   for >750ms). Present-on-change can never read as a stall again.
+3. Scene-apply dedupe: identical SceneDefinition re-commits are no-ops
+   engine-side (VM commit dedupe too) — SCENE_APPLIED spam neutralized, and
+   changed transitions still apply.
+4. PlayerView overlay rebind guarded by player identity (recomposition-safe).
+
+Kept: uvRot=270 orientation fix (visible in dumps, verify once unfrozen),
+video resize path, RAW default. Success criteria (owner): presented climbing
+with lastPresentAgeMs<100, no watchdog stall spam, no freezes on RAW<->GL or
+video add, orientation correct on both devices.

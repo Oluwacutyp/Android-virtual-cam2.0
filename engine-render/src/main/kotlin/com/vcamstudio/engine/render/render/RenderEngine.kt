@@ -163,11 +163,12 @@ class RenderEngine(
     private fun publishDiagnostics() {
         val now = clock.nowMs()
         val status = thread.watchdogStatus()
+        val lastActivity = maxOf(status.lastPresentMonotonicMs, status.lastRenderMonotonicMs)
         val health = when {
             collector.initError != null -> EngineHealth.UNHEALTHY
             thread.consecutiveFailedRecoveries >= 3 -> EngineHealth.UNHEALTHY
-            status.expectingFrames && status.lastPresentMonotonicMs > 0 &&
-                now - status.lastPresentMonotonicMs > 3_000 -> EngineHealth.UNHEALTHY
+            status.expectingFrames && lastActivity > 0 &&
+                now - lastActivity > 3_000 -> EngineHealth.UNHEALTHY
             collector.recentRecoveryCount(now, 10_000) > 0 -> EngineHealth.DEGRADED
             else -> EngineHealth.HEALTHY
         }

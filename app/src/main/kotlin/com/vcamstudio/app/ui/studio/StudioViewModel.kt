@@ -250,7 +250,9 @@ class StudioViewModel @Inject constructor(
 
     /** RAW overlay: route a video layer's player into the given PlayerView. */
     fun bindVideoOverlay(sourceId: String, view: androidx.media3.ui.PlayerView) {
-        videoControllers[sourceId]?.showOnPlayerView(view)
+        val controller = videoControllers[sourceId] ?: return
+        if (view.player === controller.player) return // recomposition-safe
+        controller.showOnPlayerView(view)
     }
 
     fun setPreviewMode(raw: Boolean) {
@@ -683,11 +685,18 @@ class StudioViewModel @Inject constructor(
         }
     }
 
+    private var lastCommittedScene: SceneDefinition? = null
+
     private fun commit(transition: TransitionSpec? = null) {
         val scene = scenes.value.firstOrNull { it.id == activeSceneId.value } ?: return
         registerBitmapSources(scene)
         if (transition != null) engine.setTransition(transition)
-        engine.setScene(scene)
+        // Identical-scene re-commits (slider bursts, collector echoes) are
+        // dropped engine-side too; skipping here avoids re-registering bitmaps.
+        if (scene != lastCommittedScene) {
+            engine.setScene(scene)
+            lastCommittedScene = scene
+        }
     }
 
     private fun onExternalSourceReady(sourceId: String, surface: android.view.Surface) {
