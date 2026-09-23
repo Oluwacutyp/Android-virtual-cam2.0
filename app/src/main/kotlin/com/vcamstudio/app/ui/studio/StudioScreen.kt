@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -326,10 +327,8 @@ private fun StageArea(state: StudioViewModel.UiState, vm: StudioViewModel, modif
                                 update = { vm.bindVideoOverlay(layer.sourceId, it) },
                                 modifier = Modifier
                                     .align(Alignment.Center)
-                                    .fillMaxSize(
-                                        layer.transform.width.coerceIn(0.05f, 1f),
-                                        layer.transform.height.coerceIn(0.05f, 1f),
-                                    ),
+                                    .fillMaxWidth(layer.transform.width.coerceIn(0.05f, 1f))
+                                    .fillMaxHeight(layer.transform.height.coerceIn(0.05f, 1f)),
                             )
                         }
                     Text(
