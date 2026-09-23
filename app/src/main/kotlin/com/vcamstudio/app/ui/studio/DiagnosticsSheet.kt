@@ -48,6 +48,8 @@ fun DiagnosticsSheet(
     onTrianglesOnly: (Boolean) -> Unit,
     directSurfacePass: Boolean,
     onDirectSurface: (Boolean) -> Unit,
+    bisectLevel: Int,
+    onBisect: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
@@ -139,6 +141,52 @@ fun DiagnosticsSheet(
                             onCheckedChange = onDirectSurface,
                         )
                     }
+                }
+                item {
+                    Text(
+                        "BISECTION (round 19): T6 baseline = all off",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        androidx.compose.material3.FilterChip(
+                            selected = bisectLevel == 1,
+                            onClick = { onBisect(if (bisectLevel == 1) 0 else 1) },
+                            label = { Text("T1") },
+                        )
+                        androidx.compose.material3.FilterChip(
+                            selected = bisectLevel == 2,
+                            onClick = { onBisect(if (bisectLevel == 2) 0 else 2) },
+                            label = { Text("T2") },
+                        )
+                        androidx.compose.material3.FilterChip(
+                            selected = bisectLevel == 3,
+                            onClick = { onBisect(if (bisectLevel == 3) 0 else 3) },
+                            label = { Text("T3") },
+                        )
+                    }
+                }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        androidx.compose.material3.FilterChip(
+                            selected = bisectLevel == 4,
+                            onClick = { onBisect(if (bisectLevel == 4) 0 else 4) },
+                            label = { Text("T4") },
+                        )
+                        androidx.compose.material3.FilterChip(
+                            selected = bisectLevel == 5,
+                            onClick = { onBisect(if (bisectLevel == 5) 0 else 5) },
+                            label = { Text("T5") },
+                        )
+                    }
+                }
+                item {
+                    Text(
+                        "T1 solid quad (in-shader verts) · T2 +attrib · T3 +FBO · " +
+                            "T4 +OES · T5 full pipeline, plain 0..1 UVs · T6 = all off",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
                 }
             }
             diagnostics.initError?.let { err ->

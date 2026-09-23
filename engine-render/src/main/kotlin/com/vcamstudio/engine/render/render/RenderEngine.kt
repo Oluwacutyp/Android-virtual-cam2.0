@@ -196,6 +196,11 @@ class RenderEngine(
         thread.post { thread.setDirectSurfacePass(enabled) }
     }
 
+    /** DEV BISECT (round 19): T1..T5 minimal rungs; 0 = full pipeline (T6). */
+    fun setBisectLevel(level: Int) {
+        thread.post { thread.setBisectLevel(level) }
+    }
+
     /** Machine-parsable dump (used by tools/stress-test.sh and the Diagnostics UI). */
     fun dump(): String {
         val d = _diagnostics.value
@@ -227,6 +232,7 @@ class RenderEngine(
             thread.vboCreatedLine()?.let { appendLine(it) }
             thread.vboErrorsLine()?.let { appendLine(it) }
             thread.stagingOverflowLine()?.let { appendLine(it) }
+            appendLine("bisect=${thread.bisectLevel()}")
             // (E) the EXACT shader sources compiled and last used for the
             // camera draw — verbatim, no summaries.
             thread.oesShaderSources()?.let { (vs, fs) ->

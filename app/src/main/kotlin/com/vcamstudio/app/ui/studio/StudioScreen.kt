@@ -226,6 +226,8 @@ fun StudioScreen(
             onTrianglesOnly = vm::setTrianglesOnly,
             directSurfacePass = vm.directSurfacePass.collectAsStateWithLifecycle().value,
             onDirectSurface = vm::setDirectSurfacePass,
+            bisectLevel = vm.bisectLevel.collectAsStateWithLifecycle().value,
+            onBisect = vm::setBisectLevel,
             onDismiss = { vm.setSheet(StudioViewModel.Sheet.NONE) },
         )
         StudioViewModel.Sheet.SETTINGS -> SettingsSheet(

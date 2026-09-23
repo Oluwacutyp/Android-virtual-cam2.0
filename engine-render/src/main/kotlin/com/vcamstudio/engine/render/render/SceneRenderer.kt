@@ -43,9 +43,11 @@ internal class SceneRenderer(
 
     // Separate buffers per attribute — no offset arithmetic anywhere.
     private val staging = FloatArray(STRIDE_FLOATS * 4)
-    private val posBuf = directFloatBuffer(8)
-    private val uvBuf = directFloatBuffer(8)
-    private val localBuf = directFloatBuffer(8)
+    // Round 19: sized for the LARGEST vertex count any mode writes
+    // (TRIANGLES 6 verts x 2 floats) — one size, no mode-dependent caps.
+    private val posBuf = directFloatBuffer(12)
+    private val uvBuf = directFloatBuffer(12)
+    private val localBuf = directFloatBuffer(12)
 
     fun enableVertexArrays() {
         for (i in 0..2) GLES30.glEnableVertexAttribArray(i)
@@ -85,8 +87,10 @@ internal class SceneRenderer(
             if (uvDebugPass && source is ExternalTextureSource) programs.uvDebug
             else programFor(source, layer.effects.lutId)
         val transform = layer.transform
-        val quad = LayerGeometry.compute(
-            transform, source.width.toFloat(), source.height.toFloat(), sceneW.toFloat(), sceneH.toFloat(),
+        val quad = bisectPlainUvQuad(
+            LayerGeometry.compute(
+                transform, source.width.toFloat(), source.height.toFloat(), sceneW.toFloat(), sceneH.toFloat(),
+            ),
         )
         val drawW = edgeLengthPx(quad, topEdge = true)
         val drawH = edgeLengthPx(quad, topEdge = false)
@@ -120,8 +124,10 @@ internal class SceneRenderer(
             if (uvDebugPass && source is ExternalTextureSource) programs.uvDebug
             else programFor(source, layer.effects.lutId)
         val transform = layer.transform
-        val quad = LayerGeometry.compute(
-            transform, source.width.toFloat(), source.height.toFloat(), sceneW.toFloat(), sceneH.toFloat(),
+        val quad = bisectPlainUvQuad(
+            LayerGeometry.compute(
+                transform, source.width.toFloat(), source.height.toFloat(), sceneW.toFloat(), sceneH.toFloat(),
+            ),
         )
         val drawW = edgeLengthPx(quad, topEdge = true)
         val drawH = edgeLengthPx(quad, topEdge = false)
@@ -364,6 +370,76 @@ internal class SceneRenderer(
      */
     @Volatile
     var directSurfacePass: Boolean = false
+
+    /**
+     * Round 19 BISECTION (owner mandate): 0 = normal pipeline; 1..4 = the
+     * minimal-rung renders driven by RenderThread (solid-in-shader, +attr,
+     * +FBO, +OES); 5 = full pipeline but layer UV windows forced to plain
+     * [0,1] (no fill-crop). T6 = 0 with all other toggles off.
+     */
+    @Volatile
+    var bisectLevel: Int = 0
+
+    /** T1/T2: one solid-colored fullscreen quad straight to the bound target. */
+    fun drawBisectSolid(fromAttrib: Boolean, tag: String) {
+        val program = if (fromAttrib) programs.bisectSolidAttr else programs.bisectSolid
+        program.use()
+        program.setVec4("uColor", 0.16f, 0.75f, 0.35f, 1f)
+        if (fromAttrib) {
+            GLES30.glEnableVertexAttribArray(0)
+            GLES30.glDisableVertexAttribArray(1)
+            GLES30.glDisableVertexAttribArray(2)
+            GLES30.glVertexAttribPointer(0, 2, GLES30.GL_FLOAT, false, 0, bisectPosBuf)
+        } else {
+            GLES30.glDisableVertexAttribArray(0)
+            GLES30.glDisableVertexAttribArray(1)
+            GLES30.glDisableVertexAttribArray(2)
+        }
+        captureDrawState(tag, program)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        for (i in 0..2) GLES30.glEnableVertexAttribArray(i)
+        checkGlError("bisectSolid")
+    }
+
+    private val bisectPosBuf = directFloatBuffer(8).apply {
+        put(-1f); put(1f); put(1f); put(1f); put(1f); put(-1f); put(-1f); put(-1f)
+        position(0)
+    }
+
+    /** T4: camera OES sampled with plain [0,1] UVs (no crop, no composite). */
+    fun drawBisectOes(source: TextureSource, surfaceW: Int, surfaceH: Int) {
+        val quad = LayerGeometry.compute(
+            LayerTransform(width = 1f, height = 1f, fitMode = FitMode.STRETCH),
+            source.width.toFloat(), source.height.toFloat(),
+            surfaceW.toFloat(), surfaceH.toFloat(),
+        )
+        GLES30.glViewport(0, 0, surfaceW, surfaceH)
+        programs.texOes.use()
+        uploadQuad(quad, surfaceW.toFloat(), surfaceH.toFloat())
+        bindSource(programs.texOes, source, 0f, false)
+        // neutral fx uniforms directly (no synthetic layer needed)
+        programs.texOes.setFloat("uOpacity", 1f)
+        programs.texOes.setVec2("uTexelSize", 1f / source.width.coerceAtLeast(1), 1f / source.height.coerceAtLeast(1))
+        programs.texOes.setFloat("uBrightness", 0f)
+        programs.texOes.setFloat("uContrast", 1f)
+        programs.texOes.setFloat("uSaturation", 1f)
+        programs.texOes.setFloat("uGamma", 1f)
+        programs.texOes.setFloat("uTemperature", 0f)
+        programs.texOes.setFloat("uTint", 0f)
+        programs.texOes.setFloat("uSharpen", 0f)
+        programs.texOes.setVec3("uVignette", 1f, 1f, 0f)
+        val dw = quad.cornersPx[2] - quad.cornersPx[0]
+        val dh = quad.cornersPx[5] - quad.cornersPx[1]
+        programs.texOes.setVec2("uQuadSizePx", dw, dh)
+        programs.texOes.setFloat("uCornerPx", 0f)
+        captureDrawState("BISECT4", programs.texOes)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        checkGlError("bisectOes")
+    }
+
+    /** T5 UV override: plain [0,1] window instead of the FILL crop. */
+    private fun bisectPlainUvQuad(quad: LayerGeometry.Quad): LayerGeometry.Quad =
+        if (bisectLevel == 5) quad.copy(uvs = floatArrayOf(0f, 0f, 1f, 0f, 1f, 1f, 0f, 1f)) else quad
 
     // ---- orientation diagnostics: 1 Hz snapshot surfaced in the engine dump ----
 
@@ -665,12 +741,24 @@ internal class SceneRenderer(
             append("DRAW_STATE[").append(tag).append("]")
             append(" prog=").append(program.handle)
             append(" curProg=").append(cur[0])
-            // Round 18 mandate: staging buffer capacity/position/need in bytes.
+            // Round 18/19: staging bytes of the buffers the ACTIVE mode uses.
             val verts = if (vboDrawPass || trianglesOnly) TRI_ORDER.size.coerceAtLeast(4) else 4
-            val capB = if (vboDrawPass) testInterleaved.capacity() * 4
-            else (posBuf.capacity() + uvBuf.capacity() + localBuf.capacity()) * 4
-            val posB = if (vboDrawPass) testInterleaved.position() * 4
-            else (posBuf.position() + uvBuf.position() + localBuf.position()) * 4
+            val capB: Int
+            val posB: Int
+            when {
+                vboDrawPass -> {
+                    capB = testInterleaved.capacity() * 4
+                    posB = testInterleaved.position() * 4
+                }
+                trianglesOnly -> {
+                    capB = (posBuf6.capacity() + uvBuf6.capacity() + localBuf6.capacity()) * 4
+                    posB = (posBuf6.position() + uvBuf6.position() + localBuf6.position()) * 4
+                }
+                else -> {
+                    capB = (posBuf.capacity() + uvBuf.capacity() + localBuf.capacity()) * 4
+                    posB = (posBuf.position() + uvBuf.position() + localBuf.position()) * 4
+                }
+            }
             append(" staging=[cap=").append(capB)
                 .append(",pos=").append(posB)
                 .append(",need=").append(verts * STRIDE_FLOATS * 4).append("]")

@@ -193,16 +193,9 @@ class StudioViewModel @Inject constructor(
             // GL compositor shows upright content (RAW/PreviewView does its own).
             cameraSource.state.collect { st ->
                 if (st !is CameraSource.State.Bound) return@collect
-                // Sampling rotation == the sensor value (device-calibrated
-                // round 14: rot 0 -> 90 off, rot 90 -> upside-down, rot 270 ->
-                // upright). CameraX Transform-output contract: the BUFFER is
-                // NOT pre-rotated ("the output ... is twofold: the buffer and
-                // the transformation info"); the renderer counter-rotates the
-                // sampling window by the sensor value post-ST (SourceUvMath).
-                // Front camera also mirrors (selfie preview convention,
-                // applied post-ST so the ST flip can't conjugate it into a
-                // vertical flip).
-                val rot = cameraSource.rotationDegrees().toFloat()
+                // Reverted to the c73a4d5 semantics per owner directive
+                // (round 18): uvRot = (360 - sensor) % 360, mirror = front only.
+                val rot = ((360 - cameraSource.rotationDegrees()) % 360).toFloat()
                 val mirror = cameraSource.isFrontCamera()
                 var changed = false
                 scenes.value = scenes.value.map { s ->
@@ -702,6 +695,14 @@ class StudioViewModel @Inject constructor(
         engine.setDirectSurfacePass(enabled)
     }
 
+    /** DEV BISECT (round 19): T1..T5; T6 baseline = 0 (all off). */
+    val bisectLevel = MutableStateFlow(0)
+
+    fun setBisectLevel(level: Int) {
+        bisectLevel.value = level
+        engine.setBisectLevel(level)
+    }
+
     // -------------------------------------------------------------- internals
 
     private fun appendLayer(layer: LayerDefinition) {
@@ -773,10 +774,8 @@ class StudioViewModel @Inject constructor(
             controller.onError = { msg -> toast.value = "Video playback error: $msg" }
             controller.onVideoSizeChanged = { w, h, rot ->
                 engine.resizeSource(sourceId, w, h)
-                // ExoPlayer contract (same rule as the camera layer):
-                // sampling rotation == unappliedRotationDegrees, applied
-                // post-ST by SourceUvMath.
-                val uvRot = rot.toFloat()
+                // Reverted to the c73a4d5 semantics per owner directive.
+                val uvRot = ((360 - rot) % 360).toFloat()
                 val layerId = videoLayer.id
                 updateLayer(layerId) { def ->
                     if (def is LayerDefinition.Video && def.transform.uvRotationDeg != uvRot) {

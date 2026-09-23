@@ -878,3 +878,53 @@ exactly.
 
 NOT CLAIMED: the wedge is NOT claimed fixed. Mandate 2 (before/after
 screenshots, STRIP, no toggles, camera+video) is the owner's next step.
+
+
+## Increment 19 — rotation reverted to c73a4d5 (owner directive) + staging sizing/reporting fixed + T1-T6 bisection harness (2026-09-23)
+
+OWNER DIRECTIVES PROCESSED:
+1. "staging=[cap=96,pos=0,need=144] on the TRIANGLES path - one of the nine
+   staging buffers is still strip-sized." Root-caused: the DRAW_STATE staging=
+   REPORTER summed the strip trio (posBuf/uvBuf/localBuf, 8 floats each) even
+   when the active mode was the CLIENT TRIANGLES path (which uses the
+   posBuf6/uvBuf6/localBuf6 12-float trio - correctly sized, no overflow
+   occurred; no STAGING_OVERFLOW line in those sessions). Fix is double: the
+   reporter now sums the buffers the ACTIVE mode uses, AND the strip trio is
+   resized to 12 floats so every staging buffer fits the largest vertex count.
+   All modes now report cap=144.
+2. "Rotation changed without authorization - put it back to c73a4d5." Facts
+   stated without dispute: the rotation CODE was last modified in round 15
+   (rounds 16-18 diffs contain no VM rotation change); the 270->90 flip in
+   the logs is the r15 per-lens formula reacting to a FRONT->BACK camera
+   switch (back sensor = 90, mirror = front-only). The front-camera values
+   under c73a4d5 and r15 are IDENTICAL (270/true). Regardless - COMPLIED:
+   camera uvRot = ((360 - sensor) % 360), video uvRot = ((360 - rot) % 360),
+   exactly the c73a4d5 expressions, restored this build. Rotation is now
+   FROZEN until the wedge is dead.
+3. BISECTION (owner plan, all rungs as dev toggles, report-only):
+   - T1 SOLID QUAD: positions hardcoded in-shader (gl_VertexID const array),
+     solid color FS, no attributes, no FBO, straight to the EGL surface.
+   - T2 +ATTR: same quad, positions from an uploaded client attribute.
+   - T3 +FBO: T2 quad into the scene FBO, presented via the standard
+     textured present quad (fillQuad + copy path).
+   - T4 +OES: camera OES sampled with PLAIN 0..1 UVs straight to the
+     surface (no crop, no composite, no scene FBO).
+   - T5 LAYER STACK: full pipeline with layer UV windows forced to 0..1
+     (no fill-crop) - bisectPlainUvQuad override in the layer draw paths.
+   - T6 FULL: all toggles off (baseline wedge reproduction).
+   Each rung captures its own DRAW_STATE[BISECT*] at draw time; the dump
+   carries bisect=<level>; the diagnostics sheet has T1-T5 chips (mutually
+   exclusive), T6 = all off.
+4. Boot-config confirmation (owner ask): scene 720x1280 (SceneResolution
+   P_720 default, DataStore-persisted), FBO format GL_RGBA + GL_UNSIGNED_BYTE
+   (RGBA8888), preview surface-driven 1028x1675 (from the dumps).
+5. Logcat ask: cannot run adb from this sandbox - the exact command was
+   provided back to the owner to run on-device (adb logcat -d | grep -iE
+   "adreno|eglCreate|eglMake|shader|GL_INVALID|gralloc|...").
+
+ARTIFACT NOTE for the T-runs: with T1-T4 the renderScene path does not run,
+so the render-liveness watchdog will log stall recoveries that are NOT real
+faults; ignore recoveries= during T1-T4 (T5/T6 run the full render path and
+are meaningful).
+
+No fix claims. Standing rule intact.

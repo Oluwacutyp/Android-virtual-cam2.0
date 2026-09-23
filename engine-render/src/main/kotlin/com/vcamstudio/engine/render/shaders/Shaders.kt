@@ -125,6 +125,33 @@ uniform float uCornerPx;
     }
 
     /**
+     * DEV BISECT T1 (round 19): positions HARDCODED in-shader — no attribute
+     * upload at all. isolates EGL/Adreno/Surface at the barest level.
+     */
+    const val VS_BISECT_SOLID = """#version 300 es
+void main() {
+    vec4 verts[4] = vec4[4](
+        vec4(-1.0, 1.0, 0.0, 1.0),
+        vec4(1.0, 1.0, 0.0, 1.0),
+        vec4(1.0, -1.0, 0.0, 1.0),
+        vec4(-1.0, -1.0, 0.0, 1.0)
+    );
+    gl_Position = verts[gl_VertexID];
+}
+"""
+
+    /** T1/T2 fragment: single solid color, nothing else. */
+    const val FS_BISECT_SOLID = """#version 300 es
+precision highp float;
+precision mediump int;
+out vec4 fragColor;
+uniform vec4 uColor;
+void main() {
+    fragColor = uColor;
+}
+"""
+
+    /**
      * DEV DIAGNOSTIC (round 16A): outputs the interpolated UV varying as
      * color — no texture sample at all. A correct pipeline shows a smooth
      * full-quad R=x,G=y gradient; a missing triangle, a diagonal wedge, or
@@ -256,6 +283,8 @@ void main() {
         blend = GlProgram(VERTEX_PASS_THROUGH, FRAG_BLEND),
         copy = GlProgram(VERTEX_PASS_THROUGH, FRAG_COPY),
         uvDebug = GlProgram(VERTEX_PASS_THROUGH, FRAG_UV_DEBUG),
+        bisectSolid = GlProgram(VS_BISECT_SOLID, FS_BISECT_SOLID),
+        bisectSolidAttr = GlProgram(VERTEX_PASS_THROUGH, FS_BISECT_SOLID),
     )
 
     class Programs(
@@ -268,12 +297,15 @@ void main() {
         val blend: GlProgram,
         val copy: GlProgram,
         val uvDebug: GlProgram,
+        val bisectSolid: GlProgram,
+        val bisectSolidAttr: GlProgram,
     ) {
         fun releaseAll() {
             tex2d.release(); texOes.release(); tex2dLut.release(); texOesLut.release()
             fill.release()
             blur.release(); blend.release(); copy.release()
             uvDebug.release()
+            bisectSolid.release(); bisectSolidAttr.release()
         }
     }
 }

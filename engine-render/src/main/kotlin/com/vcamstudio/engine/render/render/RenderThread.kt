@@ -114,10 +114,17 @@ internal class RenderThread(
         renderer?.directSurfacePass = enabled
     }
 
+    /** DEV BISECT (round 19): T1..T5 minimal-rung renderer; 0 = normal pipeline. */
+    fun setBisectLevel(level: Int) {
+        renderer?.bisectLevel = level
+    }
+
     fun vboErrorsLine(): String? = renderer?.vboErrors
 
     /** STAGING_OVERFLOW last occurrence (round-18 guard). */
     fun stagingOverflowLine(): String? = renderer?.stagingOverflow
+
+    fun bisectLevel(): Int = renderer?.bisectLevel ?: 0
 
     fun vboCreatedLine(): String? = renderer?.vboCreatedNote
     private var initialized = false
@@ -688,6 +695,10 @@ internal class RenderThread(
             presentBlank(frameTimeNanos)
             return
         }
+        if (r.bisectLevel in 1..4) {
+            presentBisect(frameTimeNanos, r.bisectLevel)
+            return
+        }
         if (r.directSurfacePass) {
             presentDirectToSurface(frameTimeNanos, scene)
             return
@@ -798,6 +809,58 @@ internal class RenderThread(
             }
             val dropped = if (dt > 45f) ((dt / 33.3f).toInt() - 1).coerceAtLeast(1) else 0
             collector.onPresented(dt, dropped)
+            lastPresentClockMs = nowMs
+            lastPresentMonotonicMs = nowMs
+            consecutiveFailedRecoveries = 0
+        }
+    }
+
+    /**
+     * Round 19 BISECTION (owner mandate, report-only): minimal-rung renders,
+     * each straight to the EGL surface; T3 renders the solid into the scene
+     * FBO first, then presents it with the standard textured present quad.
+     * T5 is NOT routed here (it runs the full pipeline with a plain-UV
+     * override inside SceneRenderer); T6 = bisectLevel 0.
+     */
+    private fun presentBisect(frameTimeNanos: Long, level: Int) {
+        val r = renderer ?: return
+        val out = outputs.values.firstOrNull { !it.gaveUp && it.surface.isValid } ?: return
+        presentAttemptCount++
+        if (out.needsReinit || out.eglSurface == null) {
+            if (!reinitOutput(out)) return
+        }
+        val es = out.eglSurface ?: return
+        if (!es.makeCurrent()) return
+        GLES30.glViewport(0, 0, out.width, out.height)
+        GLES30.glClearColor(0f, 0f, 0f, 1f)
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+        when (level) {
+            1 -> r.drawBisectSolid(fromAttrib = false, tag = "BISECT1")
+            2 -> r.drawBisectSolid(fromAttrib = true, tag = "BISECT2")
+            3 -> {
+                val fbo = currentFbo()
+                fbo.bindViewport()
+                GLES30.glClearColor(0f, 0f, 0f, 1f)
+                GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+                r.drawBisectSolid(fromAttrib = true, tag = "BISECT3_FBO")
+                GLES30.glDisable(GLES30.GL_BLEND)
+                r.drawTextureQuad(fbo.texture.id, 1f, r.fillQuad(fbo.width, fbo.height, out.width, out.height), out.width, out.height)
+            }
+            4 -> {
+                val src = externalSources.values.firstOrNull { it.hasContent() }
+                if (src != null) {
+                    r.drawBisectOes(src, out.width, out.height)
+                }
+            }
+        }
+        es.setPresentationTime(frameTimeNanos)
+        if (es.swap()) {
+            out.swapFailures = 0
+            val nowMs = clock.nowMs()
+            val dt = if (lastPresentClockMs > 0) {
+                (nowMs - lastPresentClockMs).toFloat().coerceIn(1f, 500f)
+            } else 16.7f
+            collector.onPresented(dt, 0)
             lastPresentClockMs = nowMs
             lastPresentMonotonicMs = nowMs
             consecutiveFailedRecoveries = 0
