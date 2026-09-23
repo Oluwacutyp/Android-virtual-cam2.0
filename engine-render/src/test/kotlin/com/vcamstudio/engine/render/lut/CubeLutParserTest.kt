@@ -108,9 +108,15 @@ class CubeLutParserTest {
 
     @Test
     fun `comma decimals tolerated`() {
-        val cube = "LUT_3D_SIZE 2\n" + List(8) { i ->
-            listOf(0f, 1f).let { c -> "\${c[(i shr 2) and 1]},0 \${c[(i shr 1) and 1]},0 \${c[i and 1]},0" }
-        }.joinToString("\n")
+        val rows = ArrayList<String>()
+        for (r in 0 until 2) {
+            for (g in 0 until 2) {
+                for (b in 0 until 2) {
+                    rows.add("$r,0 $g,0 $b,0")
+                }
+            }
+        }
+        val cube = "LUT_3D_SIZE 2\n" + rows.joinToString("\n")
         assertEquals(2, CubeLutParser.parse(cube).size)
     }
 
