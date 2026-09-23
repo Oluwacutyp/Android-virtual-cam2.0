@@ -338,31 +338,20 @@ internal class SceneRenderer(
             val p = posBuf.get(it); val w = uvWork.get(it)
             !p.isNaN() && !p.isInfinite() && !w.isNaN() && !w.isInfinite()
         }
-        // (D) bind audit: target binding, declared sampler TYPE, sampler unit.
+        // (D) bind audit: runtime target binding + the declared sampler TYPE
+        // (read from the program's RETAINED compile source — verbatim, see E)
+        // + the sampler unit value.
         val bound = IntArray(1)
         GLES30.glGetIntegerv(GLES11Ext.GL_TEXTURE_BINDING_EXTERNAL_OES, bound, 0)
-        val uniformCount = IntArray(1)
-        GLES30.glGetProgramiv(program.handle, GLES30.GL_ACTIVE_UNIFORMS, uniformCount, 0)
-        val size = IntArray(1)
-        val type = IntArray(1)
-        var samplerType = "uTex:absent"
-        var samplerUnit = -1
-        val length = IntArray(1)
-        val nameBuf = ByteArray(64)
-        for (i in 0 until uniformCount[0]) {
-            GLES30.glGetActiveUniform(program.handle, i, 64, length, size, type, nameBuf)
-            val name = String(nameBuf, 0, length[0])
-            if (name.endsWith("uTex") || name == "uTex") {
-                samplerType = when (type[0]) {
-                    GLES11Ext.GL_SAMPLER_EXTERNAL_OES -> "OES"
-                    GLES30.GL_SAMPLER_2D -> "2D"
-                    else -> "0x" + Integer.toHexString(type[0])
-                }
-                val unit = IntArray(1)
-                GLES30.glGetUniformiv(program.handle, GLES30.glGetUniformLocation(program.handle, "uTex"), unit, 0)
-                samplerUnit = unit[0]
-            }
+        val samplerType = when {
+            program.fragmentSource.contains("samplerExternalOES") -> "OES"
+            program.fragmentSource.contains("sampler2D") -> "2D"
+            else -> "unknown"
         }
+        val unit = IntArray(1)
+        val uTexLoc = GLES30.glGetUniformLocation(program.handle, "uTex")
+        if (uTexLoc >= 0) GLES30.glGetUniformiv(program.handle, uTexLoc, unit, 0)
+        val samplerUnit = if (uTexLoc >= 0) unit[0] else -1
         val bindOk = bound[0] == src.glTextureId
         // (F) ST interpretation check data: transposed matrix + NET class.
         val stT = FloatArray(16) { c -> st[(c % 4) * 4 + c / 4] }
