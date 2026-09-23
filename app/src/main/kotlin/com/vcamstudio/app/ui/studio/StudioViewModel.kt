@@ -194,6 +194,24 @@ class StudioViewModel @Inject constructor(
         lifecycleOwner = owner
     }
 
+    /**
+     * CameraX unbinds when the lifecycle stops (background, task switch,
+     * activity recreation). ON_START re-binds every camera layer from the
+     * cached engine surfaces so frames resume — otherwise the layer sits
+     * frame-dead forever after any lifecycle bounce.
+     */
+    fun onLifecycleEvent(event: androidx.lifecycle.Lifecycle.Event) {
+        if (event != androidx.lifecycle.Lifecycle.Event.ON_START) return
+        val owner = lifecycleOwner ?: return
+        val scene = uiState.value.activeScene ?: return
+        scene.layers.filterIsInstance<LayerDefinition.Camera>().forEach { layer ->
+            val surface = cameraSurfaces[layer.id] ?: return@forEach
+            val controls = cameraControls.value[layer.id] ?: ProControls()
+            Timber.i("LIFECYCLE_REBIND camera=${layer.id}")
+            cameraSource.bind(surface, controls, owner)
+        }
+    }
+
     fun attachStage(surface: android.view.Surface, width: Int, height: Int) {
         engine.attachPreview(surface, width, height)
     }
@@ -582,7 +600,11 @@ class StudioViewModel @Inject constructor(
 
     private fun onExternalSourceReady(sourceId: String, surface: android.view.Surface) {
         val scene = uiState.value.activeScene ?: return
-        val owner = lifecycleOwner ?: return
+        val owner = lifecycleOwner
+        if (owner == null) {
+            Timber.w("EXTERNAL_SOURCE_DROPPED_NO_LIFECYCLE $sourceId")
+            return
+        }
         val cameraLayer = scene.layers.filterIsInstance<LayerDefinition.Camera>().firstOrNull { it.id == sourceId }
         if (cameraLayer != null) {
             cameraSurfaces[sourceId] = surface

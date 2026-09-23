@@ -278,3 +278,35 @@ Two devices, two precise diagnoses:
 Acceptance for Phase 1 gate (owner): Camon 20 boots without shader error;
 Samsung shows live camera + video with presented > 0 and fps > 0. Not claimed
 fixed until device-confirmed.
+
+
+## Increment 8 — dump v2 (self-contained evidence) + visual-id pin + lifecycle rebind (2026-09-23)
+
+Round 5 result: init now succeeds on BOTH devices (round-3 shader fix worked),
+scene renders (rendered=2/4), sources created — but presented=0 on both, and
+`rendered` frozen at single digits also proves camera frames never flow. The
+present-path code re-audited clean AGAIN, which means the failure is inside
+one of the three EGL window calls (createWindowSurface / makeCurrent /
+swapBuffers) — each of which logs, but reports were dump-only. Changes:
+
+1. **dump v2 — self-contained evidence**: RenderThread keeps a ring of the
+   last 40 milestone lines (ENGINE_UP, SURFACE_ATTACHED, EGL_WINDOW_CREATED/
+   FAILED, MAKE_CURRENT_FAILED, SWAP_FAILED, FIRST_PRESENT, SCENE_APPLIED,
+   FIRST_SCENE_RENDER, SOURCE_CREATED, GL_SMOKE_OK); dump() now includes
+   `presentAttempts=`, `failedRecovers=`, per-output status
+   (`outputs=preview:egl=…,mcFail=…,swapFail=…,valid=…,WxH`) and
+   `recent=<last 18 events>`. "Copy dump" alone is now decisive.
+2. **eglCreateWindowSurface prime suspect addressed**: chosen EGL config now
+   logs its EGL_NATIVE_VISUAL_ID, and StageView pins
+   `holder.setFormat(RGBA_8888)` — a config/window native-visual mismatch is
+   the classic cross-vendor cause of permanent EGL_BAD_MATCH at window-surface
+   creation (healthy renderer, black preview).
+3. **presentAttempts counter**: distinguishes "never attempted" from
+   "attempted, swap rejected" in the dump.
+4. **Camera frames**: `rendered=2` frozen = no source frames after scene
+   commits. Added lifecycle ON_START rebind of all camera layers from cached
+   engine surfaces (CameraX unbinds on stop/recreate and previously never
+   recovered), LIFECYCLE_REBIND + EXTERNAL_SOURCE_DROPPED_NO_LIFECYCLE logs.
+
+Acceptance unchanged (owner): Camon 20 boots clean; Samsung shows live
+camera+video with presented>0, fps>0. Not claimed fixed until device proof.

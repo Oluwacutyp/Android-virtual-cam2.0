@@ -70,6 +70,14 @@ fun StudioScreen(
     vm: StudioViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(lifecycleOwner) { vm.attachLifecycleOwner(lifecycleOwner) }
+    val platformLifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(platformLifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            vm.onLifecycleEvent(event)
+        }
+        platformLifecycle.lifecycle.addObserver(observer)
+        onDispose { platformLifecycle.lifecycle.removeObserver(observer) }
+    }
     val state by vm.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var textDialogVisible by remember { mutableStateOf(false) }

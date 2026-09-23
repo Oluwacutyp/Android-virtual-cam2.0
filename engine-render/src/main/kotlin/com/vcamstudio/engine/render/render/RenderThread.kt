@@ -121,7 +121,34 @@ internal class RenderThread(
     @Volatile
     var renderedFrameCount: Long = 0
         private set
+
+    /** Swap attempts that reached the driver (dump: attempted vs succeeded). */
+    @Volatile
+    var presentAttemptCount: Long = 0
+        private set
     private var loopIterations = 0L
+
+    /** Ring of recent milestone lines — embedded in dump() so a "Copy dump"
+     *  report is decisive even without logcat. */
+    private val eventLog = ArrayDeque<String>(48)
+    private val eventLock = Any()
+
+    fun noteEvent(line: String) {
+        val stamped = "${clock.nowMs()} $line"
+        synchronized(eventLock) {
+            if (eventLog.size >= 40) eventLog.removeFirst()
+            eventLog.addLast(stamped)
+        }
+        Log.i(TAG, line)
+    }
+
+    fun recentEvents(): List<String> = synchronized(eventLog) { eventLog.toList() }
+
+    fun outputStatus(): String =
+        outputs.entries.joinToString(";") { (id, o) ->
+            "$id:egl=${o.eglSurface != null},mcFail=${o.makeCurrentFailures}," +
+                "swapFail=${o.swapFailures},valid=${o.surface.isValid},${o.width}x${o.height}"
+        }
 
     fun post(block: () -> Unit) {
         handler.post {
@@ -152,13 +179,13 @@ internal class RenderThread(
             collector.initError = null
             glSmokeTest()
             initialized = true
-            Log.i(TAG, "ENGINE_UP renderer=${core.glRenderer} gl=${core.glVersion}")
+            noteEvent("ENGINE_UP ${core.glRenderer}")
             scheduleFrame()
         } catch (t: Throwable) {
             // Fail VISIBLE (diagnostics + log), not silent: keep retrying so a
             // transient driver/permission condition self-heals.
             collector.initError = t.message ?: t.javaClass.simpleName
-            Log.e(TAG, "ENGINE_INIT_FAILED: ${t.message} — retrying in 2s", t)
+            noteEvent("ENGINE_INIT_FAILED ${t.message}")
             handler.postDelayed({
                 if (running && !initialized) initEngine()
             }, 2_000)
@@ -198,7 +225,7 @@ internal class RenderThread(
         if (red != 255 || err != 0) {
             throw GlException("GL_SMOKE_FAILED red=$red glErr=0x${Integer.toHexString(err)}")
         }
-        Log.i(TAG, "GL_SMOKE_OK")
+        noteEvent("GL_SMOKE_OK")
     }
 
     fun shutdownGl() {
@@ -229,7 +256,7 @@ internal class RenderThread(
         old?.eglSurface?.release()
         outputs[id] = Output(id, surface, width, height, eglSurface = null, needsReinit = true)
         if (id == PREVIEW_OUTPUT_ID) collector.previewSize = Size(width, height)
-        Log.i(TAG, "SURFACE_ATTACHED id=$id ${width}x$height valid=${surface.isValid} (${outputs.size} total)")
+        noteEvent("SURFACE_ATTACHED id=$id ${width}x$height valid=${surface.isValid}")
     }
 
     fun detachOutput(id: String) {
@@ -265,10 +292,10 @@ internal class RenderThread(
             out.needsReinit = false
             out.makeCurrentFailures = 0
             out.swapFailures = 0
-            Log.i(TAG, "EGL_WINDOW_CREATED id=${out.id}")
+            noteEvent("EGL_WINDOW_CREATED id=${out.id}")
             true
         } catch (t: Throwable) {
-            Log.e(TAG, "EGL_WINDOW_FAILED id=${out.id}: ${t.message}")
+            noteEvent("EGL_WINDOW_FAILED id=${out.id}: ${t.message}")
             consecutiveFailedRecoveries++
             false
         }
@@ -302,7 +329,7 @@ internal class RenderThread(
             val src = ExternalTextureSource(id, DEFAULT_SOURCE_W, DEFAULT_SOURCE_H)
             externalSources[id] = src
             sceneNeedsRender = true
-            Log.i(TAG, "SOURCE_CREATED $id")
+            noteEvent("SOURCE_CREATED $id")
             postMain {
                 listener?.onExternalSourceReady(id, src.surface, DEFAULT_SOURCE_W, DEFAULT_SOURCE_H)
             }
@@ -393,7 +420,7 @@ internal class RenderThread(
         // A new/edited scene must render at least once even if no source has
         // produced a frame yet — otherwise the compositor never presents.
         sceneNeedsRender = true
-        Log.i(TAG, "SCENE_APPLIED ${scene.width}x${scene.height} layers=${scene.layers.size}")
+        noteEvent("SCENE_APPLIED ${scene.width}x${scene.height} layers=${scene.layers.size}")
     }
 
     private fun recreateSceneFbos(w: Int, h: Int) {
@@ -446,7 +473,7 @@ internal class RenderThread(
         presentedSceneTex = currentFbo().texture.id
         renderedFrameCount++
         if (renderedFrameCount == 1L) {
-            Log.i(TAG, "FIRST_SCENE_RENDER ${scene.width}x${scene.height}")
+            noteEvent("FIRST_SCENE_RENDER ${scene.width}x${scene.height}")
         }
     }
 
@@ -512,8 +539,7 @@ internal class RenderThread(
                 out.makeCurrentFailures++
                 val f = out.makeCurrentFailures
                 if (f == 1 || f == 30 || f % 300 == 0) {
-                    Log.e(
-                        TAG,
+                    noteEvent(
                         "MAKE_CURRENT_FAILED id=${out.id} n=$f err=${EGL14.eglGetError()} surfaceValid=${out.surface.isValid}",
                     )
                 }
@@ -545,6 +571,7 @@ internal class RenderThread(
                 r.drawTextureQuad(presentedSceneTex, 1f, quad, out.width, out.height)
             }
 
+            presentAttemptCount++
             es.setPresentationTime(frameTimeNanos)
             if (es.swap()) {
                 anySwapOk = true
@@ -557,13 +584,12 @@ internal class RenderThread(
                     }
                 if (!out.firstPresentLogged) {
                     out.firstPresentLogged = true
-                    Log.i(TAG, "FIRST_PRESENT ${out.id} ${out.width}x${out.height}")
+                    noteEvent("FIRST_PRESENT ${out.id} ${out.width}x${out.height}")
                 }
             } else {
                 out.swapFailures++
                 val f = out.swapFailures
-                Log.w(
-                    TAG,
+                noteEvent(
                     "SWAP_FAILED id=${out.id} n=$f err=0x${Integer.toHexString(EGL14.eglGetError())} surfaceValid=${out.surface.isValid}",
                 )
                 if (f >= 30) {
@@ -600,8 +626,7 @@ internal class RenderThread(
                 out.makeCurrentFailures++
                 val f = out.makeCurrentFailures
                 if (f == 1 || f == 30 || f % 300 == 0) {
-                    Log.e(
-                        TAG,
+                    noteEvent(
                         "MAKE_CURRENT_FAILED id=${out.id} n=$f err=${EGL14.eglGetError()} surfaceValid=${out.surface.isValid} (blank)",
                     )
                 }

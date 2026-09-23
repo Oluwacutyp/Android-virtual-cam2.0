@@ -51,6 +51,9 @@ class EglCore {
 
         config = chooseConfig()
             ?: throw GlException("EGL_STAGE config: all 4 config chains rejected")
+        val visualId = IntArray(1)
+        EGL14.eglGetConfigAttrib(display, config, EGL14.EGL_NATIVE_VISUAL_ID, visualId, 0)
+        Log.i(TAG, "EGL_STAGE chosenConfig nativeVisualId=${visualId[0]}")
 
         val attribs = EglAttribs.flatten(listOf(EGL14.EGL_CONTEXT_CLIENT_VERSION to 3))
         context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, attribs, 0)

@@ -23,6 +23,11 @@ class StageView(context: Context) : SurfaceView(context), SurfaceHolder.Callback
         // The engine composites onto this surface; keep it above the window so
         // Compose backgrounds can never occlude it (deterministic never-black).
         setZOrderOnTop(true)
+        // Pin the window format so the EGL config's native visual id matches —
+        // a mismatch makes eglCreateWindowSurface fail (EGL_BAD_MATCH) on
+        // several Adreno/Mali drivers, which looks exactly like a healthy
+        // renderer with a permanently black preview.
+        holder.setFormat(android.graphics.PixelFormat.RGBA_8888)
         holder.addCallback(this)
     }
 
