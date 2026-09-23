@@ -187,13 +187,13 @@ internal class RenderThread(
         )
         GLES30.glClearColor(1f, 0f, 0f, 1f)
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
-        val px = ByteArray(4)
-        GLES30.glReadPixels(2, 2, 1, 1, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, px, 0)
+        val px = java.nio.ByteBuffer.allocateDirect(4)
+        GLES30.glReadPixels(2, 2, 1, 1, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, px)
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
         GLES30.glDeleteFramebuffers(1, fbo, 0)
         GLES30.glDeleteTextures(1, tex, 0)
         val err = GLES30.glGetError()
-        val red = px[0].toInt() and 0xFF
+        val red = px.get(0).toInt() and 0xFF
         if (red != 255 || err != 0) {
             throw GlException("GL_SMOKE_FAILED red=$red glErr=0x${Integer.toHexString(err)}")
         }
