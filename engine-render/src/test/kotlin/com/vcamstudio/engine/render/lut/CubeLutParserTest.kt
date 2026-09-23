@@ -81,10 +81,23 @@ class CubeLutParserTest {
     }
 
     @Test
-    fun `one-dimensional lut rejects`() {
-        assertThrows(IllegalArgumentException::class.java) {
-            CubeLutParser.parse("LUT_1D_SIZE 32\n0 0 0")
+    fun `one-dimensional lut expands to 3d`() {
+        val lut = CubeLutParser.parse("LUT_1D_SIZE 2\n0.0 0.0 0.0\n1.0 1.0 1.0")
+        assertEquals(2, lut.size)
+        assertEquals(24, lut.data.size)
+        // Lattice (r=1,g=0,b=0): R from curve[1], G/B from curve[0].
+        assertEquals(1f, lut.data[3], 1e-6f)
+        assertEquals(0f, lut.data[4], 1e-6f)
+        assertEquals(0f, lut.data[5], 1e-6f)
+    }
+
+    @Test
+    fun `binary image input gives a clear error`() {
+        val pngBytes = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+        val e = assertThrows(IllegalArgumentException::class.java) {
+            CubeLutParser.parse(CubeLutParser.decode(pngBytes))
         }
+        assertTrue(e.message!!.contains("ASCII"))
     }
 
     @Test

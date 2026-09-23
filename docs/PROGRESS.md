@@ -344,3 +344,35 @@ Round 6 dumps finally localized BOTH failures precisely:
 Acceptance (owner): Camon stops looping EGL_BAD_ALLOC; Samsung
 presentAttempts>0 and presented>0; live camera visible on BOTH devices at
 least in RAW mode. Not claimed fixed until device proof.
+
+
+## Increment 10 — round 7: GL killer bug + settings-crash + RAW image overlay + 1D LUTs (2026-09-23)
+
+RAW CameraX preview CONFIRMED WORKING on both devices (S22 Ultra + Camon 20).
+Four remaining blockers, all fixed:
+
+1. **uploadQuad ArrayIndexOutOfBounds(8)[12] — the reason GL NEVER worked.**
+   The staging loop advanced its source index by the interleaved stride (6)
+   while cornersPx/uvs are tightly-packed 8-float arrays: vertex 2 read index
+   12 → crash. Present since round 1; only surfaced once the present path
+   finally executed. uploadQuad + uploadFullScreenQuad rewritten with
+   vertex-based source indexing (i*2) + stride-based staging offsets (i*6) +
+   size guards. This bug, not the drivers, was the original "black preview".
+2. **Camera Pro settings crash**: every slider tick (EV/zoom fire per-value)
+   triggered a FULL CameraX unbind+rebind → session teardown storm → crash.
+   Now: runtime controls (zoom/torch/EV) apply via applyRuntime with NO
+   rebind; bind-time controls (WB/AF/ISO/fps) rebind debounced at 350 ms;
+   CameraSource serializes binds (new bind cancels the in-flight one).
+3. **RAW image overlay (v1)**: imported images now render as Compose views on
+   top of the PreviewView (position/size fractions honored; rotation/blend/
+   effects remain GL-mode). VM exposes rawImageBitmap(sourceId).
+4. **LUT "missing LUT_3D_SIZE"**: parser now (a) sniffs binary inputs
+   (PNG/JPEG/ZIP/RIFF → clear "export an ASCII .cube" error — likely the
+   user's file was a Hald CLUT image), (b) accepts 1D .cube files by baking
+   the per-channel curves into a 3D identity lattice (tests included).
+
+Acceptance for round 8 (owner): RAW stable 10+ min incl. settings changes;
+no uploadQuad crash; Image layer visible over RAW. GL compositor should now
+also render for the first time ever (presented>0) — verify via the RAW/GL
+toggle; any residual GL-path visual bugs are now debuggable with milestone
+logs instead of crashes.

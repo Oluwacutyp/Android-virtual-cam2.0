@@ -60,6 +60,9 @@ class CameraSource(
 
     private val mainScope = CoroutineScope(SupervisorJob() + dispatchers.main)
 
+    /** Serialized binds: a new bind cancels the in-flight one instead of racing it. */
+    private var bindJob: kotlinx.coroutines.Job? = null
+
     private var provider: ProcessCameraProvider? = null
     private var camera: Camera? = null
     private var boundControls: ProControls? = null
@@ -110,7 +113,8 @@ class CameraSource(
         lifecycleOwner: LifecycleOwner,
         attachSurface: (Preview) -> Unit,
     ) {
-        mainScope.launch {
+        bindJob?.cancel()
+        bindJob = mainScope.launch {
             try {
                 _state.value = State.Starting
                 val cameraProvider = provider ?: ProcessCameraProvider

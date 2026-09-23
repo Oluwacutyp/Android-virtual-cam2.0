@@ -227,6 +227,9 @@ class StudioViewModel @Inject constructor(
         maybeBindRawCamera()
     }
 
+    /** RAW preview overlay: decoded bitmap for an image layer's source. */
+    fun rawImageBitmap(sourceId: String): android.graphics.Bitmap? = imageCache[sourceId]
+
     fun setPreviewMode(raw: Boolean) {
         if (rawMode.value == raw) return
         rawMode.value = raw
@@ -458,7 +461,27 @@ class StudioViewModel @Inject constructor(
         val current = cameraControls.value[layerId] ?: return
         val updated = mutate(current)
         cameraControls.value = cameraControls.value + (layerId to updated)
-        rebindCamera(layerId, updated)
+        // Runtime-tunable controls apply INSTANTLY via capture-session controls
+        // — a full CameraX rebind per slider tick tears down the session
+        // mid-preview and crashes (round-7 "settings crash" root cause).
+        cameraSource.applyRuntime(updated)
+        // Only bind-time controls (WB/AF/ISO/fps) need a rebind — debounce the
+        // slider storm so a drag produces ONE rebind, not dozens.
+        val bindTimeChanged = current.whiteBalance != updated.whiteBalance ||
+            current.focusMode != updated.focusMode ||
+            current.iso != updated.iso ||
+            current.fpsRange != updated.fpsRange
+        if (bindTimeChanged) scheduleDebouncedRebind(layerId, updated)
+    }
+
+    private var rebindJob: kotlinx.coroutines.Job? = null
+
+    private fun scheduleDebouncedRebind(layerId: String, controls: ProControls) {
+        rebindJob?.cancel()
+        rebindJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(350)
+            if (rawMode.value) maybeBindRawCamera() else rebindCamera(layerId, controls)
+        }
     }
 
     fun tapToFocus(x: Float, y: Float, viewW: Float, viewH: Float) =

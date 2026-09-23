@@ -328,34 +328,43 @@ internal class SceneRenderer(
     // ---------------------------------------------------------- quad upload
 
     private fun uploadQuad(quad: LayerGeometry.Quad, sceneW: Float, sceneH: Float, uvFlipY: Boolean = false) {
-        val local = LOCAL_CORNERS
-        var s = 0
+        // cornersPx/uvs are TIGHTLY-PACKED 8-float arrays (4 verts x 2): index
+        // them by VERTEX (i*2), never by the interleaved staging stride. The
+        // previous code advanced the source index by STRIDE_FLOATS(6) and hit
+        // index 12 of an 8-length array on EVERY device — the GL path could
+        // never have worked (rounds 1-7 root cause, surfaced only once the
+        // present path finally executed).
+        require(quad.cornersPx.size >= 8 && quad.uvs.size >= 8) { "quad arrays too small" }
         for (i in 0 until 4) {
-            val cx = quad.cornersPx[s]
-            val cy = quad.cornersPx[s + 1]
-            val v = if (uvFlipY) 1f - quad.uvs[s + 1] else quad.uvs[s + 1]
-            staging[s] = cx / sceneW * 2f - 1f
-            staging[s + 1] = 1f - cy / sceneH * 2f
-            staging[s + 2] = quad.uvs[s]
-            staging[s + 3] = v
-            staging[s + 4] = local[i][0]
-            staging[s + 5] = local[i][1]
-            s += STRIDE_FLOATS
+            val src = i * 2
+            val dst = i * STRIDE_FLOATS
+            val cx = quad.cornersPx[src]
+            val cy = quad.cornersPx[src + 1]
+            val u = quad.uvs[src]
+            val v = if (uvFlipY) 1f - quad.uvs[src + 1] else quad.uvs[src + 1]
+            staging[dst] = cx / sceneW * 2f - 1f
+            staging[dst + 1] = 1f - cy / sceneH * 2f
+            staging[dst + 2] = u
+            staging[dst + 3] = v
+            staging[dst + 4] = LOCAL_CORNERS[i][0]
+            staging[dst + 5] = LOCAL_CORNERS[i][1]
         }
         uploadVertexData()
     }
 
     private fun uploadFullScreenQuad(flipY: Boolean) {
+        // Same vertex-vs-stride indexing rule as uploadQuad (see its comment):
+        // corners/uvs are 8-float packed arrays indexed by i*2.
         val corners = floatArrayOf(-1f, 1f, 1f, 1f, 1f, -1f, -1f, -1f)
         val vTop = if (flipY) 1f else 0f
         val vBottom = if (flipY) 0f else 1f
         val uvs = floatArrayOf(0f, vTop, 1f, vTop, 1f, vBottom, 0f, vBottom)
-        var s = 0
         for (i in 0 until 4) {
-            staging[s] = corners[s]; staging[s + 1] = corners[s + 1]
-            staging[s + 2] = uvs[s]; staging[s + 3] = uvs[s + 1]
-            staging[s + 4] = LOCAL_CORNERS[i][0]; staging[s + 5] = LOCAL_CORNERS[i][1]
-            s += STRIDE_FLOATS
+            val src = i * 2
+            val dst = i * STRIDE_FLOATS
+            staging[dst] = corners[src]; staging[dst + 1] = corners[src + 1]
+            staging[dst + 2] = uvs[src]; staging[dst + 3] = uvs[src + 1]
+            staging[dst + 4] = LOCAL_CORNERS[i][0]; staging[dst + 5] = LOCAL_CORNERS[i][1]
         }
         uploadVertexData()
     }
