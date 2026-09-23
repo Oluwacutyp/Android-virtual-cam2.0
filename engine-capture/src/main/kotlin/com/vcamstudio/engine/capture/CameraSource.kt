@@ -75,6 +75,7 @@ class CameraSource(
                 val cameraProvider = provider ?: ProcessCameraProvider
                     .getInstance(context).await()
                     .also { provider = it }
+                Log.i(TAG, "CAMERA_PROVIDER_READY")
 
                 val previewBuilder = Preview.Builder().setResolutionSelector(
                     ResolutionSelector.Builder()
@@ -106,12 +107,18 @@ class CameraSource(
 
                 val preview = previewBuilder.build()
                 preview.setSurfaceProvider { request: SurfaceRequest ->
+                    Log.i(
+                        TAG,
+                        "SURFACE_REQUESTED ${request.resolution.width}x${request.resolution.height}",
+                    )
                     request.provideSurface(
                         surface,
                         androidx.core.content.ContextCompat.getMainExecutor(context),
                     ) { result ->
                         // The Surface is engine-owned; CameraX merely stops writing.
-                        result.getSurface() // no-op touch to acknowledge
+                        runCatching { result.getSurface() }
+                            .onSuccess { Log.i(TAG, "SURFACE_PROVIDED_OK") }
+                            .onFailure { Log.e(TAG, "SURFACE_PROVIDED_FAILED ${it.message}") }
                     }
                 }
 
@@ -135,9 +142,9 @@ class CameraSource(
                     exposureIndexRange = range,
                     hasFlash = cam.cameraInfo.hasFlashUnit(),
                 )
-                Log.i(TAG, "camera bound lens=${controls.lensFacing}")
+                Log.i(TAG, "CAMERA_BOUND lens=${controls.lensFacing}")
             } catch (t: Throwable) {
-                Log.e(TAG, "camera bind failed", t)
+                Log.e(TAG, "CAMERA_BIND_FAILED", t)
                 _state.value = State.Failed(t.message ?: "camera bind failed")
             }
         }

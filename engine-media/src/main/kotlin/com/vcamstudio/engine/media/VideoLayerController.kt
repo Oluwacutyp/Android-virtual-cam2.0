@@ -65,8 +65,12 @@ class VideoLayerController(
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                Log.e(TAG, "player error for $sourceId", error)
+                Log.e(TAG, "VIDEO_ERROR $sourceId", error)
                 onError?.invoke(error.message ?: "playback error")
+            }
+
+            override fun onRenderedFirstFrame() {
+                Log.i(TAG, "VIDEO_FIRST_FRAME $sourceId")
             }
         })
         }

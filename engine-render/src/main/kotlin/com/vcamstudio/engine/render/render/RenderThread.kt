@@ -1,5 +1,6 @@
 package com.vcamstudio.engine.render.render
 
+import android.opengl.EGL14
 import android.opengl.GLES30
 import android.view.Choreographer
 import android.os.Handler
@@ -93,6 +94,7 @@ internal class RenderThread(
         var needsReinit: Boolean,
     ) {
         var firstPresentLogged: Boolean = false
+        var makeCurrentWarned: Boolean = false
     }
 
     // ---- scene state (render thread only)
@@ -114,7 +116,11 @@ internal class RenderThread(
 
     private var choreographer: Choreographer? = null
     private var lastPresentClockMs = 0L
-    private var renderedFrames = 0L
+
+    @Volatile
+    var renderedFrameCount: Long = 0
+        private set
+    private var loopIterations = 0L
 
     fun post(block: () -> Unit) {
         handler.post {
@@ -143,6 +149,7 @@ internal class RenderThread(
             collector.glVersion = core.glVersion
             collector.eglApi = core.eglApiVersion
             collector.initError = null
+            glSmokeTest()
             initialized = true
             Log.i(TAG, "ENGINE_UP renderer=${core.glRenderer} gl=${core.glVersion}")
             scheduleFrame()
@@ -155,6 +162,42 @@ internal class RenderThread(
                 if (running && !initialized) initEngine()
             }, 2_000)
         }
+    }
+
+    /**
+     * Proves the GL pipeline is alive at boot: allocates a tiny FBO, clears
+     * red, reads the pixel back. Fails loudly (surfaced as initError) instead
+     * of producing a silently-dead engine.
+     */
+    private fun glSmokeTest() {
+        val tex = IntArray(1)
+        val fbo = IntArray(1)
+        GLES30.glGenTextures(1, tex, 0)
+        GLES30.glGenFramebuffers(1, fbo, 0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, tex[0])
+        GLES30.glTexImage2D(
+            GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA, 4, 4, 0,
+            GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, null,
+        )
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo[0])
+        GLES30.glFramebufferTexture2D(
+            GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0,
+            GLES30.GL_TEXTURE_2D, tex[0], 0,
+        )
+        GLES30.glClearColor(1f, 0f, 0f, 1f)
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+        val px = ByteArray(4)
+        GLES30.glReadPixels(2, 2, 1, 1, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, px, 0)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        GLES30.glDeleteFramebuffers(1, fbo, 0)
+        GLES30.glDeleteTextures(1, tex, 0)
+        val err = GLES30.glGetError()
+        val red = px[0].toInt() and 0xFF
+        if (red != 255 || err != 0) {
+            throw GlException("GL_SMOKE_FAILED red=$red glErr=0x${Integer.toHexString(err)}")
+        }
+        Log.i(TAG, "GL_SMOKE_OK")
     }
 
     fun shutdownGl() {
@@ -185,7 +228,7 @@ internal class RenderThread(
         old?.eglSurface?.release()
         outputs[id] = Output(id, surface, width, height, eglSurface = null, needsReinit = true)
         if (id == PREVIEW_OUTPUT_ID) collector.previewSize = Size(width, height)
-        Log.i(TAG, "output attached id=$id ${width}x$height (${outputs.size} total)")
+        Log.i(TAG, "SURFACE_ATTACHED id=$id ${width}x$height (${outputs.size} total)")
     }
 
     fun detachOutput(id: String) {
@@ -219,9 +262,11 @@ internal class RenderThread(
         return try {
             out.eglSurface = EglWindowSurface(egl!!, out.surface)
             out.needsReinit = false
+            out.makeCurrentWarned = false
+            Log.i(TAG, "EGL_WINDOW_CREATED id=${out.id}")
             true
         } catch (t: Throwable) {
-            Log.e(TAG, "reinit failed for ${out.id}: ${t.message}")
+            Log.e(TAG, "EGL_WINDOW_FAILED id=${out.id}: ${t.message}")
             consecutiveFailedRecoveries++
             false
         }
@@ -291,9 +336,19 @@ internal class RenderThread(
     private fun doFrame(frameTimeNanos: Long) {
         applyPendingScene()
 
+        loopIterations++
+        if (loopIterations % 300 == 0L) {
+            Log.i(TAG, "FRAME_TICK loops=$loopIterations rendered=$renderedFrameCount outputs=${outputs.size}")
+        }
+
         var dirty = false
+        // One misbehaving source (abandoned surface, producer crash) must
+        // never kill the whole frame — isolate it.
         for (src in allSources()) {
-            if (src.update()) dirty = true
+            val updated = runCatching { src.update() }
+                .onFailure { Log.w(TAG, "SOURCE_UPDATE_FAILED ${it.message}") }
+                .getOrDefault(false)
+            if (updated) dirty = true
         }
 
         val scene = currentScene
@@ -380,8 +435,8 @@ internal class RenderThread(
         r.endScene()
 
         presentedSceneTex = currentFbo().texture.id
-        renderedFrames++
-        if (renderedFrames == 1L) {
+        renderedFrameCount++
+        if (renderedFrameCount == 1L) {
             Log.i(TAG, "FIRST_SCENE_RENDER ${scene.width}x${scene.height}")
         }
     }
@@ -444,7 +499,14 @@ internal class RenderThread(
                 if (!reinitOutput(out)) continue
             }
             val es = out.eglSurface!!
-            if (!es.makeCurrent()) continue
+            if (!es.makeCurrent()) {
+                if (!out.makeCurrentWarned) {
+                    out.makeCurrentWarned = true
+                    Log.w(TAG, "MAKE_CURRENT_FAILED id=${out.id} err=${EGL14.eglGetError()}")
+                }
+                continue
+            }
+            out.makeCurrentWarned = false
 
             GLES30.glViewport(0, 0, out.width, out.height)
             GLES30.glClearColor(0f, 0f, 0f, 1f)
@@ -474,7 +536,10 @@ internal class RenderThread(
                     Log.i(TAG, "FIRST_PRESENT ${out.id} ${out.width}x${out.height}")
                 }
             } else {
-                Log.w(TAG, "swapBuffers failed for ${out.id} — scheduling recovery")
+                Log.w(
+                    TAG,
+                    "SWAP_FAILED id=${out.id} err=0x${Integer.toHexString(EGL14.eglGetError())} — scheduling recovery",
+                )
                 out.needsReinit = true
             }
         }
@@ -501,7 +566,14 @@ internal class RenderThread(
                 if (!reinitOutput(out)) continue
             }
             val es = out.eglSurface!!
-            if (!es.makeCurrent()) continue
+            if (!es.makeCurrent()) {
+                if (!out.makeCurrentWarned) {
+                    out.makeCurrentWarned = true
+                    Log.w(TAG, "MAKE_CURRENT_FAILED id=${out.id} err=${EGL14.eglGetError()} (blank)")
+                }
+                continue
+            }
+            out.makeCurrentWarned = false
             GLES30.glViewport(0, 0, out.width, out.height)
             GLES30.glClearColor(0f, 0f, 0f, 1f)
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
@@ -517,6 +589,7 @@ internal class RenderThread(
             }
         }
         if (anySwapOk) {
+            collector.onPresented(16.7f, 0)
             lastPresentMonotonicMs = clock.nowMs()
             consecutiveFailedRecoveries = 0
         }

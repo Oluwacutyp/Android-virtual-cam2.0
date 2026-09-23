@@ -178,6 +178,7 @@ class RenderEngine(
             appendLine("health=$d.health")
             appendLine("fps=${"%.1f".format(d.fps)}")
             appendLine("presented=${d.presentedFrames}")
+            appendLine("rendered=${thread.renderedFrameCount}")
             appendLine("dropped=${d.droppedFrames}")
             appendLine("p50ms=${"%.2f".format(d.p50Ms)}")
             appendLine("p95ms=${"%.2f".format(d.p95Ms)}")

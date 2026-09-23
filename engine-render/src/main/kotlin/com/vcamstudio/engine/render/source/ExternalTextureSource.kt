@@ -47,10 +47,19 @@ class ExternalTextureSource(
 
     override fun update(): Boolean {
         if (!framePending.compareAndSet(true, false)) return false
-        surfaceTexture.updateTexImage()
-        surfaceTexture.getTransformMatrix(transformMatrix)
-        // Note: SurfaceTexture has no public size getters; dimensions stay at
-        // the requested buffer size (the producer honors setDefaultBufferSize).
+        try {
+            surfaceTexture.updateTexImage()
+            surfaceTexture.getTransformMatrix(transformMatrix)
+        } catch (t: Throwable) {
+            // Abandoned/tearing-down producer: skip this frame, stay alive.
+            android.util.Log.w("vcam-render", "UPDATE_TEX_IMAGE_FAILED $sourceId: ${t.message}")
+            return false
+        }
+        // SurfaceTexture has no public size getters; dimensions stay at the
+        // requested buffer size (the producer honors setDefaultBufferSize).
+        if (!hasFrame) {
+            android.util.Log.i("vcam-render", "FIRST_CAMERA_FRAME $sourceId")
+        }
         hasFrame = true
         return true
     }

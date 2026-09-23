@@ -175,3 +175,40 @@ Root causes found by pipeline audit (all fixed):
 
 Verification: CI compile+test+lint; runtime behavior needs the device re-run
 (stress script now has precise milestone signals to grep).
+
+
+## Increment 5 — device-gate round 2 FAILED: full-frame-loop instrumentation (2026-09-22)
+
+**Round 2 still black: presented=0, fps=0, UNHEALTHY.** `presented=0` is the
+decisive symptom — not one buffer swap has EVER succeeded, so the break is at
+the EGL/frame-loop foundation, upstream of cameras and sources. Added the
+verification ladder the user asked for (every stage logs; the FIRST missing
+line in a device logcat is the failing stage):
+
+- `VCAM_APP_START` (app boot fingerprint — confirms the new build is installed)
+- `EGL_STAGE display/init/config(chain)/context/pbuffer/pbuffer-current/ready`
+  — EglCore rewritten with a 4-chain config fallback
+  (recordable+es3 → plain+es3 → recordable+es2 → plain+es2), every EGL call
+  captures its error name
+- `GL_SMOKE_OK` / `GL_SMOKE_FAILED` — boot-time FBO clear + readPixels probe
+  (proves GL actually draws and reads, not just initializes)
+- `ENGINE_UP` (exists) · `SURFACE_ATTACHED` · `EGL_WINDOW_CREATED/FAILED` ·
+  `MAKE_CURRENT_FAILED` (+EGL err, warn-once) · `SWAP_FAILED` (+EGL err) ·
+  `FIRST_PRESENT` (exists, also on blank floor) · `FRAME_TICK` every 300 loops
+- Scene: `SCENE_APPLIED` · `FIRST_SCENE_RENDER` · `SOURCE_CREATED` (exist);
+  dump now also reports `rendered=` (scene renders, distinct from presents)
+- Camera: `CAMERA_PROVIDER_READY` · `SURFACE_REQUESTED <res>` ·
+  `SURFACE_PROVIDED_OK/FAILED` · `CAMERA_BOUND` / `CAMERA_BIND_FAILED` ·
+  `FIRST_CAMERA_FRAME` (engine side, per source)
+- Video: `VIDEO_FIRST_FRAME` · `VIDEO_ERROR`
+
+Resilience added this round: per-source `update()` exceptions are isolated
+(an abandoned SurfaceTexture previously killed the whole frame loop mid-frame
+→ no presents); blank-floor presents now count into the collector so
+"GL alive but scene empty" is distinguishable from "GL dead"; Diagnostics
+sheet shows an `ENGINE INIT FAILED: <reason>` banner; init retry loop
+unchanged (2 s cadence).
+
+Status: HONESTLY NOT FIXED on device yet — this increment exists to make the
+next logcat decisive. Nothing is claimed working until the user confirms the
+live camera is visible.

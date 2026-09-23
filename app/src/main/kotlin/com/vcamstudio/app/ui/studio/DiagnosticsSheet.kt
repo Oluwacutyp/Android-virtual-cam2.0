@@ -54,6 +54,15 @@ fun DiagnosticsSheet(
                     StatusChip("presented ${diagnostics.presentedFrames}", MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+            diagnostics.initError?.let { err ->
+                item {
+                    Text(
+                        "ENGINE INIT FAILED: $err",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
+            }
             item { SectionTitle("Frame times") }
             item {
                 Text(

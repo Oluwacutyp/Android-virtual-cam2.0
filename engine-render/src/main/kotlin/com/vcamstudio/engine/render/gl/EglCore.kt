@@ -7,22 +7,25 @@ import android.opengl.EGLDisplay
 import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES30
+import android.util.Log
 import android.view.Surface
 
 /**
  * Owns the single EGL display/context for the whole render engine (blueprint §B.3:
  * one context, one render thread — GLSurfaceView is banned).
  *
- * The context is created once per engine lifetime and survives Activity
- * recreation; output surfaces attach and detach without touching GL objects.
+ * Every setup stage logs under `EGL_STAGE <stage>` (tag vcam-render) so a device
+ * logcat answers exactly where initialization broke: display → init → config
+ * (4 fallback chains) → context → pbuffer → current.
  */
 class EglCore {
 
     private companion object {
+        const val TAG = "vcam-render"
+
         // android EGL14 lacks the ES3 constant on older API levels; 0x0040 per EGL spec.
         const val EGL_OPENGL_ES3_BIT = 0x0040
     }
-
 
     private var display: EGLDisplay = EGL14.EGL_NO_DISPLAY
     private var config: EGLConfig? = null
@@ -34,43 +37,51 @@ class EglCore {
     val eglApiVersion: String
 
     init {
+        Log.i(TAG, "EGL_STAGE display: requesting default display")
         display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
-        if (display == EGL14.EGL_NO_DISPLAY) throw GlException("eglGetDisplay failed")
+        if (display == EGL14.EGL_NO_DISPLAY) {
+            throw GlException("EGL_STAGE display: eglGetDisplay failed")
+        }
         val version = IntArray(2)
         if (!EGL14.eglInitialize(display, version, 0, version, 1)) {
-            throw GlException("eglInitialize failed: ${eglErrorName(EGL14.eglGetError())}")
+            throw GlException("EGL_STAGE init: eglInitialize failed: ${eglErrorName(EGL14.eglGetError())}")
         }
         eglApiVersion = "${version[0]}.${version[1]}"
+        Log.i(TAG, "EGL_STAGE init OK egl=$eglApiVersion")
 
         config = chooseConfig()
-            ?: throw GlException("No suitable EGL config (tried RECORDABLE and plain)")
+            ?: throw GlException("EGL_STAGE config: all 4 config chains rejected")
+
         val attribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE)
         context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, attribs, 0)
-        checkEgl("eglCreateContext")
-        if (context == EGL14.EGL_NO_CONTEXT) throw GlException("eglCreateContext returned NO_CONTEXT")
+        if (context == EGL14.EGL_NO_CONTEXT) {
+            throw GlException("EGL_STAGE context: create failed: ${eglErrorName(EGL14.eglGetError())}")
+        }
+        Log.i(TAG, "EGL_STAGE context OK (client v3)")
 
         // 1x1 pbuffer keeps the context current so GL objects (textures, FBOs,
         // programs) can be created before any output surface exists.
         val pattribs = intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE)
         pbuffer = EGL14.eglCreatePbufferSurface(display, config, pattribs, 0)
-        checkEgl("eglCreatePbufferSurface")
+        if (pbuffer == EGL14.EGL_NO_SURFACE) {
+            throw GlException("EGL_STAGE pbuffer: create failed: ${eglErrorName(EGL14.eglGetError())}")
+        }
         makeCurrentPbuffer()
+        Log.i(TAG, "EGL_STAGE pbuffer OK + current")
 
         glRenderer = GLES30.glGetString(GLES30.GL_RENDERER) ?: "unknown"
         glVersion = GLES30.glGetString(GLES30.GL_VERSION) ?: "unknown"
+        Log.i(TAG, "EGL_STAGE ready renderer=$glRenderer gl=$glVersion")
     }
 
     /**
-     * Config chooser with a deliberate fallback chain: pixel format + RECORDABLE
-     * (needed later for MediaCodec encoder input surfaces) first, then without
-     * RECORDABLE for devices whose window formats reject the flag.
+     * Config chooser with an explicit fallback ladder; the active chain is
+     * logged. ES3 contexts need an ES3-capable config on strict drivers, but
+     * lenient drivers accept an ES3 context on an ES2 config — so both are
+     * tried, recordable-first (MediaCodec surface input needs it later).
      */
     private fun chooseConfig(): EGLConfig? {
-        val base = mutableListOf(
-            // ES3 context on an ES2-only config is EGL_BAD_MATCH on strict
-            // drivers: request both renderable bits, fall back if rejected.
-            EGL14.EGL_RENDERABLE_TYPE to (EGL_OPENGL_ES3_BIT or EGL14.EGL_OPENGL_ES2_BIT),
-            EGL14.EGL_SURFACE_TYPE to (EGL14.EGL_WINDOW_BIT or EGL14.EGL_PBUFFER_BIT),
+        val pixel = listOf(
             EGL14.EGL_RED_SIZE to 8,
             EGL14.EGL_GREEN_SIZE to 8,
             EGL14.EGL_BLUE_SIZE to 8,
@@ -78,10 +89,28 @@ class EglCore {
             EGL14.EGL_DEPTH_SIZE to 0,
             EGL14.EGL_STENCIL_SIZE to 0,
         )
-        val withRecordable = base + listOf(EGLExt.EGL_RECORDABLE_ANDROID to 1, EGL14.EGL_NONE to 0)
-        val withoutRecordable = base + listOf(EGL14.EGL_NONE to 0)
+        val surface = listOf(
+            EGL14.EGL_SURFACE_TYPE to (EGL14.EGL_WINDOW_BIT or EGL14.EGL_PBUFFER_BIT),
+        )
+        val es3 = listOf(EGL14.EGL_RENDERABLE_TYPE to (EGL_OPENGL_ES3_BIT or EGL14.EGL_OPENGL_ES2_BIT))
+        val es2 = listOf(EGL14.EGL_RENDERABLE_TYPE to EGL14.EGL_OPENGL_ES2_BIT)
+        val recordable = listOf(EGLExt.EGL_RECORDABLE_ANDROID to 1)
 
-        return findConfig(withRecordable) ?: findConfig(withoutRecordable)
+        val chains = listOf(
+            "recordable+es3" to (es3 + surface + pixel + recordable),
+            "plain+es3" to (es3 + surface + pixel),
+            "recordable+es2" to (es2 + surface + pixel + recordable),
+            "plain+es2" to (es2 + surface + pixel),
+        )
+        for ((name, attribs) in chains) {
+            val cfg = findConfig(attribs + listOf(EGL14.EGL_NONE to 0))
+            if (cfg != null) {
+                Log.i(TAG, "EGL_STAGE config OK chain=$name")
+                return cfg
+            }
+            Log.w(TAG, "EGL_STAGE config chain=$name rejected")
+        }
+        return null
     }
 
     private fun findConfig(attribs: List<Pair<Int, Int>>): EGLConfig? {
@@ -97,7 +126,7 @@ class EglCore {
     fun createWindowSurface(surface: Surface): EGLSurface {
         val s = EGL14.eglCreateWindowSurface(display, config, surface, intArrayOf(EGL14.EGL_NONE), 0)
         if (s == null || s == EGL14.EGL_NO_SURFACE) {
-            throw GlException("eglCreateWindowSurface failed: ${eglErrorName(EGL14.eglGetError())}")
+            throw GlException("EGL_STAGE window-surface: create failed: ${eglErrorName(EGL14.eglGetError())}")
         }
         return s
     }
@@ -105,13 +134,12 @@ class EglCore {
     /** Raw display handle, needed for per-surface presentation time calls. */
     val eglDisplay: EGLDisplay get() = display
 
-
     fun makeCurrent(eglSurface: EGLSurface): Boolean =
         EGL14.eglMakeCurrent(display, eglSurface, eglSurface, context)
 
     fun makeCurrentPbuffer() {
         if (!EGL14.eglMakeCurrent(display, pbuffer, pbuffer, context)) {
-            throw GlException("eglMakeCurrent(pbuffer) failed: ${eglErrorName(EGL14.eglGetError())}")
+            throw GlException("EGL_STAGE pbuffer-current: failed: ${eglErrorName(EGL14.eglGetError())}")
         }
     }
 
@@ -135,12 +163,5 @@ class EglCore {
         display = EGL14.EGL_NO_DISPLAY
         context = EGL14.EGL_NO_CONTEXT
         pbuffer = EGL14.EGL_NO_SURFACE
-    }
-
-    private fun checkEgl(where: String) {
-        val err = EGL14.eglGetError()
-        if (err != EGL14.EGL_SUCCESS) {
-            throw GlException("$where failed: ${eglErrorName(err)}")
-        }
     }
 }
