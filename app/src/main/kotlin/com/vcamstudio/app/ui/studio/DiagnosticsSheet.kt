@@ -42,6 +42,8 @@ fun DiagnosticsSheet(
     onPreviewMode: (Boolean) -> Unit,
     uvDebugPass: Boolean,
     onUvDebug: (Boolean) -> Unit,
+    vboDrawPass: Boolean,
+    onVboDraw: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
@@ -84,6 +86,23 @@ fun DiagnosticsSheet(
                         androidx.compose.material3.Switch(
                             checked = uvDebugPass,
                             onCheckedChange = onUvDebug,
+                        )
+                    }
+                }
+            }
+            if (isDebugBuild) {
+                item {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "DEV: fresh VBO/VAO draw path (round-16D test)",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        androidx.compose.material3.Switch(
+                            checked = vboDrawPass,
+                            onCheckedChange = onVboDraw,
                         )
                     }
                 }

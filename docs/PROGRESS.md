@@ -723,3 +723,62 @@ SHIPPED (report-only, per mandate):
 - Classifier fix (NET meaningful again).
 NOT SHIPPED: any rotation/UV/geometry change; any fix claim. Standing rule
 intact: device verification on both test devices before any "fixed".
+
+
+## Increment 16 addendum 4 — FBO exonerated; present-stage isolated; VBO test path (2026-09-23)
+
+Owner evidence processed; three corrections (one to the owner's premise, two
+to Arena's diagnostics), then the mandated instruments.
+
+DECISIVE FINDING (from the owner's own dumps + screenshots):
+- The FROZEN corner probes decode to the EXACT gradient the CPU math
+  predicts (full-window video gradient, ST v-flip): TL(0,0.99,0) TR(0,0,0)
+  BR(1,0.004,0) BL(1,0.99,0) — all four match. The scene FBO is CORRECT
+  while the screen shows the wedge.
+- The on-screen visible triangle's colors match the FBO sampled by
+  strip tri1=(TL@NDC-origin, TR, BR) WITH the present pass's y-flip
+  (screen right-top = FBO BR red; right-bottom = FBO TR dark; left of the
+  wedge = FBO left-edge yellow/green). Four independent color matches.
+=> The wedge is introduced AFTER the scene FBO: the PRESENT draw (or below).
+   The GPU renders the present quad with its LEFT vertices at clip (0,0)
+   while the 1 Hz CPU read of the same buffer shows a perfect rectangle.
+   Layer draws are exonerated (FBO clean); the mandate-3 camera-draw
+   neutralization would test a draw that provably works — the same
+   experiment is redirected to include the PRESENT draw.
+
+CORRECTIONS:
+1. buf=0 is NOT invalid here: the engine has never used VBOs/VAOs — every
+   draw is client-side direct ByteBuffers (legal in GLES). The diag was not
+   missing a VAO (there are none; now PROVEN per dump: vao=0 is logged).
+   The underlying suspicion (client-array consumption on Adreno) is exactly
+   the right experiment -> mandate-3 test path shipped (below).
+2. DRAW_STATE[OES] was AMBIGUOUS: camera and video are BOTH external
+   sources; the 1 Hz tag captured whichever drew first. Dump 1's "OES" UVs
+   were the VIDEO's window. Tags now carry the layer id (OES:<id>,
+   UVDBG:<id>); OES_ORIENT carries the source id.
+3. SCENE_PIXEL hex was incomplete (%02X of a signed Int -> FFFFFF95).
+   Fixed properly (mask 0xFF). Dump 1's content probes were otherwise fine.
+
+SHIPPED (report/test-only, per directive):
+- vao=<handle> (GL_VERTEX_ARRAY_BINDING, literal 0x80B5) at draw time.
+- CLIENT_BYTES: 96 bytes of the exact client data the draw consumes
+  (pos/uv/local float-bits hex). GPU_BYTES: glMapBufferRange of the bound
+  VBO when one is bound.
+- MANDATE-3 ONE-SHOT TEST: dev toggle "fresh VBO/VAO draw path" — quad
+  draws (external layers AND the present pass) run through a freshly
+  created VBO+VAO with per-draw glBufferData of the staged values; no
+  client arrays, no cross-draw buffer reuse. Default OFF; toggle ON ->
+  wedge gone = client-array lifecycle; wedge persists = deeper.
+- VBO_TEST_CREATED line in the dump when the test path first creates
+  its buffers.
+
+ROTATION DERIVATION (mandate 16D-6 — LOGGED, NOT FIXED):
+- This device's net sampling map = MIRROR_H (classifier + algebra agree;
+  uvRot=270 cancels the ST rot90 exactly).
+- Screenshots: face 180-deg inverted. Required net for a selfie =
+  ROT180 o MIRROR_H. Therefore for THIS ST class uvRot must be 90
+  (== 360-sensor). For the earlier flip-class ST, 270 was correct.
+- CONCLUSION: the ST matrix CLASS is dynamic (device/config/state); any
+  static sensor-only formula is class-fragile. The durable fix classifies
+  the ST at bind time and derives the rotation from (ST class, sensor,
+  facing). Deferred until the wedge is resolved (owner directive).

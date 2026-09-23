@@ -98,9 +98,12 @@ internal class SceneRenderer(
         bindLut(program, layer.effects.lutId)
         setFxUniforms(program, layer, source.width, source.height, drawW, drawH)
         if (source is ExternalTextureSource) {
-            captureDrawState(if (program === programs.uvDebug) "UVDBG" else "OES", program)
+            val kind = if (program === programs.uvDebug) "UVDBG" else "OES"
+            captureDrawState("$kind:${layer.id}", program)
         }
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        if (vboDrawPass && source is ExternalTextureSource) drawQuadVbo() else {
+            GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        }
         checkGlError("drawLayerDirect(${layer.id})")
     }
 
@@ -223,7 +226,7 @@ internal class SceneRenderer(
         uploadQuad(quad, surfaceW.toFloat(), surfaceH.toFloat(), uvFlipY = true)
         capturePresentDebug()
         captureDrawState("PRESENT", programs.copy)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        if (vboDrawPass) drawQuadVbo() else GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
 
     /**
@@ -350,6 +353,59 @@ internal class SceneRenderer(
         Log.i("vcam-render", presentDebug!!)
     }
 
+    /**
+     * DEV TEST (round 16D-3, owner-mandated one-shot): when enabled, quad
+     * draws run through a FRESHLY created VBO (+ VAO bound only around the
+     * test draw) with a per-draw glBufferData upload of the exact staged
+     * values — no client-side arrays, no buffer reuse across draws. If the
+     * wedge disappears with the wedge visible before/after toggling, the
+     * client-array consumption path is the culprit; if it persists with a
+     * completely isolated buffer, the bug is elsewhere. Default OFF.
+     */
+    @Volatile
+    var vboDrawPass: Boolean = false
+
+    private var testVbo = 0
+    private var testVao = 0
+    private val testInterleaved = directFloatBuffer(STRIDE_FLOATS * 4)
+
+    private fun drawQuadVbo() {
+        if (testVbo == 0) {
+            val vbo = IntArray(1)
+            val vao = IntArray(1)
+            GLES30.glGenBuffers(1, vbo, 0)
+            GLES30.glGenVertexArrays(1, vao, 0)
+            testVbo = vbo[0]
+            testVao = vao[0]
+            GLES30.glBindVertexArray(testVao)
+            GLES30.glBindBuffer(GLES20.GL_ARRAY_BUFFER, testVbo)
+            for (i in 0..2) GLES30.glEnableVertexAttribArray(i)
+            GLES30.glVertexAttribPointer(0, 2, GLES30.GL_FLOAT, false, STRIDE_FLOATS * 4, 0)
+            GLES30.glVertexAttribPointer(1, 2, GLES30.GL_FLOAT, false, STRIDE_FLOATS * 4, 8)
+            GLES30.glVertexAttribPointer(2, 2, GLES30.GL_FLOAT, false, STRIDE_FLOATS * 4, 16)
+            GLES30.glBindVertexArray(0)
+            noteVboCreated(testVbo, testVao)
+        }
+        testInterleaved.clear()
+        for (f in staging) testInterleaved.put(f)
+        testInterleaved.position(0)
+        GLES30.glBindBuffer(GLES20.GL_ARRAY_BUFFER, testVbo)
+        GLES30.glBufferData(GLES20.GL_ARRAY_BUFFER, STRIDE_FLOATS * 4 * 4, testInterleaved, GLES30.GL_STREAM_DRAW)
+        GLES30.glBindVertexArray(testVao)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        GLES30.glBindVertexArray(0)
+        GLES30.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0)
+    }
+
+    @Volatile
+    var vboCreatedNote: String? = null
+        private set
+
+    private fun noteVboCreated(vbo: Int, vao: Int) {
+        vboCreatedNote = "VBO_TEST_CREATED vbo=$vbo vao=$vao"
+        Log.i("vcam-render", vboCreatedNote)
+    }
+
     // ---- (round 16C) DRAW-STATE AUDIT: the wedge survives a no-sample shader,
     // so the vertex pipeline itself is under investigation. Captured AT DRAW
     // TIME, 1 Hz per tag: current program vs expected, per-attribute vertex
@@ -391,8 +447,12 @@ internal class SceneRenderer(
         }
         val arrayBuf = IntArray(1)
         val elemBuf = IntArray(1)
+        val vaoBinding = IntArray(1)
         GLES30.glGetIntegerv(GLES20.GL_ARRAY_BUFFER_BINDING, arrayBuf, 0)
         GLES30.glGetIntegerv(GLES20.GL_ELEMENT_ARRAY_BUFFER_BINDING, elemBuf, 0)
+        // 0x80B5 = GL_VERTEX_ARRAY_BINDING (literal: constant lives in ES3 headers
+        // but the engine uses NO VAOs — expect 0; reported so it is PROVEN per dump)
+        GLES30.glGetIntegerv(0x80B5, vaoBinding, 0)
         val cullOn = GLES30.glIsEnabled(GLES30.GL_CULL_FACE)
         val cullMode = IntArray(1)
         val frontFace = IntArray(1)
@@ -404,6 +464,31 @@ internal class SceneRenderer(
         val clip = (0 until 4).joinToString(";", "[", "]") { i ->
             String.format(Locale.US, "%.3f,%.3f", posBuf.get(i * 2), posBuf.get(i * 2 + 1))
         }
+        // Raw bytes the draw consumes (mandate 16D-2). Client arrays: the CPU
+        // staging IS the source (nothing to map) — log its 96 bytes as
+        // float-bit hex. VBO test path: map the bound buffer and log ITS bytes.
+        fun floatWords(buf: java.nio.FloatBuffer, n: Int): String =
+            (0 until n).joinToString(",") {
+                String.format(Locale.US, "%08X", java.lang.Float.floatToIntBits(buf.get(it)))
+            }
+        val clientBytes = "pos:[" + floatWords(posBuf, 8) + "] uv:[" + floatWords(uvBuf, 8) + "]" +
+            " loc:[" + floatWords(localBuf, 8) + "]"
+        var gpuBytes = "n/a(client-array)"
+        if (arrayBuf[0] != 0) {
+            val mapped = GLES30.glMapBufferRange(
+                GLES20.GL_ARRAY_BUFFER, 0, 96, GLES30.GL_MAP_READ_BIT,
+            )
+            if (mapped != null) {
+                mapped.order(java.nio.ByteOrder.nativeOrder())
+                val words = mapped.asIntBuffer()
+                gpuBytes = (0 until 24).joinToString(",") {
+                    String.format(Locale.US, "%08X", words.get(it))
+                }
+                GLES30.glUnmapBuffer(GLES20.GL_ARRAY_BUFFER)
+            } else {
+                gpuBytes = "mapFailed=0x" + Integer.toHexString(GLES30.glGetError())
+            }
+        }
         val line = buildString {
             append("DRAW_STATE[").append(tag).append("]")
             append(" prog=").append(program.handle)
@@ -411,6 +496,7 @@ internal class SceneRenderer(
             append(" attr0=[").append(attrib(0)).append("]")
             append(" attr1=[").append(attrib(1)).append("]")
             append(" attr2=[").append(attrib(2)).append("]")
+            append(" vao=").append(vaoBinding[0])
             append(" arrayBuf=").append(arrayBuf[0])
             append(" elemBuf=").append(elemBuf[0])
             append(" draw=glDrawArrays(TRIANGLE_STRIP,0,4)")
@@ -418,6 +504,8 @@ internal class SceneRenderer(
             append(" frontFace=0x").append(Integer.toHexString(frontFace[0]))
             append(" CLIP=").append(clip)
             append(" UV=").append(uv)
+            append(" CLIENT_BYTES=").append(clientBytes)
+            append(" GPU_BYTES=[").append(gpuBytes).append("]")
         }
         if (tag == "PRESENT") presentDrawStateDebug = line else drawStateDebug = line
         Log.i("vcam-render", line)
@@ -464,7 +552,8 @@ internal class SceneRenderer(
         val stT = FloatArray(16) { c -> st[(c % 4) * 4 + c / 4] }
         val net = SourceUvMath.classifyNet(st, rot, mirror, uvBase)
         val line = buildString {
-            append("OES_ORIENT src=").append(src.width).append('x').append(src.height)
+            append("OES_ORIENT id=").append(src.sourceId)
+            append(" src=").append(src.width).append('x').append(src.height)
             append(" uvRot=").append(rot).append(" mirrorX=").append(mirror)
             append(" ST=[").append((0 until 16).joinToString(",") { f(st[it]) }).append("]")
             append(" ST_T=[").append((0 until 16).joinToString(",") { f(stT[it]) }).append("]")

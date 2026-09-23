@@ -98,6 +98,13 @@ internal class RenderThread(
     fun setUvDebugPass(enabled: Boolean) {
         renderer?.uvDebugPass = enabled
     }
+
+    /** DEV TEST (round 16D-3): draw quads through a fresh VBO/VAO instead of client arrays. */
+    fun setVboDrawPass(enabled: Boolean) {
+        renderer?.vboDrawPass = enabled
+    }
+
+    fun vboCreatedLine(): String? = renderer?.vboCreatedNote
     private var initialized = false
 
     @Volatile
@@ -583,7 +590,7 @@ internal class RenderThread(
         if (renderedFrameCount == 1L) {
             noteEvent("FIRST_SCENE_RENDER ${scene.width}x${scene.height}")
         }
-        fun hx(b: Int): String = String.format("%02X", b)
+        fun hx(b: Int): String = String.format("%02X", b and 0xFF)
         // Every ~300 renders: prove whether the scene FBO actually contains
         // pixels (decides "draw path broken" vs "present path broken" from a
         // dump alone). Round 16C: sample all four corners (+2px inset) AND

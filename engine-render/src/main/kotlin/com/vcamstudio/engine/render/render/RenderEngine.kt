@@ -181,6 +181,11 @@ class RenderEngine(
         thread.post { thread.setUvDebugPass(enabled) }
     }
 
+    /** DEV TEST (round 16D-3): fresh VBO/VAO draw path instead of client arrays. */
+    fun setVboDrawPass(enabled: Boolean) {
+        thread.post { thread.setVboDrawPass(enabled) }
+    }
+
     /** Machine-parsable dump (used by tools/stress-test.sh and the Diagnostics UI). */
     fun dump(): String {
         val d = _diagnostics.value
@@ -209,6 +214,7 @@ class RenderEngine(
             thread.presentDebugLine()?.let { appendLine(it) }
             thread.drawStateLine()?.let { appendLine(it) }
             thread.presentDrawStateLine()?.let { appendLine(it) }
+            thread.vboCreatedLine()?.let { appendLine(it) }
             // (E) the EXACT shader sources compiled and last used for the
             // camera draw — verbatim, no summaries.
             thread.oesShaderSources()?.let { (vs, fs) ->

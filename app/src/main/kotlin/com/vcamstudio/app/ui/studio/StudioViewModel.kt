@@ -678,6 +678,14 @@ class StudioViewModel @Inject constructor(
         engine.setUvDebugPass(enabled)
     }
 
+    /** DEV TEST (round 16D-3): fresh VBO/VAO draw path. */
+    val vboDrawPass = MutableStateFlow(false)
+
+    fun setVboDrawPass(enabled: Boolean) {
+        vboDrawPass.value = enabled
+        engine.setVboDrawPass(enabled)
+    }
+
     // -------------------------------------------------------------- internals
 
     private fun appendLayer(layer: LayerDefinition) {

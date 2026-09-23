@@ -220,6 +220,8 @@ fun StudioScreen(
             onPreviewMode = vm::setPreviewMode,
             uvDebugPass = vm.uvDebugPass.collectAsStateWithLifecycle().value,
             onUvDebug = vm::setUvDebugPass,
+            vboDrawPass = vm.vboDrawPass.collectAsStateWithLifecycle().value,
+            onVboDraw = vm::setVboDrawPass,
             onDismiss = { vm.setSheet(StudioViewModel.Sheet.NONE) },
         )
         StudioViewModel.Sheet.SETTINGS -> SettingsSheet(
