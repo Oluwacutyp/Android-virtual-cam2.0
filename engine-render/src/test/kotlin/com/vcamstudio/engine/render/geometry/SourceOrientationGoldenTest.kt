@@ -92,7 +92,7 @@ class SourceOrientationGoldenTest {
         val (dx0, dy0) = toImage(0.5, 0.25)
         val angRight = Math.toDegrees(atan2(ry1 - ry0, rx1 - rx0))
         val angDown = Math.toDegrees(atan2(dy1 - dy0, dx1 - dx0))
-        val mirrored = (angRight / 90.0).roundToInt() % 4 == 2 // points image-left
+        val mirrored = (((angRight / 90.0).roundToInt() % 4) + 4) % 4 == 2 // points image-left (atan2 yields ±180)
         val rotationCw = (((angDown / 90.0).roundToInt() - 3) % 4 + 4) % 4 * 90 // screen-down vs image-up(=270 deg)
         return Orientation(rotationCw, mirrored, oob)
     }
