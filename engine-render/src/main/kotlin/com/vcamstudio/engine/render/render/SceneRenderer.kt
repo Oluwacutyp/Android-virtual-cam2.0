@@ -403,7 +403,7 @@ internal class SceneRenderer(
 
     private fun noteVboCreated(vbo: Int, vao: Int) {
         vboCreatedNote = "VBO_TEST_CREATED vbo=$vbo vao=$vao"
-        Log.i("vcam-render", vboCreatedNote)
+        Log.i("vcam-render", vboCreatedNote!!)
     }
 
     // ---- (round 16C) DRAW-STATE AUDIT: the wedge survives a no-sample shader,
@@ -477,7 +477,7 @@ internal class SceneRenderer(
         if (arrayBuf[0] != 0) {
             val mapped = GLES30.glMapBufferRange(
                 GLES20.GL_ARRAY_BUFFER, 0, 96, GLES30.GL_MAP_READ_BIT,
-            )
+            ) as java.nio.ByteBuffer?
             if (mapped != null) {
                 mapped.order(java.nio.ByteOrder.nativeOrder())
                 val words = mapped.asIntBuffer()
