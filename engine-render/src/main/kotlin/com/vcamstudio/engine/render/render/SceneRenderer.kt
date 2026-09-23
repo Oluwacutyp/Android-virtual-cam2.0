@@ -97,13 +97,10 @@ internal class SceneRenderer(
         bindSource(program, source, layer.transform.uvRotationDeg, layer.transform.mirrorX)
         bindLut(program, layer.effects.lutId)
         setFxUniforms(program, layer, source.width, source.height, drawW, drawH)
-        if (source is ExternalTextureSource) {
-            val kind = if (program === programs.uvDebug) "UVDBG" else "OES"
-            captureDrawState("$kind:${layer.id}", program)
-        }
-        if (vboDrawPass && source is ExternalTextureSource) drawQuadVbo() else {
-            GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
-        }
+        val cap = if (source is ExternalTextureSource) {
+            (if (program === programs.uvDebug) "UVDBG" else "OES") + ":" + layer.id
+        } else null
+        issueQuadDraw(cap, program, capture = source is ExternalTextureSource)
         checkGlError("drawLayerDirect(${layer.id})")
     }
 
@@ -138,7 +135,11 @@ internal class SceneRenderer(
         bindSource(program, source, layer.transform.uvRotationDeg, layer.transform.mirrorX)
         bindLut(program, layer.effects.lutId)
         setFxUniforms(program, layer, source.width, source.height, drawW, drawH, opacity = 1f)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        issueQuadDraw(
+            if (source is ExternalTextureSource) "SCRATCH:" + layer.id else null,
+            program,
+            capture = source is ExternalTextureSource,
+        )
 
         if (layer.effects.blur.isEnabled) {
             gaussianBlur(scratch, blurScratch, layer.effects.blur.radius, sceneW, sceneH)
@@ -225,8 +226,41 @@ internal class SceneRenderer(
         // Source is an FBO (GL orientation) -> flip UVs so the image reads upright.
         uploadQuad(quad, surfaceW.toFloat(), surfaceH.toFloat(), uvFlipY = true)
         capturePresentDebug()
-        captureDrawState("PRESENT", programs.copy)
-        if (vboDrawPass) drawQuadVbo() else GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        issueQuadDraw("PRESENT", programs.copy, capture = true)
+    }
+
+    /**
+     * Round 17C (owner mandate, report-only): draw one external layer
+     * STRAIGHT to the default framebuffer (EGL window surface), same
+     * programs and toggles, geometry recomputed against the surface box.
+     */
+    fun drawLayerDirectToSurface(
+        layer: LayerDefinition,
+        source: TextureSource,
+        surfaceW: Int,
+        surfaceH: Int,
+    ) {
+        val program =
+            if (uvDebugPass && source is ExternalTextureSource) programs.uvDebug
+            else programFor(source, layer.effects.lutId)
+        val quad = LayerGeometry.compute(
+            layer.transform,
+            source.width.toFloat(), source.height.toFloat(),
+            surfaceW.toFloat(), surfaceH.toFloat(),
+        )
+        val drawW = edgeLengthPx(quad, topEdge = true)
+        val drawH = edgeLengthPx(quad, topEdge = false)
+
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        GLES30.glViewport(0, 0, surfaceW, surfaceH)
+        program.use()
+        uploadQuad(quad, surfaceW.toFloat(), surfaceH.toFloat())
+        bindSource(program, source, layer.transform.uvRotationDeg, layer.transform.mirrorX)
+        bindLut(program, layer.effects.lutId)
+        setFxUniforms(program, layer, source.width, source.height, drawW, drawH)
+        val cap = (if (program === programs.uvDebug) "UVDBG" else "OES") + ":DIRECT:" + layer.id
+        issueQuadDraw(cap, program, capture = source is ExternalTextureSource)
+        checkGlError("directSurface(${layer.id})")
     }
 
     /**
@@ -314,6 +348,20 @@ internal class SceneRenderer(
     @Volatile
     var uvDebugPass: Boolean = false
 
+    /**
+     * Round 17B (owner mandate): same quad, explicit GL_TRIANGLES pairs
+     * instead of TRIANGLE_STRIP — removes the strip rasterization path.
+     */
+    @Volatile
+    var trianglesOnly: Boolean = false
+
+    /**
+     * Round 17C (owner mandate): render external layers straight to the EGL
+     * window surface (framebuffer 0), skipping the scene FBO + present pass.
+     */
+    @Volatile
+    var directSurfacePass: Boolean = false
+
     // ---- orientation diagnostics: 1 Hz snapshot surfaced in the engine dump ----
 
     private val stScratch = FloatArray(16)
@@ -369,32 +417,108 @@ internal class SceneRenderer(
     private var testVao = 0
     private val testInterleaved = directFloatBuffer(STRIDE_FLOATS * 4)
 
+    private val vboErrs = StringBuilder()
+
+    /** Round 17A: per-call error attribution for the VBO test path. */
+    private fun vboCheck(name: String) {
+        val e = GLES30.glGetError()
+        if (e != GLES30.GL_NO_ERROR) {
+            vboErrs.append(name).append(":0x").append(Integer.toHexString(e)).append(' ')
+        }
+    }
+
+    @Volatile
+    var vboErrors: String? = null
+        private set
+
     private fun drawQuadVbo() {
+        vboErrs.setLength(0)
         if (testVbo == 0) {
             val vbo = IntArray(1)
             val vao = IntArray(1)
-            GLES30.glGenBuffers(1, vbo, 0)
-            GLES30.glGenVertexArrays(1, vao, 0)
+            GLES30.glGenBuffers(1, vbo, 0); vboCheck("genBuffers")
+            GLES30.glGenVertexArrays(1, vao, 0); vboCheck("genVertexArrays")
             testVbo = vbo[0]
             testVao = vao[0]
-            GLES30.glBindVertexArray(testVao)
-            GLES30.glBindBuffer(GLES20.GL_ARRAY_BUFFER, testVbo)
-            for (i in 0..2) GLES30.glEnableVertexAttribArray(i)
+            GLES30.glBindVertexArray(testVao); vboCheck("bindVertexArray")
+            GLES30.glBindBuffer(GLES20.GL_ARRAY_BUFFER, testVbo); vboCheck("bindBuffer")
+            for (i in 0..2) {
+                GLES30.glEnableVertexAttribArray(i); vboCheck("enableAttrib$i")
+            }
             GLES30.glVertexAttribPointer(0, 2, GLES30.GL_FLOAT, false, STRIDE_FLOATS * 4, 0)
+            vboCheck("attribPtr0")
             GLES30.glVertexAttribPointer(1, 2, GLES30.GL_FLOAT, false, STRIDE_FLOATS * 4, 8)
+            vboCheck("attribPtr1")
             GLES30.glVertexAttribPointer(2, 2, GLES30.GL_FLOAT, false, STRIDE_FLOATS * 4, 16)
-            GLES30.glBindVertexArray(0)
+            vboCheck("attribPtr2")
+            GLES30.glBindVertexArray(0); vboCheck("unbindVao")
             noteVboCreated(testVbo, testVao)
         }
         testInterleaved.clear()
-        for (f in staging) testInterleaved.put(f)
-        testInterleaved.position(0)
-        GLES30.glBindBuffer(GLES20.GL_ARRAY_BUFFER, testVbo)
-        GLES30.glBufferData(GLES20.GL_ARRAY_BUFFER, STRIDE_FLOATS * 4 * 4, testInterleaved, GLES30.GL_STREAM_DRAW)
-        GLES30.glBindVertexArray(testVao)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
-        GLES30.glBindVertexArray(0)
-        GLES30.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0)
+        if (trianglesOnly) {
+            // Round 17B: same data, explicit triangle pairs TL,TR,BR / TL,BR,BL.
+            for (v in TRI_ORDER) {
+                val s = v * STRIDE_FLOATS
+                for (k in 0 until STRIDE_FLOATS) testInterleaved.put(staging[s + k])
+            }
+            testInterleaved.position(0)
+            GLES30.glBindBuffer(GLES20.GL_ARRAY_BUFFER, testVbo); vboCheck("bindBuffer")
+            GLES30.glBufferData(
+                GLES20.GL_ARRAY_BUFFER, TRI_ORDER.size * STRIDE_FLOATS * 4,
+                testInterleaved, GLES30.GL_STREAM_DRAW,
+            ); vboCheck("bufferData")
+            GLES30.glBindVertexArray(testVao); vboCheck("bindVao")
+            GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, TRI_ORDER.size); vboCheck("draw")
+        } else {
+            for (f in staging) testInterleaved.put(f)
+            testInterleaved.position(0)
+            GLES30.glBindBuffer(GLES20.GL_ARRAY_BUFFER, testVbo); vboCheck("bindBuffer")
+            GLES30.glBufferData(
+                GLES20.GL_ARRAY_BUFFER, STRIDE_FLOATS * 4 * 4,
+                testInterleaved, GLES30.GL_STREAM_DRAW,
+            ); vboCheck("bufferData")
+            GLES30.glBindVertexArray(testVao); vboCheck("bindVao")
+            GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4); vboCheck("draw")
+        }
+        GLES30.glBindVertexArray(0); vboCheck("unbindVao")
+        GLES30.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0); vboCheck("unbindBuffer")
+        if (vboErrs.isNotEmpty()) {
+            vboErrors = "VBO_ERRORS=[" + vboErrs.toString().trim() + "]"
+            Log.w("vcam-render", vboErrors!!)
+        }
+    }
+
+    /**
+     * Round 17B: identical quad, explicit triangle pairs (no strip
+     * rasterization path). Order TL,TR,BR, TL,BR,BL as mandated.
+     */
+    private val posBuf6 = directFloatBuffer(12)
+    private val uvBuf6 = directFloatBuffer(12)
+    private val localBuf6 = directFloatBuffer(12)
+
+    private fun drawQuadTriangles() {
+        posBuf6.clear(); uvBuf6.clear(); localBuf6.clear()
+        for (v in TRI_ORDER) {
+            val s = v * STRIDE_FLOATS
+            posBuf6.put(staging[s]); posBuf6.put(staging[s + 1])
+            uvBuf6.put(staging[s + 2]); uvBuf6.put(staging[s + 3])
+            localBuf6.put(staging[s + 4]); localBuf6.put(staging[s + 5])
+        }
+        posBuf6.position(0); uvBuf6.position(0); localBuf6.position(0)
+        GLES30.glVertexAttribPointer(0, 2, GLES30.GL_FLOAT, false, 0, posBuf6)
+        GLES30.glVertexAttribPointer(1, 2, GLES30.GL_FLOAT, false, 0, uvBuf6)
+        GLES30.glVertexAttribPointer(2, 2, GLES30.GL_FLOAT, false, 0, localBuf6)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, TRI_ORDER.size)
+    }
+
+    /** Unified draw issuer: every quad draw goes through the active test path. */
+    private fun issueQuadDraw(captureTag: String?, program: GlProgram, capture: Boolean) {
+        if (capture && captureTag != null) captureDrawState(captureTag, program)
+        when {
+            vboDrawPass -> drawQuadVbo()
+            trianglesOnly -> drawQuadTriangles()
+            else -> GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        }
     }
 
     @Volatile
@@ -424,6 +548,16 @@ internal class SceneRenderer(
 
     private val drawStateLastMs = HashMap<String, Long>()
 
+    /** Round 17A: error-attributed query — names the exact call that raises an error. */
+    private fun audited(errs: StringBuilder, name: String, block: () -> Unit) {
+        GLES30.glGetError()
+        block()
+        val e = GLES30.glGetError()
+        if (e != GLES30.GL_NO_ERROR) {
+            errs.append(name).append(":0x").append(Integer.toHexString(e)).append(' ')
+        }
+    }
+
     private fun captureDrawState(tag: String, program: GlProgram) {
         val now = System.nanoTime() / 1_000_000L
         synchronized(drawStateLastMs) {
@@ -431,39 +565,46 @@ internal class SceneRenderer(
             if (last != null && now - last < 1000) return
             drawStateLastMs[tag] = now
         }
+        val errs = StringBuilder()
         val cur = IntArray(1)
-        GLES30.glGetIntegerv(GLES30.GL_CURRENT_PROGRAM, cur, 0)
+        audited(errs, "curProg") { GLES30.glGetIntegerv(GLES30.GL_CURRENT_PROGRAM, cur, 0) }
         fun attrib(i: Int): String {
             val en = IntArray(1); val size = IntArray(1); val type = IntArray(1)
             val stride = IntArray(1); val norm = IntArray(1); val buf = IntArray(1)
-            GLES30.glGetVertexAttribiv(i, GLES30.GL_VERTEX_ATTRIB_ARRAY_ENABLED, en, 0)
-            GLES30.glGetVertexAttribiv(i, GLES30.GL_VERTEX_ATTRIB_ARRAY_SIZE, size, 0)
-            GLES30.glGetVertexAttribiv(i, GLES30.GL_VERTEX_ATTRIB_ARRAY_TYPE, type, 0)
-            GLES30.glGetVertexAttribiv(i, GLES30.GL_VERTEX_ATTRIB_ARRAY_STRIDE, stride, 0)
-            GLES30.glGetVertexAttribiv(i, GLES30.GL_VERTEX_ATTRIB_ARRAY_NORMALIZED, norm, 0)
-            GLES30.glGetVertexAttribiv(i, GLES20.GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, buf, 0)
+            audited(errs, "attrib$i") {
+                GLES30.glGetVertexAttribiv(i, GLES30.GL_VERTEX_ATTRIB_ARRAY_ENABLED, en, 0)
+                GLES30.glGetVertexAttribiv(i, GLES30.GL_VERTEX_ATTRIB_ARRAY_SIZE, size, 0)
+                GLES30.glGetVertexAttribiv(i, GLES30.GL_VERTEX_ATTRIB_ARRAY_TYPE, type, 0)
+                GLES30.glGetVertexAttribiv(i, GLES30.GL_VERTEX_ATTRIB_ARRAY_STRIDE, stride, 0)
+                GLES30.glGetVertexAttribiv(i, GLES30.GL_VERTEX_ATTRIB_ARRAY_NORMALIZED, norm, 0)
+                GLES30.glGetVertexAttribiv(i, GLES20.GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, buf, 0)
+            }
             return "en=${en[0]},size=${size[0]},type=0x${Integer.toHexString(type[0])}," +
                 "stride=${stride[0]},norm=${norm[0]},buf=${buf[0]}"
         }
+        val a0 = attrib(0)
+        val a1 = attrib(1)
+        val a2 = attrib(2)
         val arrayBuf = IntArray(1)
         val elemBuf = IntArray(1)
         val vaoBinding = IntArray(1)
-        GLES30.glGetIntegerv(GLES20.GL_ARRAY_BUFFER_BINDING, arrayBuf, 0)
-        GLES30.glGetIntegerv(GLES20.GL_ELEMENT_ARRAY_BUFFER_BINDING, elemBuf, 0)
-        // 0x80B5 = GL_VERTEX_ARRAY_BINDING (literal: constant lives in ES3 headers
-        // but the engine uses NO VAOs — expect 0; reported so it is PROVEN per dump)
-        GLES30.glGetIntegerv(0x80B5, vaoBinding, 0)
-        val cullOn = GLES30.glIsEnabled(GLES30.GL_CULL_FACE)
+        audited(errs, "arrayBuf") { GLES30.glGetIntegerv(GLES20.GL_ARRAY_BUFFER_BINDING, arrayBuf, 0) }
+        audited(errs, "elemBuf") { GLES30.glGetIntegerv(GLES20.GL_ELEMENT_ARRAY_BUFFER_BINDING, elemBuf, 0) }
+        // 0x80B5 = GL_VERTEX_ARRAY_BINDING (literal: the engine uses NO VAOs —
+        // expect 0; reported so it is PROVEN per dump)
+        audited(errs, "vao") { GLES30.glGetIntegerv(0x80B5, vaoBinding, 0) }
         val cullMode = IntArray(1)
         val frontFace = IntArray(1)
-        GLES30.glGetIntegerv(GLES30.GL_CULL_FACE_MODE, cullMode, 0)
-        GLES30.glGetIntegerv(GLES30.GL_FRONT_FACE, frontFace, 0)
-        val uv = (0 until 4).joinToString(";", "[", "]") { i ->
-            String.format(Locale.US, "%.3f,%.3f", uvBuf.get(i * 2), uvBuf.get(i * 2 + 1))
-        }
-        val clip = (0 until 4).joinToString(";", "[", "]") { i ->
-            String.format(Locale.US, "%.3f,%.3f", posBuf.get(i * 2), posBuf.get(i * 2 + 1))
-        }
+        val cullOn = auditedOn(errs, "cullTest") { GLES30.glIsEnabled(GLES30.GL_CULL_FACE) }
+        audited(errs, "cullMode") { GLES30.glGetIntegerv(GLES30.GL_CULL_FACE_MODE, cullMode, 0) }
+        audited(errs, "frontFace") { GLES30.glGetIntegerv(GLES30.GL_FRONT_FACE, frontFace, 0) }
+        // Round 17D: viewport + scissor AS THE DRIVER REPORTS at draw time
+        // (grep cannot see implicit state).
+        val viewport = IntArray(4)
+        val scissorBox = IntArray(4)
+        audited(errs, "viewport") { GLES30.glGetIntegerv(GLES30.GL_VIEWPORT, viewport, 0) }
+        audited(errs, "scissorBox") { GLES30.glGetIntegerv(GLES30.GL_SCISSOR_BOX, scissorBox, 0) }
+        val scissorTest = auditedOn(errs, "scissorTest") { GLES30.glIsEnabled(GLES30.GL_SCISSOR_TEST) }
         // Raw bytes the draw consumes (mandate 16D-2). Client arrays: the CPU
         // staging IS the source (nothing to map) — log its 96 bytes as
         // float-bit hex. VBO test path: map the bound buffer and log ITS bytes.
@@ -475,40 +616,60 @@ internal class SceneRenderer(
             " loc:[" + floatWords(localBuf, 8) + "]"
         var gpuBytes = "n/a(client-array)"
         if (arrayBuf[0] != 0) {
-            val mapped = GLES30.glMapBufferRange(
-                GLES20.GL_ARRAY_BUFFER, 0, 96, GLES30.GL_MAP_READ_BIT,
-            ) as java.nio.ByteBuffer?
-            if (mapped != null) {
-                mapped.order(java.nio.ByteOrder.nativeOrder())
-                val words = mapped.asIntBuffer()
-                gpuBytes = (0 until 24).joinToString(",") {
-                    String.format(Locale.US, "%08X", words.get(it))
+            audited(errs, "mapBuffer") {
+                val mapped = GLES30.glMapBufferRange(
+                    GLES20.GL_ARRAY_BUFFER, 0, 96, GLES30.GL_MAP_READ_BIT,
+                ) as java.nio.ByteBuffer?
+                if (mapped != null) {
+                    mapped.order(java.nio.ByteOrder.nativeOrder())
+                    val words = mapped.asIntBuffer()
+                    gpuBytes = (0 until 24).joinToString(",") {
+                        String.format(Locale.US, "%08X", words.get(it))
+                    }
+                    GLES30.glUnmapBuffer(GLES20.GL_ARRAY_BUFFER)
+                } else {
+                    gpuBytes = "mapFailed"
                 }
-                GLES30.glUnmapBuffer(GLES20.GL_ARRAY_BUFFER)
-            } else {
-                gpuBytes = "mapFailed=0x" + Integer.toHexString(GLES30.glGetError())
             }
         }
         val line = buildString {
             append("DRAW_STATE[").append(tag).append("]")
             append(" prog=").append(program.handle)
             append(" curProg=").append(cur[0])
-            append(" attr0=[").append(attrib(0)).append("]")
-            append(" attr1=[").append(attrib(1)).append("]")
-            append(" attr2=[").append(attrib(2)).append("]")
+            append(" attr0=[").append(a0).append("]")
+            append(" attr1=[").append(a1).append("]")
+            append(" attr2=[").append(a2).append("]")
             append(" vao=").append(vaoBinding[0])
             append(" arrayBuf=").append(arrayBuf[0])
             append(" elemBuf=").append(elemBuf[0])
-            append(" draw=glDrawArrays(TRIANGLE_STRIP,0,4)")
+            append(" draw=").append(if (vboDrawPass) "VBO" else if (trianglesOnly) "TRIANGLES" else "glDrawArrays(TRIANGLE_STRIP,0,4)")
             append(" cull=").append(if (cullOn) "on,mode=0x${Integer.toHexString(cullMode[0])}" else "off")
             append(" frontFace=0x").append(Integer.toHexString(frontFace[0]))
-            append(" CLIP=").append(clip)
-            append(" UV=").append(uv)
+            append(" viewport=[").append(viewport.joinToString(",")).append("]")
+            append(" scissorBox=[").append(scissorBox.joinToString(",")).append("]")
+            append(" scissorTest=").append(if (scissorTest) "on" else "off")
+            append(" CLIP=").append((0 until 4).joinToString(";", "[", "]") { i ->
+                String.format(Locale.US, "%.3f,%.3f", posBuf.get(i * 2), posBuf.get(i * 2 + 1))
+            })
+            append(" UV=").append((0 until 4).joinToString(";", "[", "]") { i ->
+                String.format(Locale.US, "%.3f,%.3f", uvBuf.get(i * 2), uvBuf.get(i * 2 + 1))
+            })
             append(" CLIENT_BYTES=").append(clientBytes)
             append(" GPU_BYTES=[").append(gpuBytes).append("]")
+            if (errs.isNotEmpty()) append(" AUDIT_ERR=[").append(errs.toString().trim()).append("]")
         }
         if (tag == "PRESENT") presentDrawStateDebug = line else drawStateDebug = line
         Log.i("vcam-render", line)
+    }
+
+    private inline fun auditedOn(errs: StringBuilder, name: String, block: () -> Boolean): Boolean {
+        GLES30.glGetError()
+        val r = block()
+        val e = GLES30.glGetError()
+        if (e != GLES30.GL_NO_ERROR) {
+            errs.append(name).append(":0x").append(Integer.toHexString(e)).append(' ')
+        }
+        return r
     }
 
     /** The exact shader sources of the program last used for the camera draw. */
@@ -537,7 +698,10 @@ internal class SceneRenderer(
         // (read from the program's RETAINED compile source — verbatim, see E)
         // + the sampler unit value.
         val bound = IntArray(1)
-        GLES30.glGetIntegerv(GLES11Ext.GL_TEXTURE_BINDING_EXTERNAL_OES, bound, 0)
+        val errs = StringBuilder()
+        audited(errs, "oesBinding") {
+            GLES30.glGetIntegerv(GLES11Ext.GL_TEXTURE_BINDING_EXTERNAL_OES, bound, 0)
+        }
         val samplerType = when {
             program.fragmentSource.contains("samplerExternalOES") -> "OES"
             program.fragmentSource.contains("sampler2D") -> "2D"
@@ -545,7 +709,9 @@ internal class SceneRenderer(
         }
         val unit = IntArray(1)
         val uTexLoc = GLES30.glGetUniformLocation(program.handle, "uTex")
-        if (uTexLoc >= 0) GLES30.glGetUniformiv(program.handle, uTexLoc, unit, 0)
+        if (uTexLoc >= 0) {
+            audited(errs, "samplerUnit") { GLES30.glGetUniformiv(program.handle, uTexLoc, unit, 0) }
+        }
         val samplerUnit = if (uTexLoc >= 0) unit[0] else -1
         val bindOk = bound[0] == src.glTextureId
         // (F) ST interpretation check data: transposed matrix + NET class.
@@ -569,6 +735,7 @@ internal class SceneRenderer(
             append(",boundId=").append(bound[0]).append(",srcId=").append(src.glTextureId)
             append(",sampler=").append(samplerType).append(",unit=").append(samplerUnit).append("]")
             append(" NET=").append(net)
+            if (errs.isNotEmpty()) append(" AUDIT_ERR=[").append(errs.toString().trim()).append("]")
         }
         oesDebug = line
         Log.i("vcam-render", line)
@@ -708,6 +875,7 @@ internal class SceneRenderer(
 
     companion object {
         private const val STRIDE_FLOATS = 6
+        private val TRI_ORDER = intArrayOf(0, 1, 2, 0, 2, 3) // TL,TR,BR, TL,BR,BL
         private val LOCAL_CORNERS = arrayOf(
             floatArrayOf(0f, 0f), floatArrayOf(1f, 0f), floatArrayOf(1f, 1f), floatArrayOf(0f, 1f),
         )

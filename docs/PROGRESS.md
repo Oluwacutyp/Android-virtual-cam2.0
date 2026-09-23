@@ -782,3 +782,47 @@ ROTATION DERIVATION (mandate 16D-6 — LOGGED, NOT FIXED):
   static sensor-only formula is class-fragile. The durable fix classifies
   the ST at bind time and derives the rotation from (ST class, sensor,
   facing). Deferred until the wedge is resolved (owner directive).
+
+
+## Increment 17 — mandated test paths: 0x500 attribution/isolation, TRIANGLES, direct-to-surface, viewport/scissor (2026-09-23)
+
+Round-17 mandates processed. Accepted facts: CLIENT_BYTES bit-exact =>
+client-array corruption DEAD as the wedge mechanism; wedge shape invariant
+across camera/video/gradient/client-array/VBO => structural, not data-
+dependent; every wedged draw shares glDrawArrays(TRIANGLE_STRIP,0,4) =>
+prime suspect, now directly testable.
+
+CRITICAL OWN FINDING (honest, not in the mandate): dump 2 shows the 0x500
+spam with NO VBO_TEST_CREATED line — the invalid enum was NOT (only) in the
+VBO path: MY AUDIT QUERIES generate it, and the audit errors leaked into the
+draw's checkGlError, producing the RENDER_CRASH storm and (in the
+toggle-poisoned session) the watchdog stalls + 29fps chaos. Instrumentation
+was polluting the pipeline it measured. That is fixed as mandate A requires:
+
+A. 0x500 class:
+   - EVERY audit query is now error-ATTRIBUTED (audited{} helper: clear ->
+     query -> read; the DRAW_STATE/OES_ORIENT lines carry AUDIT_ERR=[call:0x..]
+     naming the exact guilty call if one recurs) and error-ISOLATED (audit
+     errors are consumed inside the audit; the draw's checkGlError sees only
+     true draw errors).
+   - The VBO test path got per-call attribution too (vboCheck after every GL
+     call; VBO_ERRORS=[...] line in the dump + logcat). If the VBO path itself
+     raises INVALID_ENUM, the dump now names the exact call.
+   - Expected on-device: glErr=0x0 across all paths; AUDIT_ERR names the
+     previously anonymous 0x500 source; RENDER_CRASH storm + watchdog stalls
+     gone (they were error-poisoning artifacts).
+B. TRIANGLES toggle (dev): identical quad as explicit pairs TL,TR,BR / TL,BR,BL
+   via glDrawArrays(GL_TRIANGLES,0,6) — client 6-vertex path AND combined with
+   the VBO path (144-byte upload). Present pass + layer draws + scratch path
+   all route through the unified issuer, so the toggle applies everywhere.
+C. DIRECT-TO-SURFACE toggle (dev): layers render straight to framebuffer 0
+   (EGL window surface), scene FBOs and the present pass skipped entirely;
+   geometry recomputed against the surface box; same programs/UV pipeline;
+   DRAW_STATE[OES:DIRECT:<id>] captured; present counting preserved for the
+   watchdog. Wedge gone here => FBO->surface path implicated; persists => draw
+   or window-surface state.
+D. DRAW_STATE now logs viewport=[x,y,w,h], scissorBox=[x,y,w,h],
+   scissorTest=on/off as the driver reports at draw time (grep cannot see
+   implicit state — agreed).
+E. No fix ships beyond the 0x500 class (explicitly mandated by A). Rotation
+   stays parked (dynamic-ST-class derivation logged in addendum 4).

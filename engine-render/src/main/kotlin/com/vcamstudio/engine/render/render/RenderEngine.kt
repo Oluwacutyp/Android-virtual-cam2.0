@@ -186,6 +186,16 @@ class RenderEngine(
         thread.post { thread.setVboDrawPass(enabled) }
     }
 
+    /** DEV TEST (round 17B): explicit GL_TRIANGLES pairs instead of TRIANGLE_STRIP. */
+    fun setTrianglesOnly(enabled: Boolean) {
+        thread.post { thread.setTrianglesOnly(enabled) }
+    }
+
+    /** DEV TEST (round 17C): layers render straight to the EGL surface (no scene FBO). */
+    fun setDirectSurfacePass(enabled: Boolean) {
+        thread.post { thread.setDirectSurfacePass(enabled) }
+    }
+
     /** Machine-parsable dump (used by tools/stress-test.sh and the Diagnostics UI). */
     fun dump(): String {
         val d = _diagnostics.value
@@ -215,6 +225,7 @@ class RenderEngine(
             thread.drawStateLine()?.let { appendLine(it) }
             thread.presentDrawStateLine()?.let { appendLine(it) }
             thread.vboCreatedLine()?.let { appendLine(it) }
+            thread.vboErrorsLine()?.let { appendLine(it) }
             // (E) the EXACT shader sources compiled and last used for the
             // camera draw — verbatim, no summaries.
             thread.oesShaderSources()?.let { (vs, fs) ->

@@ -686,6 +686,22 @@ class StudioViewModel @Inject constructor(
         engine.setVboDrawPass(enabled)
     }
 
+    /** DEV TEST (round 17B): explicit triangle pairs instead of a strip. */
+    val trianglesOnly = MutableStateFlow(false)
+
+    fun setTrianglesOnly(enabled: Boolean) {
+        trianglesOnly.value = enabled
+        engine.setTrianglesOnly(enabled)
+    }
+
+    /** DEV TEST (round 17C): render layers straight to the EGL surface. */
+    val directSurfacePass = MutableStateFlow(false)
+
+    fun setDirectSurfacePass(enabled: Boolean) {
+        directSurfacePass.value = enabled
+        engine.setDirectSurfacePass(enabled)
+    }
+
     // -------------------------------------------------------------- internals
 
     private fun appendLayer(layer: LayerDefinition) {

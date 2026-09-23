@@ -104,6 +104,18 @@ internal class RenderThread(
         renderer?.vboDrawPass = enabled
     }
 
+    /** DEV TEST (round 17B): explicit GL_TRIANGLES pairs instead of TRIANGLE_STRIP. */
+    fun setTrianglesOnly(enabled: Boolean) {
+        renderer?.trianglesOnly = enabled
+    }
+
+    /** DEV TEST (round 17C): render layers straight to the EGL surface, no scene FBO. */
+    fun setDirectSurfacePass(enabled: Boolean) {
+        renderer?.directSurfacePass = enabled
+    }
+
+    fun vboErrorsLine(): String? = renderer?.vboErrors
+
     fun vboCreatedLine(): String? = renderer?.vboCreatedNote
     private var initialized = false
 
@@ -673,6 +685,10 @@ internal class RenderThread(
             presentBlank(frameTimeNanos)
             return
         }
+        if (r.directSurfacePass) {
+            presentDirectToSurface(frameTimeNanos, scene)
+            return
+        }
         if (presentedSceneTex == 0) {
             // Scene exists but nothing rendered yet — render once now so the
             // very first present already shows content.
@@ -779,6 +795,64 @@ internal class RenderThread(
             }
             val dropped = if (dt > 45f) ((dt / 33.3f).toInt() - 1).coerceAtLeast(1) else 0
             collector.onPresented(dt, dropped)
+            lastPresentClockMs = nowMs
+            lastPresentMonotonicMs = nowMs
+            consecutiveFailedRecoveries = 0
+        }
+    }
+
+    /**
+     * Round 17C (owner mandate, report-only): layers render STRAIGHT to the
+     * EGL window surface (framebuffer 0) — scene FBOs and the FBO->surface
+     * present pass are skipped entirely. If the wedge vanishes here, the
+     * FBO-to-surface path is implicated; if it persists, it is in the draw
+     * itself or the window-surface state.
+     */
+    private fun presentDirectToSurface(frameTimeNanos: Long, scene: SceneDefinition) {
+        val r = renderer ?: return
+        val out = outputs.values.firstOrNull { !it.gaveUp && it.surface.isValid } ?: return
+        presentAttemptCount++
+        if (out.needsReinit || out.eglSurface == null) {
+            if (!reinitOutput(out)) return
+        }
+        val es = out.eglSurface ?: return
+        if (!es.makeCurrent()) return
+        GLES30.glViewport(0, 0, out.width, out.height)
+        GLES30.glClearColor(0f, 0f, 0f, 1f)
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+        GLES30.glEnable(GLES30.GL_BLEND)
+        GLES30.glBlendFuncSeparate(
+            GLES30.GL_ONE, GLES30.GL_ONE_MINUS_SRC_ALPHA,
+            GLES30.GL_ONE, GLES30.GL_ONE_MINUS_SRC_ALPHA,
+        )
+        for (layer in scene.layers) {
+            if (!layer.visible || layer.opacity <= 0.01f) continue
+            when (layer) {
+                is LayerDefinition.Camera -> {
+                    val src = externalSources[layer.id]
+                    if (src != null && src.hasContent()) {
+                        r.drawLayerDirectToSurface(layer, src, out.width, out.height)
+                    }
+                }
+                is LayerDefinition.Video -> {
+                    val src = externalSources[layer.id]
+                    if (src != null && src.hasContent()) {
+                        r.drawLayerDirectToSurface(layer, src, out.width, out.height)
+                    }
+                }
+                else -> Unit // color/image/text skipped in this probe
+            }
+        }
+        GLES30.glDisable(GLES30.GL_BLEND)
+        es.setPresentationTime(frameTimeNanos)
+        if (es.swap()) {
+            out.swapFailures = 0
+            out.lastPresentedRender = renderedFrameCount
+            val nowMs = clock.nowMs()
+            val dt = if (lastPresentClockMs > 0) {
+                (nowMs - lastPresentClockMs).toFloat().coerceIn(1f, 500f)
+            } else 16.7f
+            collector.onPresented(dt, 0)
             lastPresentClockMs = nowMs
             lastPresentMonotonicMs = nowMs
             consecutiveFailedRecoveries = 0

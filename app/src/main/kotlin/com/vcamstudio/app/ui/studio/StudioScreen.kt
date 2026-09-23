@@ -222,6 +222,10 @@ fun StudioScreen(
             onUvDebug = vm::setUvDebugPass,
             vboDrawPass = vm.vboDrawPass.collectAsStateWithLifecycle().value,
             onVboDraw = vm::setVboDrawPass,
+            trianglesOnly = vm.trianglesOnly.collectAsStateWithLifecycle().value,
+            onTrianglesOnly = vm::setTrianglesOnly,
+            directSurfacePass = vm.directSurfacePass.collectAsStateWithLifecycle().value,
+            onDirectSurface = vm::setDirectSurfacePass,
             onDismiss = { vm.setSheet(StudioViewModel.Sheet.NONE) },
         )
         StudioViewModel.Sheet.SETTINGS -> SettingsSheet(
