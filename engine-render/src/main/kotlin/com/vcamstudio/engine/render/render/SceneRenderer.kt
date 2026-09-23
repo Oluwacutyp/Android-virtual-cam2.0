@@ -96,6 +96,9 @@ internal class SceneRenderer(
         bindSource(program, source, layer.transform.uvRotationDeg, layer.transform.mirrorX)
         bindLut(program, layer.effects.lutId)
         setFxUniforms(program, layer, source.width, source.height, drawW, drawH)
+        if (source is ExternalTextureSource) {
+            captureDrawState(if (program === programs.uvDebug) "UVDBG" else "OES", program)
+        }
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
         checkGlError("drawLayerDirect(${layer.id})")
     }
@@ -218,6 +221,7 @@ internal class SceneRenderer(
         // Source is an FBO (GL orientation) -> flip UVs so the image reads upright.
         uploadQuad(quad, surfaceW.toFloat(), surfaceH.toFloat(), uvFlipY = true)
         capturePresentDebug()
+        captureDrawState("PRESENT", programs.copy)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
 
@@ -345,6 +349,79 @@ internal class SceneRenderer(
         Log.i("vcam-render", presentDebug!!)
     }
 
+    // ---- (round 16C) DRAW-STATE AUDIT: the wedge survives a no-sample shader,
+    // so the vertex pipeline itself is under investigation. Captured AT DRAW
+    // TIME, 1 Hz per tag: current program vs expected, per-attribute vertex
+    // array state (enabled/size/type/stride/normalized/BUFFER), global array
+    // + element bindings, the draw call form, cull/winding, and the exact
+    // CPU-side position/UV mirrors the draw consumes (client arrays: buf=0
+    // proves the dump reads the SAME data the GPU reads).
+
+    @Volatile
+    var drawStateDebug: String? = null
+        private set
+
+    @Volatile
+    var presentDrawStateDebug: String? = null
+        private set
+
+    private val drawStateLastMs = HashMap<String, Long>()
+
+    private fun captureDrawState(tag: String, program: GlProgram) {
+        val now = System.nanoTime() / 1_000_000L
+        synchronized(drawStateLastMs) {
+            val last = drawStateLastMs[tag]
+            if (last != null && now - last < 1000) return
+            drawStateLastMs[tag] = now
+        }
+        val cur = IntArray(1)
+        GLES30.glGetIntegerv(GLES30.GL_CURRENT_PROGRAM, cur, 0)
+        fun attrib(i: Int): String {
+            val en = IntArray(1); val size = IntArray(1); val type = IntArray(1)
+            val stride = IntArray(1); val norm = IntArray(1); val buf = IntArray(1)
+            GLES30.glGetVertexAttribiv(i, GLES30.GL_VERTEX_ATTRIB_ARRAY_ENABLED, en, 0)
+            GLES30.glGetVertexAttribiv(i, GLES30.GL_VERTEX_ATTRIB_ARRAY_SIZE, size, 0)
+            GLES30.glGetVertexAttribiv(i, GLES30.GL_VERTEX_ATTRIB_ARRAY_TYPE, type, 0)
+            GLES30.glGetVertexAttribiv(i, GLES30.GL_VERTEX_ATTRIB_ARRAY_STRIDE, stride, 0)
+            GLES30.glGetVertexAttribiv(i, GLES30.GL_VERTEX_ATTRIB_ARRAY_NORMALIZED, norm, 0)
+            GLES30.glGetVertexAttribiv(i, GLES20.GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, buf, 0)
+            return "en=${en[0]},size=${size[0]},type=0x${Integer.toHexString(type[0])}," +
+                "stride=${stride[0]},norm=${norm[0]},buf=${buf[0]}"
+        }
+        val arrayBuf = IntArray(1)
+        val elemBuf = IntArray(1)
+        GLES30.glGetIntegerv(GLES20.GL_ARRAY_BUFFER_BINDING, arrayBuf, 0)
+        GLES30.glGetIntegerv(GLES20.GL_ELEMENT_ARRAY_BUFFER_BINDING, elemBuf, 0)
+        val cullOn = GLES30.glIsEnabled(GLES30.GL_CULL_FACE)
+        val cullMode = IntArray(1)
+        val frontFace = IntArray(1)
+        GLES30.glGetIntegerv(GLES30.GL_CULL_FACE_MODE, cullMode, 0)
+        GLES30.glGetIntegerv(GLES30.GL_FRONT_FACE, frontFace, 0)
+        val uv = (0 until 4).joinToString(";", "[", "]") { i ->
+            String.format(Locale.US, "%.3f,%.3f", uvBuf.get(i * 2), uvBuf.get(i * 2 + 1))
+        }
+        val clip = (0 until 4).joinToString(";", "[", "]") { i ->
+            String.format(Locale.US, "%.3f,%.3f", posBuf.get(i * 2), posBuf.get(i * 2 + 1))
+        }
+        val line = buildString {
+            append("DRAW_STATE[").append(tag).append("]")
+            append(" prog=").append(program.handle)
+            append(" curProg=").append(cur[0])
+            append(" attr0=[").append(attrib(0)).append("]")
+            append(" attr1=[").append(attrib(1)).append("]")
+            append(" attr2=[").append(attrib(2)).append("]")
+            append(" arrayBuf=").append(arrayBuf[0])
+            append(" elemBuf=").append(elemBuf[0])
+            append(" draw=glDrawArrays(TRIANGLE_STRIP,0,4)")
+            append(" cull=").append(if (cullOn) "on,mode=0x${Integer.toHexString(cullMode[0])}" else "off")
+            append(" frontFace=0x").append(Integer.toHexString(frontFace[0]))
+            append(" CLIP=").append(clip)
+            append(" UV=").append(uv)
+        }
+        if (tag == "PRESENT") presentDrawStateDebug = line else drawStateDebug = line
+        Log.i("vcam-render", line)
+    }
+
     /** The exact shader sources of the program last used for the camera draw. */
     @Volatile
     var lastOesProgramSources: Pair<String, String>? = null
@@ -384,7 +461,7 @@ internal class SceneRenderer(
         val bindOk = bound[0] == src.glTextureId
         // (F) ST interpretation check data: transposed matrix + NET class.
         val stT = FloatArray(16) { c -> st[(c % 4) * 4 + c / 4] }
-        val net = SourceUvMath.classifyNet(st, rot, mirror)
+        val net = SourceUvMath.classifyNet(st, rot, mirror, uvBase)
         val line = buildString {
             append("OES_ORIENT src=").append(src.width).append('x').append(src.height)
             append(" uvRot=").append(rot).append(" mirrorX=").append(mirror)

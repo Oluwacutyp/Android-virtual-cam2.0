@@ -681,3 +681,45 @@ Shipped this addendum (report-only): rotationDeg now logged in the L0/
 DRAW_STATS line (rotated-quad visibility gap closed); PRESENT_CLIP 1 Hz
 capture of the present pass's four clip positions + finite flag, in the
 dump and logcat.
+
+
+## Increment 16 addendum 3 — gradient-pass evidence + draw-state audit (2026-09-23)
+
+Owner evidence: the WEDGE SURVIVES THE UV-GRADIENT PASS (fragColor=vUV, zero
+sampling) on-device. Conclusion accepted: the wedge is in the VERTEX pipeline
+domain, not UV math, not sampling. All rotation/UV theories stay parked.
+
+Dump decoding (honest corrections):
+- "Negative RGB" probes = SIGNED-BYTE printing (0x80 -> -128, 0xFC -> -4,
+  0xFF -> -1). MANDATED FIX SHIPPED: SCENE_PIXEL/SCENE_PIXELS now log raw
+  hex bytes, no interpretation.
+- Full-range corner values ([00,FC],[00,01],[FF,01],[FF,FC]) = the VIDEO
+  layer's own gradient window: its 1080x1920 source FILLs the 720x1280 scene
+  with ZERO crop ([0,1]^2 window) and paints OVER the camera gradient at the
+  corner probes (SOURCE_RESIZED vid 1080x1920 in the same log). Not corruption.
+- NET=OTHER in this dump = MY CLASSIFIER BUG (shipped r16): it transformed
+  single points, so the rotation center collapsed onto the probe and
+  rotation/mirror degenerated to no-ops - it classified ST alone. FIXED
+  (affine measurement from the window's four corner images). On the dump
+  device's real window the fixed classifier outputs NET=MIRROR_H, matching
+  the r16 algebra (ST rot90 o uvRot270 cancel; mirror remains).
+
+Static eliminations (grep, whole engine): NO VAOs (glBindVertexArray absent),
+NO element buffers / glDrawElements - hypothesis (b) index-bowtie is
+structurally impossible; all draws are glDrawArrays(TRIANGLE_STRIP,0,4).
+Attributes are CLIENT-side direct buffers (no VBOs): the dump's posBuf/uvBuf
+ARE the buffers the draw consumes - hypothesis (c) is structurally excluded;
+the audit shows buf=0 to prove it at runtime. Remaining candidates:
+(a) attrib-state corruption at draw time (audited live), the PRESENT pass
+(audited live), or a per-frame transient between the 1 Hz captures.
+
+SHIPPED (report-only, per mandate):
+- DRAW_STATE[tag] 1 Hz at draw time for OES / UVDBG (camera layer, both
+  paths) and PRESENT: current program vs expected handle; attribs 0/1/2
+  (enabled,size,type hex,stride,normalized,BUFFER binding); global
+  array/elem buffer bindings; draw-call form; cull enabled/mode + front
+  face; CLIP and UV mirrors actually consumed by the draw.
+- Hex probe logging (mandate 2).
+- Classifier fix (NET meaningful again).
+NOT SHIPPED: any rotation/UV/geometry change; any fix claim. Standing rule
+intact: device verification on both test devices before any "fixed".

@@ -89,6 +89,11 @@ internal class RenderThread(
     /** 1 Hz present-pass clip capture (round-16B wedge signature). */
     fun presentDebugLine(): String? = renderer?.presentDebug
 
+    /** 1 Hz draw-state audits (round-16C): camera-layer + present pass. */
+    fun drawStateLine(): String? = renderer?.drawStateDebug
+
+    fun presentDrawStateLine(): String? = renderer?.presentDrawStateDebug
+
     /** DEV DIAGNOSTIC (round 16A): toggle the UV-gradient pass for OES layers. */
     fun setUvDebugPass(enabled: Boolean) {
         renderer?.uvDebugPass = enabled
@@ -578,6 +583,7 @@ internal class RenderThread(
         if (renderedFrameCount == 1L) {
             noteEvent("FIRST_SCENE_RENDER ${scene.width}x${scene.height}")
         }
+        fun hx(b: Int): String = String.format("%02X", b)
         // Every ~300 renders: prove whether the scene FBO actually contains
         // pixels (decides "draw path broken" vs "present path broken" from a
         // dump alone). Round 16C: sample all four corners (+2px inset) AND
@@ -609,8 +615,8 @@ internal class RenderThread(
             noteEvent(
                 "DRAW_STATS drawn=$drawn noContent=$noContent noSource=$noSource$tInfo " +
                     "PRESENT_QUAD=${lastPresentQuad.toList().map { (it * 10).toInt() / 10f }} " +
-                    "SCENE_PIXEL=[${center[0]},${center[1]},${center[2]},${center[3]}] " +
-                    "SCENE_PIXELS=[" + probeVals.take(4).joinToString(",") { p -> "[${p[0]},${p[1]},${p[2]},${p[3]}]" } +
+                    "SCENE_PIXEL=[" + center.joinToString(",") { hx(it) } + "] " +
+                    "SCENE_PIXELS=[" + probeVals.take(4).joinToString(",") { p -> "[" + p.joinToString(",") { hx(it) } + "]" } +
                     "] glErr=0x${Integer.toHexString(err)}",
             )
         }

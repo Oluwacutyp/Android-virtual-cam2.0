@@ -124,26 +124,43 @@ object SourceUvMath {
      * Answers from a dump alone whether the source rotations cancel (e.g. a
      * producer ST that already carries a 90-degree rotation composed with
      * uvRot=270 nets to mirror/identity) or double-apply.
+     *
+     * Measures the affine map from the images of the WINDOW's four corners
+     * (the single-point probe degenerated: with n=1 the rotation center
+     * collapses onto the probe itself, making rotation/mirror no-ops — that
+     * bug shipped in the r16 build and produced meaningless NET=OTHER lines).
      */
-    fun classifyNet(st: FloatArray?, rotDeg: Float, mirrorX: Boolean): String {
-        val p0 = transform(floatArrayOf(0.5f, 0.5f), st, rotDeg, mirrorX, clamp = false)
-        val px = transform(floatArrayOf(0.7f, 0.5f), st, rotDeg, mirrorX, clamp = false)
-        val py = transform(floatArrayOf(0.5f, 0.7f), st, rotDeg, mirrorX, clamp = false)
-        val ax = px[0] - p0[0] // image of +u
-        val ay = px[1] - p0[1]
-        val bx = py[0] - p0[0] // image of +v
-        val by = py[1] - p0[1]
-        fun near(v: Float, target: Float) = kotlin.math.abs(v - target) < 0.05f
-        fun col(ax: Float, ay: Float, bx: Float, by: Float): String? = when {
-            near(ax, 1f) && near(ay, 0f) && near(bx, 0f) && near(by, 1f) -> "IDENTITY"
-            near(ax, -1f) && near(ay, 0f) && near(bx, 0f) && near(by, 1f) -> "MIRROR_H"
-            near(ax, 1f) && near(ay, 0f) && near(bx, 0f) && near(by, -1f) -> "MIRROR_V"
-            near(ax, -1f) && near(ay, 0f) && near(bx, 0f) && near(by, -1f) -> "ROT180"
-            near(ax, 0f) && near(ay, 1f) && near(bx, -1f) && near(by, 0f) -> "ROT90CCW"
-            near(ax, 0f) && near(ay, -1f) && near(bx, 1f) && near(by, 0f) -> "ROT90CW"
-            else -> null
+    fun classifyNet(
+        st: FloatArray?,
+        rotDeg: Float,
+        mirrorX: Boolean,
+        window: FloatArray = floatArrayOf(0f, 0f, 1f, 0f, 1f, 1f, 0f, 1f),
+    ): String {
+        val c = transform(window, st, rotDeg, mirrorX, clamp = false)
+        // TL,TR,BR,BL. du = mean(TL->TR, BL->BR); dv = mean(TL->BL, TR->BR).
+        val dux = ((c[2] - c[0]) + (c[4] - c[6])) * 0.5f
+        val duy = ((c[3] - c[1]) + (c[5] - c[7])) * 0.5f
+        val dvx = ((c[6] - c[0]) + (c[4] - c[2])) * 0.5f
+        val dvy = ((c[7] - c[1]) + (c[5] - c[3])) * 0.5f
+        val duLen = kotlin.math.hypot(dux, duy).coerceAtLeast(1e-6f)
+        val dvLen = kotlin.math.hypot(dvx, dvy).coerceAtLeast(1e-6f)
+        val nx = dux / duLen
+        val ny = duy / duLen
+        val mx = dvx / dvLen
+        val my = dvy / dvLen
+        fun near(v: Float, target: Float) = kotlin.math.abs(v - target) < 0.3f
+        return when {
+            near(nx, 1f) && near(ny, 0f) && near(mx, 0f) && near(my, 1f) -> "IDENTITY"
+            near(nx, -1f) && near(ny, 0f) && near(mx, 0f) && near(my, 1f) -> "MIRROR_H"
+            near(nx, 1f) && near(ny, 0f) && near(mx, 0f) && near(my, -1f) -> "MIRROR_V"
+            near(nx, -1f) && near(ny, 0f) && near(mx, 0f) && near(my, -1f) -> "ROT180"
+            near(nx, 0f) && near(ny, 1f) && near(mx, -1f) && near(my, 0f) -> "ROT90CCW"
+            near(nx, 0f) && near(ny, -1f) && near(mx, 1f) && near(my, 0f) -> "ROT90CW"
+            else -> String.format(
+                java.util.Locale.US,
+                "OTHER[u=(%.2f,%.2f) v=(%.2f,%.2f)]",
+                nx, ny, mx, my,
+            )
         }
-        return col(ax, ay, bx, by)
-            ?: ("OTHER[u=(" + ax + "," + ay + ") v=(" + bx + "," + by + ")]")
     }
 }

@@ -207,6 +207,8 @@ class RenderEngine(
             appendLine("renderer=${d.glRenderer}")
             thread.oesDebugLine()?.let { appendLine(it) }
             thread.presentDebugLine()?.let { appendLine(it) }
+            thread.drawStateLine()?.let { appendLine(it) }
+            thread.presentDrawStateLine()?.let { appendLine(it) }
             // (E) the EXACT shader sources compiled and last used for the
             // camera draw — verbatim, no summaries.
             thread.oesShaderSources()?.let { (vs, fs) ->
