@@ -702,7 +702,9 @@ internal class RenderThread(
                 r.drawTextureQuad(presentedSceneTex, 1f, quad, out.width, out.height)
             }
 
-            presentAttemptCount++
+            // (Counting note: the attempt was already counted at the top of
+            // this output's present path — a second increment here made
+            // presentAttempts report ~2x presented in every dump.)
             es.setPresentationTime(frameTimeNanos)
             if (es.swap()) {
                 anySwapOk = true

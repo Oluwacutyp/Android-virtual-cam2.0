@@ -558,3 +558,16 @@ rule: not fixed until confirmed):**
 Dump request: send a diagnostics dump after this build - it now includes
 OES_ORIENT (uvRot, mirrorX, ST matrix, base/final UVs) + PRESENT_QUAD +
 SURFACE_RESIZED/SURFACE_ATTACHED events.
+
+
+## Increment 15 addendum — presentAttempts double-count fix (2026-09-23)
+
+The r12 dumps showed presentAttempts ~= 2x presented; root cause found while
+re-auditing for the device pass: presentAll incremented the counter once when
+an output reached the present path (correct — counts attempts that then fail
+makeCurrent/reinit) and AGAIN right before swapBuffers. The second increment
+is removed; failed-attempt counting semantics preserved. Also verified:
+tools/stress-test.sh dump parsing is unaffected by the new OES_ORIENT line,
+and layer add/remove never touches output surfaces (attach/detach fire only
+from the preview stage-view and recording lifecycle), closing directive D's
+"layer add/remove must not destroy a still-valid EGL surface" by structure.
