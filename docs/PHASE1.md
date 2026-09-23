@@ -19,7 +19,9 @@
 | 8 | Recorder v1 (MP4 H.264+AAC, library, share) | ✅ Done (needs device validation) | `:engine-output`: H.264 surface-input encoder fed by the render engine + AAC from the mixer; share via FileProvider |
 | 9 | Settings + licenses/about | ✅ Done | Scene resolution, about, licenses/attribution screen |
 
-> **Device gate round 1 FAILED** (black preview / 0 fps; sources invisible;
+> **Device gate rounds 1-3 FAILED — root cause isolated (EGL attrib-list
+> flattening bug, see PROGRESS.md increment 6), fix landed, round 4 pending.**
+> Earlier banner text: **Device gate round 1 FAILED** (black preview / 0 fps; sources invisible;
 > LUT import rejected) — see PROGRESS.md increment 4 for the five root causes
 > and fixes. Device gate must be re-run and pass before Phase 2 starts.
 >

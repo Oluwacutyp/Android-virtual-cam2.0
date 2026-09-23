@@ -212,3 +212,36 @@ unchanged (2 s cadence).
 Status: HONESTLY NOT FIXED on device yet — this increment exists to make the
 next logcat decisive. Nothing is claimed working until the user confirms the
 live camera is visible.
+
+
+## Increment 6 — ROOT CAUSE FOUND AND FIXED: EGL attrib-list flattening (2026-09-23)
+
+Device diagnostics banner finally surfaced: `ENGINE INIT FAILED: attrib_list
+must contain EGL_NONE!`
+
+**Root cause** (`EglCore.findConfig`, present since the first commit):
+
+```kotlin
+val flat = IntArray(attribs.size) { i ->
+    if (i % 2 == 0) attribs[i].first else attribs[i].second   // WRONG
+}
+```
+
+Two defects: the array was allocated with `attribs.size` ints (HALF the
+required length — pairs interleave into 2N ints) and odd slots read
+`attribs[i].second` instead of `attribs[i / 2].second`. `eglChooseConfig`
+therefore received a garbled, unterminated list and the device EGL rejected
+it, throwing out of `initEngine` on every launch — silently in rounds 1-2
+(no surfacing existed yet), visibly in round 3 thanks to the initError banner.
+
+This single bug explains every observed symptom: black stage (engine never
+came up), fps 0 / presented 0 (nothing ever swapped), `external sources: 0`
+(sources are created only after init), UNHEALTHY (initError health rule).
+
+**Fix**: new `EglAttribs.flatten(pairs)` — the only way attrib lists are
+built in EglCore (config chains, context, pbuffer, window surface); JVM unit
+tests pin interleaving + EGL_NONE termination (EglAttribsTest). Diagnostics
+banner did exactly its job: made a silent boot failure impossible to miss.
+
+Status: fix is logically airtight but NOT claimed device-verified until the
+user confirms the live camera renders. Round 4 device test pending.
