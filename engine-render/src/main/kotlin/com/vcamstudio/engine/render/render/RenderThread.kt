@@ -96,6 +96,9 @@ internal class RenderThread(
         var firstPresentLogged: Boolean = false
         var makeCurrentFailures: Int = 0
         var swapFailures: Int = 0
+        var createFailures: Int = 0
+        var lastCreateAttemptMs: Long = 0L
+        var gaveUp: Boolean = false
     }
 
     // ---- scene state (render thread only)
@@ -253,8 +256,11 @@ internal class RenderThread(
 
     fun attachOutput(id: String, surface: Surface, width: Int, height: Int) {
         val old = outputs.remove(id)
-        old?.eglSurface?.release()
-        outputs[id] = Output(id, surface, width, height, eglSurface = null, needsReinit = true)
+        old?.eglSurface?.release() // previous EGL window surface released BEFORE recreate
+        val out = Output(id, surface, width, height, eglSurface = null, needsReinit = true)
+        out.createFailures = 0
+        out.gaveUp = false // a fresh attach re-opens the attempt latch
+        outputs[id] = out
         if (id == PREVIEW_OUTPUT_ID) collector.previewSize = Size(width, height)
         noteEvent("SURFACE_ATTACHED id=$id ${width}x$height valid=${surface.isValid}")
     }
@@ -285,6 +291,20 @@ internal class RenderThread(
     }
 
     private fun reinitOutput(out: Output): Boolean {
+        // Give-up latch: after repeated create failures we STOP retrying (the
+        // round-6 Camon run spammed EGL_BAD_ALLOC 802 times at ~30ms). A fresh
+        // attachOutput (surface re-created by the view) re-opens attempts, and
+        // the RAW preview path remains usable meanwhile.
+        if (out.gaveUp) return false
+        // Backoff: at most one eglCreateWindowSurface attempt per 500ms.
+        val now = clock.nowMs()
+        if (now - out.lastCreateAttemptMs < 500) return false
+        // Never hand EGL an invalid or zero-sized surface.
+        if (!out.surface.isValid || out.width <= 0 || out.height <= 0) {
+            noteEvent("EGL_WINDOW_SKIPPED id=${out.id} valid=${out.surface.isValid} ${out.width}x${out.height}")
+            return false
+        }
+        out.lastCreateAttemptMs = now
         runCatching { out.eglSurface?.release() }
         out.eglSurface = null
         return try {
@@ -292,10 +312,20 @@ internal class RenderThread(
             out.needsReinit = false
             out.makeCurrentFailures = 0
             out.swapFailures = 0
+            out.createFailures = 0
             noteEvent("EGL_WINDOW_CREATED id=${out.id}")
             true
         } catch (t: Throwable) {
-            noteEvent("EGL_WINDOW_FAILED id=${out.id}: ${t.message}")
+            out.createFailures++
+            if (out.createFailures >= 3) {
+                out.gaveUp = true
+                out.needsReinit = false
+                noteEvent(
+                    "OUTPUT_GAVE_UP id=${out.id} after ${out.createFailures} create failures (${t.message}); RAW preview remains available",
+                )
+            } else {
+                noteEvent("EGL_WINDOW_FAILED id=${out.id} n=${out.createFailures}: ${t.message}")
+            }
             consecutiveFailedRecoveries++
             false
         }
@@ -349,10 +379,10 @@ internal class RenderThread(
         try {
             doFrame(frameTimeNanos)
         } catch (t: GlException) {
-            Log.e(TAG, "GL failure in frame loop — requesting recovery", t)
+            noteEvent("FRAME_ERROR GlException: ${t.message}")
             noteGlFailure(t)
         } catch (t: Throwable) {
-            Log.e(TAG, "unexpected failure in frame loop", t)
+            noteEvent("FRAME_ERROR ${t.javaClass.simpleName}: ${t.message}")
         }
         scheduleFrame()
     }
@@ -389,11 +419,16 @@ internal class RenderThread(
 
         val scene = currentScene
         if (scene != null && (dirty || sceneNeedsRender || pendingTransitionCapture || transitionActive())) {
-            renderScene(scene)
+            runCatching { renderScene(scene) }
+                .onFailure {
+                    noteEvent("RENDER_CRASH ${it.javaClass.simpleName}: ${it.message} @ ${it.stackTrace.firstOrNull()}")
+                }
             sceneNeedsRender = false
         }
 
-        presentAll(frameTimeNanos)
+        runCatching { presentAll(frameTimeNanos) }.onFailure { t ->
+            noteEvent("PRESENT_CRASH ${t.javaClass.simpleName}: ${t.message} @ ${t.stackTrace.firstOrNull()}")
+        }
     }
 
     private fun allSources(): Collection<TextureSource> {
@@ -508,7 +543,7 @@ internal class RenderThread(
 
     private fun presentAll(frameTimeNanos: Long) {
         val scene = currentScene
-        if (outputs.isEmpty()) {
+        if (outputs.isEmpty() || outputs.values.all { it.gaveUp }) {
             expectsFrames = false
             return
         }
@@ -531,6 +566,8 @@ internal class RenderThread(
         var anySwapOk = false
 
         for (out in outputs.values) {
+            if (out.gaveUp) continue
+            presentAttemptCount++ // reached the present path for this output
             if (out.needsReinit || out.eglSurface == null) {
                 if (!reinitOutput(out)) continue
             }
@@ -618,6 +655,8 @@ internal class RenderThread(
     private fun presentBlank(frameTimeNanos: Long) {
         var anySwapOk = false
         for (out in outputs.values) {
+            if (out.gaveUp) continue
+            presentAttemptCount++
             if (out.needsReinit || out.eglSurface == null) {
                 if (!reinitOutput(out)) continue
             }

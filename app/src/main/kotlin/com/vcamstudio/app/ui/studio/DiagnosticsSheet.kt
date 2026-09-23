@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -37,6 +38,8 @@ fun DiagnosticsSheet(
     diagnostics: DiagnosticsSnapshot,
     dumpProvider: () -> String,
     onForceRecovery: () -> Unit,
+    rawMode: Boolean,
+    onPreviewMode: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
@@ -52,6 +55,16 @@ fun DiagnosticsSheet(
                     StatusChip(diagnostics.health.name, healthColor(diagnostics.health))
                     StatusChip("%.0f fps".format(diagnostics.fps), StudioAccent)
                     StatusChip("presented ${diagnostics.presentedFrames}", MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            item {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    Text("Preview path", style = MaterialTheme.typography.labelMedium)
+                    FilterChip(selected = rawMode, onClick = { onPreviewMode(true) }, label = { Text("RAW (CameraX)") })
+                    FilterChip(selected = !rawMode, onClick = { onPreviewMode(false) }, label = { Text("GL compositor") })
                 }
             }
             diagnostics.initError?.let { err ->

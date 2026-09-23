@@ -31,5 +31,6 @@ dependencies {
     api(libs.camerax.core)
     api(libs.camerax.camera2)
     api(libs.camerax.lifecycle)
+    api(libs.camerax.view)
     testImplementation(libs.junit)
 }

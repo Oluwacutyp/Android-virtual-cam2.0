@@ -310,3 +310,37 @@ swapBuffers) — each of which logs, but reports were dump-only. Changes:
 
 Acceptance unchanged (owner): Camon 20 boots clean; Samsung shows live
 camera+video with presented>0, fps>0. Not claimed fixed until device proof.
+
+
+## Increment 9 — round 6 fixes: RAW preview default, EGL_BAD_ALLOC backoff, present-crash telemetry (2026-09-23)
+
+Round 6 dumps finally localized BOTH failures precisely:
+
+1. **Camon 20 (Mali)**: `EGL_WINDOW_FAILED ... EGL_BAD_ALLOC` every frame
+   (802 recoveries, ~30ms cadence = retried every vsync). Diagnosis: the EGL
+   config ladder chose the RECORDABLE config first; Mali is known to
+   BAD_ALLOC when a recordable config meets a plain SurfaceView window.
+   Fixes (exactly per owner directive): plain-RGB888 chains now precede
+   recordable ones (no MSAA/exotic attributes anywhere); create attempts
+   backed off to max 1/500ms; invalid/zero-sized surfaces never reach EGL;
+   after 3 consecutive failures the output latches OUTPUT_GAVE_UP and stops
+   retrying (fresh attach re-opens it); previous EGL surface is always
+   released before recreate (already true, now commented as contract).
+2. **Samsung (Adreno)**: EGL_WINDOW_CREATED, no makeCurrent/swap failures,
+   yet presentAttempts=0 — meaning an exception is thrown inside the present
+   loop and swallowed by the frame-loop catch, invisible in the ring. Fixes:
+   present/render calls are individually wrapped — RENDER_CRASH /
+   PRESENT_CRASH / FRAME_ERROR events now land in the dump ring with the
+   exception class, message and top stack frame; presentAttempts increments
+   at loop entry (even for failed attempts, per directive).
+3. **RAW fallback (owner directive C, now mandatory Phase 1 usability)**:
+   default preview = CameraX PreviewView fed directly by CameraSource
+   (bindPreviewView via previewView.surfaceProvider); GL compositor stays
+   alive for diagnostics/recording; Diagnostics sheet gains a RAW / GL
+   toggle; camera bind routing (add layer, pro-controls update, lifecycle
+   ON_START) is mode-aware; engine camera binds are skipped in RAW mode
+   (CAMERA_ENGINE_BIND_SKIPPED_RAW). New dependency androidx.camera:camera-view.
+
+Acceptance (owner): Camon stops looping EGL_BAD_ALLOC; Samsung
+presentAttempts>0 and presented>0; live camera visible on BOTH devices at
+least in RAW mode. Not claimed fixed until device proof.

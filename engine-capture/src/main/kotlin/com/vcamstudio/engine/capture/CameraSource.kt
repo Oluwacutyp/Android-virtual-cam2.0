@@ -69,6 +69,47 @@ class CameraSource(
      * from the main thread context (suspends internally on Main).
      */
     fun bind(surface: Surface, controls: ProControls, lifecycleOwner: LifecycleOwner) {
+        bindInternal(controls, lifecycleOwner) { preview ->
+            preview.setSurfaceProvider { request: SurfaceRequest ->
+                Log.i(
+                    TAG,
+                    "SURFACE_REQUESTED ${request.resolution.width}x${request.resolution.height}",
+                )
+                request.provideSurface(
+                    surface,
+                    androidx.core.content.ContextCompat.getMainExecutor(context),
+                ) { result ->
+                    // The Surface is engine-owned; CameraX merely stops writing.
+                    runCatching { result.getSurface() }
+                        .onSuccess { Log.i(TAG, "SURFACE_PROVIDED_OK") }
+                        .onFailure { Log.e(TAG, "SURFACE_PROVIDED_FAILED ${it.message}") }
+                }
+            }
+        }
+    }
+
+    /**
+     * RAW fallback path (Phase 1 usability mandate): feed CameraX straight
+     * into a [androidx.camera.view.PreviewView], bypassing the GL compositor
+     * entirely. The GL engine keeps running for diagnostics/recording; this
+     * guarantees a visible camera on any EGL driver.
+     */
+    fun bindPreviewView(
+        previewView: androidx.camera.view.PreviewView,
+        controls: ProControls,
+        lifecycleOwner: LifecycleOwner,
+    ) {
+        bindInternal(controls, lifecycleOwner) { preview ->
+            preview.setSurfaceProvider(previewView.surfaceProvider)
+            Log.i(TAG, "RAW_PREVIEW_BOUND ${previewView.width}x${previewView.height}")
+        }
+    }
+
+    private fun bindInternal(
+        controls: ProControls,
+        lifecycleOwner: LifecycleOwner,
+        attachSurface: (Preview) -> Unit,
+    ) {
         mainScope.launch {
             try {
                 _state.value = State.Starting
@@ -106,21 +147,7 @@ class CameraSource(
                 }
 
                 val preview = previewBuilder.build()
-                preview.setSurfaceProvider { request: SurfaceRequest ->
-                    Log.i(
-                        TAG,
-                        "SURFACE_REQUESTED ${request.resolution.width}x${request.resolution.height}",
-                    )
-                    request.provideSurface(
-                        surface,
-                        androidx.core.content.ContextCompat.getMainExecutor(context),
-                    ) { result ->
-                        // The Surface is engine-owned; CameraX merely stops writing.
-                        runCatching { result.getSurface() }
-                            .onSuccess { Log.i(TAG, "SURFACE_PROVIDED_OK") }
-                            .onFailure { Log.e(TAG, "SURFACE_PROVIDED_FAILED ${it.message}") }
-                    }
-                }
+                attachSurface(preview)
 
                 cameraProvider.unbindAll()
                 val selector = if (controls.lensFacing == LensFacing.FRONT) {

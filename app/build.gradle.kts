@@ -58,6 +58,7 @@ dependencies {
     implementation(project(":core-common"))
     implementation(project(":engine-render"))
     implementation(project(":engine-capture"))
+    implementation(libs.camerax.view)
     implementation(project(":engine-media"))
     implementation(project(":engine-audio"))
     implementation(project(":engine-output"))

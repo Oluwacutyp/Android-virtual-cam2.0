@@ -99,11 +99,16 @@ class EglCore {
         val es2 = listOf(EGL14.EGL_RENDERABLE_TYPE to EGL14.EGL_OPENGL_ES2_BIT)
         val recordable = listOf(EGLExt.EGL_RECORDABLE_ANDROID to 1)
 
+        // Preview-first: plain RGB888 chains BEFORE RECORDABLE — Mali drivers
+        // are known to EGL_BAD_ALLOC when a recordable config meets a plain
+        // SurfaceView window (round 6, Camon 20: 802 create failures). No MSAA
+        // or exotic attributes are requested anywhere. Recording later gets a
+        // dedicated recordable context if the encoder gate needs one.
         val chains = listOf(
-            "recordable+es3" to (es3 + surface + pixel + recordable),
             "plain+es3" to (es3 + surface + pixel),
-            "recordable+es2" to (es2 + surface + pixel + recordable),
+            "recordable+es3" to (es3 + surface + pixel + recordable),
             "plain+es2" to (es2 + surface + pixel),
+            "recordable+es2" to (es2 + surface + pixel + recordable),
         )
         for ((name, attribs) in chains) {
             val cfg = findConfig(attribs)

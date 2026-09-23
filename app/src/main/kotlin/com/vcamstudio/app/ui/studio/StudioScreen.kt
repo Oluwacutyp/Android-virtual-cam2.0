@@ -211,6 +211,8 @@ fun StudioScreen(
             diagnostics = state.diagnostics,
             dumpProvider = vm::diagnosticsDump,
             onForceRecovery = vm::forceRecoveryTest,
+            rawMode = state.rawMode,
+            onPreviewMode = vm::setPreviewMode,
             onDismiss = { vm.setSheet(StudioViewModel.Sheet.NONE) },
         )
         StudioViewModel.Sheet.SETTINGS -> SettingsSheet(
@@ -264,16 +266,41 @@ private fun StageArea(state: StudioViewModel.UiState, vm: StudioViewModel, modif
             modifier = Modifier.fillMaxSize(),
         ) {
             Box(Modifier.fillMaxSize()) {
-                AndroidView(
-                    factory = { ctx ->
-                        StageView(ctx).apply {
-                            onSurfaceReady = { surface, w, h -> vm.attachStage(surface, w, h) }
-                            onSurfaceGone = { vm.detachStage() }
-                            onTap = { x, y, vw, vh -> vm.tapToFocus(x, y, vw, vh) }
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                )
+                if (state.rawMode) {
+                    // RAW preview (default): CameraX renders straight into a
+                    // PreviewView — driver-proof camera visibility. The GL
+                    // engine keeps running underneath for diagnostics.
+                    AndroidView(
+                        factory = { ctx ->
+                            androidx.camera.view.PreviewView(ctx).apply {
+                                scaleType = androidx.camera.view.PreviewView.ScaleType.FILL_CENTER
+                                implementationMode =
+                                    androidx.camera.view.PreviewView.ImplementationMode.COMPATIBLE
+                            }
+                        },
+                        update = { vm.attachPreviewView(it) },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    Text(
+                        "RAW PREVIEW — switch to GL compositor in Diagnostics",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFF8B949E),
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(8.dp),
+                    )
+                } else {
+                    AndroidView(
+                        factory = { ctx ->
+                            StageView(ctx).apply {
+                                onSurfaceReady = { surface, w, h -> vm.attachStage(surface, w, h) }
+                                onSurfaceGone = { vm.detachStage() }
+                                onTap = { x, y, vw, vh -> vm.tapToFocus(x, y, vw, vh) }
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
                 val hasCamera = scene?.layers?.any { it is LayerDefinition.Camera } == true
                 if (!hasCamera) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

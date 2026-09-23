@@ -88,6 +88,8 @@ class StudioViewModel @Inject constructor(
         val sheet: Sheet = Sheet.NONE,
         val sceneResolution: SceneResolution = SceneResolution.P_720,
         val toast: String? = null,
+        /** TRUE = CameraX PreviewView direct (default, driver-proof); FALSE = GL compositor. */
+        val rawMode: Boolean = true,
         val recording: RecordingController.State = RecordingController.State.Idle,
         val masterGain: Float = 1f,
         val limiterEnabled: Boolean = true,
@@ -109,6 +111,8 @@ class StudioViewModel @Inject constructor(
     private val sheet = MutableStateFlow(Sheet.NONE)
     private val cameraControls = MutableStateFlow<Map<String, ProControls>>(emptyMap())
     private val toast = MutableStateFlow<String?>(null)
+    private val rawMode = MutableStateFlow(true)
+    private var previewViewRef: androidx.camera.view.PreviewView? = null
     private val sceneResolution = MutableStateFlow(SceneResolution.P_720)
     private val lutNames = MutableStateFlow<List<String>>(emptyList())
     private val lastRecordingPath = MutableStateFlow<String?>(null)
@@ -123,8 +127,8 @@ class StudioViewModel @Inject constructor(
     private var lifecycleOwner: LifecycleOwner? = null
 
     val uiState: StateFlow<UiState> = combine(
-        combine(scenes, activeSceneId, selectedLayerId, sheet) { s, a, sel, sh ->
-            Quad(s, a, sel, sh)
+        combine(scenes, activeSceneId, selectedLayerId, sheet, rawMode) { s, a, sel, sh, raw ->
+            Quint(s, a, sel, sh, raw)
         },
         combine(
             cameraSource.state, cameraControls, transitionType, fadeDurationMs, toast,
@@ -147,6 +151,7 @@ class StudioViewModel @Inject constructor(
             activeSceneId = core.b,
             selectedLayerId = core.c,
             sheet = core.d,
+            rawMode = core.e,
             cameraState = cameraStuff.a,
             cameraControls = cameraStuff.b,
             transitionType = cameraStuff.c,
@@ -202,18 +207,52 @@ class StudioViewModel @Inject constructor(
      */
     fun onLifecycleEvent(event: androidx.lifecycle.Lifecycle.Event) {
         if (event != androidx.lifecycle.Lifecycle.Event.ON_START) return
-        val owner = lifecycleOwner ?: return
-        val scene = uiState.value.activeScene ?: return
-        scene.layers.filterIsInstance<LayerDefinition.Camera>().forEach { layer ->
-            val surface = cameraSurfaces[layer.id] ?: return@forEach
-            val controls = cameraControls.value[layer.id] ?: ProControls()
-            Timber.i("LIFECYCLE_REBIND camera=${layer.id}")
-            cameraSource.bind(surface, controls, owner)
+        if (lifecycleOwner == null) return
+        if (rawMode.value) {
+            Timber.i("LIFECYCLE_REBIND raw")
+            maybeBindRawCamera()
+        } else {
+            rebindCameraToEngine()
         }
     }
 
     fun attachStage(surface: android.view.Surface, width: Int, height: Int) {
         engine.attachPreview(surface, width, height)
+    }
+
+    /** RAW path: the PreviewView instance from the UI (idempotent per instance). */
+    fun attachPreviewView(view: androidx.camera.view.PreviewView) {
+        if (previewViewRef === view) return
+        previewViewRef = view
+        maybeBindRawCamera()
+    }
+
+    fun setPreviewMode(raw: Boolean) {
+        if (rawMode.value == raw) return
+        rawMode.value = raw
+        Timber.i("PREVIEW_MODE ${if (raw) "RAW" else "GL"}")
+        if (raw) maybeBindRawCamera() else rebindCameraToEngine()
+    }
+
+    private fun maybeBindRawCamera() {
+        val view = previewViewRef ?: return
+        val owner = lifecycleOwner ?: return
+        if (!rawMode.value) return
+        val scene = uiState.value.activeScene ?: return
+        scene.layers.filterIsInstance<LayerDefinition.Camera>().firstOrNull()?.let { layer ->
+            val controls = cameraControls.value[layer.id] ?: ProControls()
+            cameraSource.bindPreviewView(view, controls, owner)
+        }
+    }
+
+    private fun rebindCameraToEngine() {
+        val owner = lifecycleOwner ?: return
+        val scene = uiState.value.activeScene ?: return
+        scene.layers.filterIsInstance<LayerDefinition.Camera>().forEach { layer ->
+            val surface = cameraSurfaces[layer.id] ?: return@forEach
+            val controls = cameraControls.value[layer.id] ?: ProControls()
+            cameraSource.bind(surface, controls, owner)
+        }
     }
 
     fun detachStage() {
@@ -288,6 +327,7 @@ class StudioViewModel @Inject constructor(
             )
             )
         appendLayer(layer)
+        if (rawMode.value) maybeBindRawCamera() // RAW: camera straight to PreviewView
         sheet.value = Sheet.NONE
     }
 
@@ -608,6 +648,10 @@ class StudioViewModel @Inject constructor(
         val cameraLayer = scene.layers.filterIsInstance<LayerDefinition.Camera>().firstOrNull { it.id == sourceId }
         if (cameraLayer != null) {
             cameraSurfaces[sourceId] = surface
+            if (rawMode.value) {
+                Timber.i("CAMERA_ENGINE_BIND_SKIPPED_RAW $sourceId")
+                return
+            }
             val controls = cameraControls.value[sourceId] ?: ProControls()
             cameraSource.bind(surface, controls, owner)
             return
@@ -643,6 +687,10 @@ class StudioViewModel @Inject constructor(
     }
 
     private fun rebindCamera(layerId: String, controls: ProControls) {
+        if (rawMode.value) {
+            maybeBindRawCamera()
+            return
+        }
         val owner = lifecycleOwner ?: return
         val surface = cameraSurfaces[layerId] ?: return
         cameraSource.bind(surface, controls, owner)
