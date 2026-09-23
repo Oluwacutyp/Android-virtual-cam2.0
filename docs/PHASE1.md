@@ -19,6 +19,10 @@
 | 8 | Recorder v1 (MP4 H.264+AAC, library, share) | ✅ Done (needs device validation) | `:engine-output`: H.264 surface-input encoder fed by the render engine + AAC from the mixer; share via FileProvider |
 | 9 | Settings + licenses/about | ✅ Done | Scene resolution, about, licenses/attribution screen |
 
+> **Device gate round 1 FAILED** (black preview / 0 fps; sources invisible;
+> LUT import rejected) — see PROGRESS.md increment 4 for the five root causes
+> and fixes. Device gate must be re-run and pass before Phase 2 starts.
+>
 > **Build status:** CI fully green (run 35777514514): assemble + unit tests +
 > lint pass for all six modules. Lint is report-only during Phase 1
 > (`abortOnError = false`) and is re-enforced at the exit gate. GL/camera/video

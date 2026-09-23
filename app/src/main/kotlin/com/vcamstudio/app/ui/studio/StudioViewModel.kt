@@ -482,9 +482,8 @@ class StudioViewModel @Inject constructor(
     fun onLutPicked(uri: Uri) {
         viewModelScope.launch(dispatchers.io) {
             try {
-                val text = context.contentResolver.openInputStream(uri)!!
-                    .bufferedReader().use { it.readText() }
-                val lut = CubeLutParser.parse(text)
+                val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                val lut = CubeLutParser.parse(CubeLutParser.decode(bytes))
                 val name = (uri.lastPathSegment ?: "lut")
                     .substringAfterLast('/')
                     .removeSuffix(".cube")

@@ -245,15 +245,15 @@ private fun StageArea(state: StudioViewModel.UiState, vm: StudioViewModel, modif
             .padding(horizontal = 12.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
+        // Full-bleed stage: the ENGINE letterboxes the scene into whatever
+        // size this surface ends up with, so the SurfaceView always has a
+        // definite nonzero size (an aspect-ratio + fillMaxSize combo left the
+        // size undetermined on some devices).
         Surface(
             color = Color.Black,
             shape = RoundedCornerShape(12.dp),
             border = BorderStroke(1.dp, StudioBorder),
-            modifier = Modifier
-                .aspectRatio(
-                    scene?.let { it.width.toFloat() / it.height.toFloat() } ?: 9f / 16f,
-                )
-                .fillMaxSize(),
+            modifier = Modifier.fillMaxSize(),
         ) {
             Box(Modifier.fillMaxSize()) {
                 AndroidView(

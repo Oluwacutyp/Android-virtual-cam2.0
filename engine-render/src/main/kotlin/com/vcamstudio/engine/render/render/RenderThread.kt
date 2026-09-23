@@ -91,7 +91,9 @@ internal class RenderThread(
         var height: Int,
         var eglSurface: EglWindowSurface?,
         var needsReinit: Boolean,
-    )
+    ) {
+        var firstPresentLogged: Boolean = false
+    }
 
     // ---- scene state (render thread only)
     private var currentScene: SceneDefinition? = null
@@ -112,6 +114,7 @@ internal class RenderThread(
 
     private var choreographer: Choreographer? = null
     private var lastPresentClockMs = 0L
+    private var renderedFrames = 0L
 
     fun post(block: () -> Unit) {
         handler.post {
@@ -131,16 +134,27 @@ internal class RenderThread(
 
     fun initEngine() {
         if (initialized) return
-        val core = EglCore()
-        egl = core
-        programs = Shaders.buildPrograms() // throws GlException on shader bugs (fail fast)
-        renderer = SceneRenderer(programs!!).also { it.enableVertexArrays() }
-        collector.glRenderer = core.glRenderer
-        collector.glVersion = core.glVersion
-        collector.eglApi = core.eglApiVersion
-        initialized = true
-        Log.i(TAG, "render engine up: ${core.glRenderer} / ${core.glVersion}")
-        scheduleFrame()
+        try {
+            val core = EglCore()
+            egl = core
+            programs = Shaders.buildPrograms() // throws GlException on shader bugs (fail fast)
+            renderer = SceneRenderer(programs!!).also { it.enableVertexArrays() }
+            collector.glRenderer = core.glRenderer
+            collector.glVersion = core.glVersion
+            collector.eglApi = core.eglApiVersion
+            collector.initError = null
+            initialized = true
+            Log.i(TAG, "ENGINE_UP renderer=${core.glRenderer} gl=${core.glVersion}")
+            scheduleFrame()
+        } catch (t: Throwable) {
+            // Fail VISIBLE (diagnostics + log), not silent: keep retrying so a
+            // transient driver/permission condition self-heals.
+            collector.initError = t.message ?: t.javaClass.simpleName
+            Log.e(TAG, "ENGINE_INIT_FAILED: ${t.message} — retrying in 2s", t)
+            handler.postDelayed({
+                if (running && !initialized) initEngine()
+            }, 2_000)
+        }
     }
 
     fun shutdownGl() {
@@ -240,7 +254,8 @@ internal class RenderThread(
             if (externalSources.containsKey(id)) continue
             val src = ExternalTextureSource(id, DEFAULT_SOURCE_W, DEFAULT_SOURCE_H)
             externalSources[id] = src
-            Log.i(TAG, "external source created: $id")
+            sceneNeedsRender = true
+            Log.i(TAG, "SOURCE_CREATED $id")
             postMain {
                 listener?.onExternalSourceReady(id, src.surface, DEFAULT_SOURCE_W, DEFAULT_SOURCE_H)
             }
@@ -311,6 +326,10 @@ internal class RenderThread(
         collector.sceneSize = Size(scene.width, scene.height)
         transitionSpec = pendingTransition
         syncExternalSources(scene)
+        // A new/edited scene must render at least once even if no source has
+        // produced a frame yet — otherwise the compositor never presents.
+        sceneNeedsRender = true
+        Log.i(TAG, "SCENE_APPLIED ${scene.width}x${scene.height} layers=${scene.layers.size}")
     }
 
     private fun recreateSceneFbos(w: Int, h: Int) {
@@ -361,6 +380,10 @@ internal class RenderThread(
         r.endScene()
 
         presentedSceneTex = currentFbo().texture.id
+        renderedFrames++
+        if (renderedFrames == 1L) {
+            Log.i(TAG, "FIRST_SCENE_RENDER ${scene.width}x${scene.height}")
+        }
     }
 
     private fun currentFbo(): Framebuffer = if (sceneCurIsA) sceneFboA!! else sceneFboB!!
@@ -399,9 +422,20 @@ internal class RenderThread(
             return
         }
         expectsFrames = true
-        if (scene == null || presentedSceneTex == 0) return
 
-        val r = renderer ?: return
+        val r = renderer
+        if (r == null || scene == null) {
+            // Engine not up yet (or no scene): still present the background so
+            // outputs are never undefined-black and fps stays measurable.
+            presentBlank(frameTimeNanos)
+            return
+        }
+        if (presentedSceneTex == 0) {
+            // Scene exists but nothing rendered yet — render once now so the
+            // very first present already shows content.
+            renderScene(scene)
+        }
+
         val nowMs = clock.nowMs()
         var anySwapOk = false
 
@@ -427,7 +461,7 @@ internal class RenderThread(
                 r.drawTextureQuad(prevFbo!!.texture.id, 1f, quad, out.width, out.height)
                 r.drawTextureQuad(presentedSceneTex, t, quad, out.width, out.height)
                 GLES30.glDisable(GLES30.GL_BLEND)
-            } else {
+            } else if (presentedSceneTex != 0) {
                 r.drawTextureQuad(presentedSceneTex, 1f, quad, out.width, out.height)
             }
 
@@ -435,6 +469,10 @@ internal class RenderThread(
             if (es.swap()) {
                 anySwapOk = true
                 checkGlError("present(${out.id})")
+                if (!out.firstPresentLogged) {
+                    out.firstPresentLogged = true
+                    Log.i(TAG, "FIRST_PRESENT ${out.id} ${out.width}x${out.height}")
+                }
             } else {
                 Log.w(TAG, "swapBuffers failed for ${out.id} — scheduling recovery")
                 out.needsReinit = true
@@ -451,6 +489,35 @@ internal class RenderThread(
             collector.onPresented(dt, dropped)
             lastPresentClockMs = nowMs
             lastPresentMonotonicMs = nowMs
+            consecutiveFailedRecoveries = 0
+        }
+    }
+
+    /** Presents a cleared (background-colored) frame on outputs — never-black floor. */
+    private fun presentBlank(frameTimeNanos: Long) {
+        var anySwapOk = false
+        for (out in outputs.values) {
+            if (out.needsReinit || out.eglSurface == null) {
+                if (!reinitOutput(out)) continue
+            }
+            val es = out.eglSurface!!
+            if (!es.makeCurrent()) continue
+            GLES30.glViewport(0, 0, out.width, out.height)
+            GLES30.glClearColor(0f, 0f, 0f, 1f)
+            GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+            es.setPresentationTime(frameTimeNanos)
+            if (es.swap()) {
+                anySwapOk = true
+                if (!out.firstPresentLogged) {
+                    out.firstPresentLogged = true
+                    Log.i(TAG, "FIRST_PRESENT ${out.id} ${out.width}x${out.height} (blank)")
+                }
+            } else {
+                out.needsReinit = true
+            }
+        }
+        if (anySwapOk) {
+            lastPresentMonotonicMs = clock.nowMs()
             consecutiveFailedRecoveries = 0
         }
     }

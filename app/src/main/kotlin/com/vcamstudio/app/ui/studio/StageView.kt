@@ -20,6 +20,9 @@ class StageView(context: Context) : SurfaceView(context), SurfaceHolder.Callback
     var onTap: ((x: Float, y: Float, viewW: Float, viewH: Float) -> Unit)? = null
 
     init {
+        // The engine composites onto this surface; keep it above the window so
+        // Compose backgrounds can never occlude it (deterministic never-black).
+        setZOrderOnTop(true)
         holder.addCallback(this)
     }
 

@@ -138,3 +138,40 @@ Completes the Phase 1 feature scope (device exit gate still pending):
 
 Honest verification: all of the above is compile/test-verified on CI;
 codec/GL/camera runtime behavior remains device-gated (exit criteria).
+
+
+## Increment 4 — device-gate FAILURE triage + never-black fixes (2026-09-22)
+
+**First device run FAILED the exit gate:** app stable, mic mixer works, but
+preview black at 0 fps; camera/image/video layers all invisible; `.cube`
+import rejected real-world files ("table data before LUT_3D_SIZE").
+
+Root causes found by pipeline audit (all fixed):
+
+1. **0 fps / black — compositor never presented.** `applyPendingScene` never
+   set `sceneNeedsRender`, so with no source frames yet `renderScene` never
+   ran, `presentedSceneTex` stayed 0, and `presentAll` early-returned
+   forever. Fixed: scene application forces a render; `presentAll` additionally
+   renders once if the scene texture is missing, and — as a floor — presents a
+   background-cleared frame whenever the renderer/scene isn't ready yet
+   (outputs are NEVER left unpresented; fps stays measurable; output health
+   keeps being exercised).
+2. **Silent engine-init death.** An EGL/shader failure in `initEngine` killed
+   the frame loop with no surfaced state. Now: failure is recorded in
+   diagnostics (`initError`, surfaced in dump + UNHEALTHY health), logged as
+   `ENGINE_INIT_FAILED`, and init auto-retries every 2 s.
+3. **EGL config hazard.** Context was created with client version 3 on a
+   config advertising only ES2 renderability — `EGL_BAD_MATCH` on strict
+   drivers. Config now requests ES3|ES2 renderable bits (fallback chains kept).
+4. **Stage visibility.** StageView now `setZOrderOnTop(true)` (Compose window
+   content can never occlude the compositor surface), and the stage
+   SurfaceView is laid out full-bleed (the engine letterboxes internally);
+   the previous aspectRatio+fillMaxSize combination left size indeterminate.
+5. **LUT parser.** Rewritten tolerant: unknown vendor metadata lines skipped,
+   comma decimals accepted, UTF-8/UTF-16 + BOM decoding (real exports do all
+   of these). Milestone logging added (`ENGINE_UP`, `SCENE_APPLIED`,
+   `FIRST_SCENE_RENDER`, `FIRST_PRESENT`, `SOURCE_CREATED`) so the next device
+   session pinpoints any remaining failure in one logcat capture.
+
+Verification: CI compile+test+lint; runtime behavior needs the device re-run
+(stress script now has precise milestone signals to grep).

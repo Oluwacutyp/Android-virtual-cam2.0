@@ -32,6 +32,8 @@ data class DiagnosticsSnapshot(
     val externalSourceCount: Int = 0,
     /** ms since the last successful present; -1 = never presented. */
     val lastPresentAgeMs: Long = -1,
+    /** Non-null when engine init failed (EGL/shader) — surfaced in UI + dump. */
+    val initError: String? = null,
 ) {
     companion object {
         const val HISTOGRAM_BUCKETS = 8
@@ -57,6 +59,7 @@ class DiagnosticsCollector {
     @Volatile var sceneSize: Size? = null
     @Volatile var previewSize: Size? = null
     @Volatile var externalSourceCount: Int = 0
+    @Volatile var initError: String? = null
 
     /**
      * Histogram bucket for a frame time.
@@ -101,6 +104,7 @@ class DiagnosticsCollector {
             previewSize = previewSize,
             externalSourceCount = externalSourceCount,
             lastPresentAgeMs = if (lastPresentMonotonicMs <= 0) -1 else nowMs - lastPresentMonotonicMs,
+            initError = initError,
         )
     }
 

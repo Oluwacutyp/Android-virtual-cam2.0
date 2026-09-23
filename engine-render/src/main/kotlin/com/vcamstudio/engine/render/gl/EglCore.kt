@@ -18,6 +18,12 @@ import android.view.Surface
  */
 class EglCore {
 
+    private companion object {
+        // android EGL14 lacks the ES3 constant on older API levels; 0x0040 per EGL spec.
+        const val EGL_OPENGL_ES3_BIT = 0x0040
+    }
+
+
     private var display: EGLDisplay = EGL14.EGL_NO_DISPLAY
     private var config: EGLConfig? = null
     private var context: EGLContext = EGL14.EGL_NO_CONTEXT
@@ -61,7 +67,9 @@ class EglCore {
      */
     private fun chooseConfig(): EGLConfig? {
         val base = mutableListOf(
-            EGL14.EGL_RENDERABLE_TYPE to EGL14.EGL_OPENGL_ES2_BIT,
+            // ES3 context on an ES2-only config is EGL_BAD_MATCH on strict
+            // drivers: request both renderable bits, fall back if rejected.
+            EGL14.EGL_RENDERABLE_TYPE to (EGL_OPENGL_ES3_BIT or EGL14.EGL_OPENGL_ES2_BIT),
             EGL14.EGL_SURFACE_TYPE to (EGL14.EGL_WINDOW_BIT or EGL14.EGL_PBUFFER_BIT),
             EGL14.EGL_RED_SIZE to 8,
             EGL14.EGL_GREEN_SIZE to 8,

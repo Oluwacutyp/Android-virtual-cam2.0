@@ -86,4 +86,48 @@ class CubeLutParserTest {
             CubeLutParser.parse("LUT_1D_SIZE 32\n0 0 0")
         }
     }
+
+    @Test
+    fun `unknown vendor metadata lines are skipped`() {
+        val cube = """
+            CREATED "2024-01-01"
+            SOFTWARE "SomeGrader 9.1"
+            DESCRIPTION "a look"
+            LUT_3D_SIZE 2
+            0.0 0.0 0.0
+            1.0 0.0 0.0
+            0.0 1.0 0.0
+            1.0 1.0 0.0
+            0.0 0.0 1.0
+            1.0 0.0 1.0
+            0.0 1.0 1.0
+            1.0 1.0 1.0
+        """.trimIndent()
+        assertEquals(2, CubeLutParser.parse(cube).size)
+    }
+
+    @Test
+    fun `comma decimals tolerated`() {
+        val cube = "LUT_3D_SIZE 2\n" + List(8) { i ->
+            listOf(0f, 1f).let { c -> "\${c[(i shr 2) and 1]},0 \${c[(i shr 1) and 1]},0 \${c[i and 1]},0" }
+        }.joinToString("\n")
+        assertEquals(2, CubeLutParser.parse(cube).size)
+    }
+
+    @Test
+    fun `utf16 bom files decode`() {
+        val text = "LUT_3D_SIZE 2\n" + neutral2.lineSequence().drop(2).joinToString("\n")
+        val bytes = ByteArray(2) { i -> if (i == 0) 0xFF.toByte() else 0xFE.toByte() } +
+            text.toByteArray(Charsets.UTF_16LE)
+        val decoded = CubeLutParser.decode(bytes)
+        assertTrue(decoded.contains("LUT_3D_SIZE"))
+        assertEquals(2, CubeLutParser.parse(decoded).size)
+    }
+
+    @Test
+    fun `utf8 bom is stripped`() {
+        val bytes = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) +
+            neutral2.toByteArray(Charsets.UTF_8)
+        assertEquals(2, CubeLutParser.parse(CubeLutParser.decode(bytes)).size)
+    }
 }

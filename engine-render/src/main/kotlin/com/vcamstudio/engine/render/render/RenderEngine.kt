@@ -159,6 +159,7 @@ class RenderEngine(
         val now = clock.nowMs()
         val status = thread.watchdogStatus()
         val health = when {
+            collector.initError != null -> EngineHealth.UNHEALTHY
             thread.consecutiveFailedRecoveries >= 3 -> EngineHealth.UNHEALTHY
             status.expectingFrames && status.lastPresentMonotonicMs > 0 &&
                 now - status.lastPresentMonotonicMs > 3_000 -> EngineHealth.UNHEALTHY
@@ -190,6 +191,7 @@ class RenderEngine(
             appendLine("renderer=$d.glRenderer")
             appendLine("gl=$d.glVersion")
             appendLine("egl=$d.eglApi")
+            d.initError?.let { appendLine("initError=$it") }
             d.recoveries.forEach { appendLine("recovery=@${it.atMs} ${it.reason}") }
         }
     }
