@@ -116,6 +116,9 @@ internal class RenderThread(
 
     fun vboErrorsLine(): String? = renderer?.vboErrors
 
+    /** STAGING_OVERFLOW last occurrence (round-18 guard). */
+    fun stagingOverflowLine(): String? = renderer?.stagingOverflow
+
     fun vboCreatedLine(): String? = renderer?.vboCreatedNote
     private var initialized = false
 

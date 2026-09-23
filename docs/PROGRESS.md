@@ -826,3 +826,55 @@ D. DRAW_STATE now logs viewport=[x,y,w,h], scissorBox=[x,y,w,h],
    implicit state — agreed).
 E. No fix ships beyond the 0x500 class (explicitly mandated by A). Rotation
    stays parked (dynamic-ST-class derivation logged in addendum 4).
+
+
+## Increment 18 — BufferOverflow root-caused (my round-17 VBO staging) + mandated lifecycle hardening (2026-09-23)
+
+Owner's BufferOverflowException stacks CONFIRMED and located. Honest
+attribution: the overflow was introduced BY THE ROUND-17 TEST PATH, not the
+base engine — testInterleaved was sized for the strip (4 verts x 6 floats =
+24) while the owner-mandated TRIANGLES branch writes 6 verts x 6 = 36;
+overflow at put #25 == Buffer.nextPutIndex. Exactly the owner's hypothesis
+(a). It explains the crash storms, the UNHEALTHY session, presented/rendered
+divergence, and the 32-stall watchdog chain (renders crashed every frame).
+It CANNOT be the original wedge's cause (the wedge predates the toggles by
+eight builds; dump 1 this round wedges on draw=TRIANGLES client path where
+no overflow occurs) — but per mandate 2 the clean before/after re-run
+decides the wedge question empirically.
+
+FIXED (mandate 1, all four bullets):
+- Capacity: testInterleaved = max(strip,triangles) verts (36 floats), once
+  per renderer.
+- Fresh region at the START of every draw: posBuf/uvBuf/localBuf,
+  posBuf6/uvBuf6/localBuf6, testInterleaved all clear() before their puts
+  (verified structurally; a crashed draw cannot poison the next one).
+- Pre-put capacity guard on EVERY staging write (uploadVertexData,
+  drawQuadTriangles, drawQuadVbo): guard failure logs
+  STAGING_OVERFLOW where/cap/pos/need (rate-limited 1 Hz) and SKIPS the
+  draw — the last good frame keeps presenting (uploadOk gate at the layer,
+  present, scratch, and direct-surface draw sites).
+- DRAW_STATE now carries staging=[cap=<bytes>,pos=<bytes>,need=<bytes>].
+
+ALSO: AUDIT_ERR=[vao:0x500] attribution SUCCESS — the INVALID_ENUM source
+is the GL_VERTEX_ARRAY_BINDING query (0x80B5) itself on this Adreno driver.
+It was already isolated (DRAW_STATS glErr=0x0 confirms draws are clean);
+after the first raise the query is gated off (vao=unsupported) — the engine
+has no VAOs, nothing further to learn from it.
+
+MANDATE 4 (viewport) — CONFIRMED FROM THE OWNER'S OWN DUMPS: layer draws
+log viewport=[0,0,720,1280] because their destination IS the scene FBO
+(bindViewport per draw); present + direct-surface draws log
+[0,0,1028,1675/1629/1693] = the surface. The flagged UVDBG 720x1280 line
+was a scene-FBO draw — correct, not a bug. scissorTest=off everywhere =>
+scissorBox [0,0,1,1] is inert.
+
+ROTATION (mandate 3): still PARKED per directive. State: NET=MIRROR_H on
+this ST class; required net for selfie = ROT180 o MIRROR_H; for this ST
+class that means uvRot=90 (=360-sensor); for the earlier flip-class ST,
+270 was right. The durable design (classify ST at bind, derive rotation
+from ST class + sensor + facing) is designed and waiting. Owner's final
+note ("camera still rotates / not straight") matches the parked diagnosis
+exactly.
+
+NOT CLAIMED: the wedge is NOT claimed fixed. Mandate 2 (before/after
+screenshots, STRIP, no toggles, camera+video) is the owner's next step.

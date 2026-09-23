@@ -97,6 +97,7 @@ internal class SceneRenderer(
         bindSource(program, source, layer.transform.uvRotationDeg, layer.transform.mirrorX)
         bindLut(program, layer.effects.lutId)
         setFxUniforms(program, layer, source.width, source.height, drawW, drawH)
+        if (!uploadOk) return // STAGING_OVERFLOW: last-good frame keeps presenting
         val cap = if (source is ExternalTextureSource) {
             (if (program === programs.uvDebug) "UVDBG" else "OES") + ":" + layer.id
         } else null
@@ -225,6 +226,7 @@ internal class SceneRenderer(
         programs.copy.setFloat("uAlpha", alpha)
         // Source is an FBO (GL orientation) -> flip UVs so the image reads upright.
         uploadQuad(quad, surfaceW.toFloat(), surfaceH.toFloat(), uvFlipY = true)
+        if (!uploadOk) return // STAGING_OVERFLOW: keep the last good surface frame
         capturePresentDebug()
         issueQuadDraw("PRESENT", programs.copy, capture = true)
     }
@@ -255,6 +257,7 @@ internal class SceneRenderer(
         GLES30.glViewport(0, 0, surfaceW, surfaceH)
         program.use()
         uploadQuad(quad, surfaceW.toFloat(), surfaceH.toFloat())
+        if (!uploadOk) return // STAGING_OVERFLOW: skip this draw
         bindSource(program, source, layer.transform.uvRotationDeg, layer.transform.mirrorX)
         bindLut(program, layer.effects.lutId)
         setFxUniforms(program, layer, source.width, source.height, drawW, drawH)
@@ -415,7 +418,11 @@ internal class SceneRenderer(
 
     private var testVbo = 0
     private var testVao = 0
-    private val testInterleaved = directFloatBuffer(STRIDE_FLOATS * 4)
+    // Sized for the LARGEST vertex count any mode writes (mandate: max(STRIP,
+    // TRIANGLES) = 6 verts x 6 floats). The round-17 build sized this for the
+    // strip only; the TRIANGLES branch overflowed at put #25 — the
+    // BufferOverflowException class of that round, now fixed at the source.
+    private val testInterleaved = directFloatBuffer(TRI_ORDER.size * STRIDE_FLOATS)
 
     private val vboErrs = StringBuilder()
 
@@ -454,7 +461,13 @@ internal class SceneRenderer(
             GLES30.glBindVertexArray(0); vboCheck("unbindVao")
             noteVboCreated(testVbo, testVao)
         }
-        testInterleaved.clear()
+        val needFloats = (if (trianglesOnly) TRI_ORDER.size else 4) * STRIDE_FLOATS
+        if (testInterleaved.remaining() < needFloats) {
+            reportOverflow("drawQuadVbo", testInterleaved.capacity(), testInterleaved.position(), needFloats)
+            uploadOk = false
+            return
+        }
+        testInterleaved.clear() // fresh region EVERY draw
         if (trianglesOnly) {
             // Round 17B: same data, explicit triangle pairs TL,TR,BR / TL,BR,BL.
             for (v in TRI_ORDER) {
@@ -497,7 +510,12 @@ internal class SceneRenderer(
     private val localBuf6 = directFloatBuffer(12)
 
     private fun drawQuadTriangles() {
-        posBuf6.clear(); uvBuf6.clear(); localBuf6.clear()
+        if (posBuf6.remaining() < 12 || uvBuf6.remaining() < 12 || localBuf6.remaining() < 12) {
+            reportOverflow("drawQuadTriangles", posBuf6.capacity(), posBuf6.position(), 12)
+            uploadOk = false
+            return
+        }
+        posBuf6.clear(); uvBuf6.clear(); localBuf6.clear() // fresh region EVERY draw
         for (v in TRI_ORDER) {
             val s = v * STRIDE_FLOATS
             posBuf6.put(staging[s]); posBuf6.put(staging[s + 1])
@@ -547,6 +565,8 @@ internal class SceneRenderer(
         private set
 
     private val drawStateLastMs = HashMap<String, Long>()
+    private var vaoQueryOk = true
+    private var vaoUnsupported = false
 
     /** Round 17A: error-attributed query — names the exact call that raises an error. */
     private fun audited(errs: StringBuilder, name: String, block: () -> Unit) {
@@ -590,9 +610,18 @@ internal class SceneRenderer(
         val vaoBinding = IntArray(1)
         audited(errs, "arrayBuf") { GLES30.glGetIntegerv(GLES20.GL_ARRAY_BUFFER_BINDING, arrayBuf, 0) }
         audited(errs, "elemBuf") { GLES30.glGetIntegerv(GLES20.GL_ELEMENT_ARRAY_BUFFER_BINDING, elemBuf, 0) }
-        // 0x80B5 = GL_VERTEX_ARRAY_BINDING (literal: the engine uses NO VAOs —
-        // expect 0; reported so it is PROVEN per dump)
-        audited(errs, "vao") { GLES30.glGetIntegerv(0x80B5, vaoBinding, 0) }
+        // 0x80B5 = GL_VERTEX_ARRAY_BINDING. Attribution proved THIS query is
+        // the INVALID_ENUM source on this Adreno driver (AUDIT_ERR=[vao:0x500]);
+        // it is isolated, and after the first raise it is gated off (the
+        // engine has no VAOs — there is nothing further to learn from it).
+        if (vaoQueryOk) {
+            val vaoErrs = StringBuilder()
+            audited(vaoErrs, "vao") { GLES30.glGetIntegerv(0x80B5, vaoBinding, 0) }
+            if (vaoErrs.isNotEmpty()) {
+                vaoQueryOk = false
+                vaoUnsupported = true
+            }
+        }
         val cullMode = IntArray(1)
         val frontFace = IntArray(1)
         val cullOn = auditedOn(errs, "cullTest") { GLES30.glIsEnabled(GLES30.GL_CULL_FACE) }
@@ -636,6 +665,15 @@ internal class SceneRenderer(
             append("DRAW_STATE[").append(tag).append("]")
             append(" prog=").append(program.handle)
             append(" curProg=").append(cur[0])
+            // Round 18 mandate: staging buffer capacity/position/need in bytes.
+            val verts = if (vboDrawPass || trianglesOnly) TRI_ORDER.size.coerceAtLeast(4) else 4
+            val capB = if (vboDrawPass) testInterleaved.capacity() * 4
+            else (posBuf.capacity() + uvBuf.capacity() + localBuf.capacity()) * 4
+            val posB = if (vboDrawPass) testInterleaved.position() * 4
+            else (posBuf.position() + uvBuf.position() + localBuf.position()) * 4
+            append(" staging=[cap=").append(capB)
+                .append(",pos=").append(posB)
+                .append(",need=").append(verts * STRIDE_FLOATS * 4).append("]")
             append(" attr0=[").append(a0).append("]")
             append(" attr1=[").append(a1).append("]")
             append(" attr2=[").append(a2).append("]")
@@ -656,6 +694,7 @@ internal class SceneRenderer(
             })
             append(" CLIENT_BYTES=").append(clientBytes)
             append(" GPU_BYTES=[").append(gpuBytes).append("]")
+            if (vaoUnsupported) append(" vao=unsupported")
             if (errs.isNotEmpty()) append(" AUDIT_ERR=[").append(errs.toString().trim()).append("]")
         }
         if (tag == "PRESENT") presentDrawStateDebug = line else drawStateDebug = line
@@ -808,6 +847,7 @@ internal class SceneRenderer(
         // never have worked (rounds 1-7 root cause, surfaced only once the
         // present path finally executed).
         require(quad.cornersPx.size >= 8 && quad.uvs.size >= 8) { "quad arrays too small" }
+        uploadOk = true
         for (i in 0 until 4) {
             val src = i * 2
             val dst = i * STRIDE_FLOATS
@@ -842,10 +882,39 @@ internal class SceneRenderer(
         uploadVertexData()
     }
 
-    private fun uploadVertexData() {
-        posBuf.clear(); uvBuf.clear(); localBuf.clear()
+    // ---- (round 18) staging-buffer lifecycle: pre-put capacity guards ----
+    // Every staging write is guarded; a guard failure logs STAGING_OVERFLOW
+    // (capacity/position/need, rate-limited) and SKIPS the draw — the last
+    // good frame keeps presenting instead of a half-written quad.
+
+    @Volatile
+    var stagingOverflow: String? = null
+        private set
+
+    private var lastOverflowLogMs = 0L
+
+    @Volatile
+    private var uploadOk: Boolean = true
+
+    private fun reportOverflow(where: String, cap: Int, pos: Int, need: Int) {
+        val now = System.nanoTime() / 1_000_000L
+        if (now - lastOverflowLogMs > 1000) {
+            lastOverflowLogMs = now
+            stagingOverflow = "STAGING_OVERFLOW where=$where cap=$cap pos=$pos need=$need"
+            Log.w("vcam-render", stagingOverflow!!)
+        }
+    }
+
+    private fun uploadVertexData(verts: Int = 4): Boolean {
+        val need = verts * 2
+        if (posBuf.remaining() < need || uvBuf.remaining() < need || localBuf.remaining() < need) {
+            reportOverflow("uploadVertexData", posBuf.capacity(), posBuf.position(), need)
+            uploadOk = false
+            return false
+        }
+        posBuf.clear(); uvBuf.clear(); localBuf.clear() // fresh region EVERY draw
         var s = 0
-        for (i in 0 until 4) {
+        for (i in 0 until verts) {
             posBuf.put(staging[s]); posBuf.put(staging[s + 1])
             uvBuf.put(staging[s + 2]); uvBuf.put(staging[s + 3])
             localBuf.put(staging[s + 4]); localBuf.put(staging[s + 5])
@@ -855,6 +924,8 @@ internal class SceneRenderer(
         GLES30.glVertexAttribPointer(0, 2, GLES30.GL_FLOAT, false, 0, posBuf)
         GLES30.glVertexAttribPointer(1, 2, GLES30.GL_FLOAT, false, 0, uvBuf)
         GLES30.glVertexAttribPointer(2, 2, GLES30.GL_FLOAT, false, 0, localBuf)
+        uploadOk = true
+        return true
     }
 
     private fun edgeLengthPx(quad: LayerGeometry.Quad, topEdge: Boolean): Float {

@@ -226,6 +226,7 @@ class RenderEngine(
             thread.presentDrawStateLine()?.let { appendLine(it) }
             thread.vboCreatedLine()?.let { appendLine(it) }
             thread.vboErrorsLine()?.let { appendLine(it) }
+            thread.stagingOverflowLine()?.let { appendLine(it) }
             // (E) the EXACT shader sources compiled and last used for the
             // camera draw — verbatim, no summaries.
             thread.oesShaderSources()?.let { (vs, fs) ->
