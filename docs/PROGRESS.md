@@ -1329,3 +1329,33 @@ Round-25 mandate state: (1) sign flip, (2) DISPLAY_ROT fold + ORIENT_APPLY/DISPL
 logging, (3) video routed through compensate() — all shipped; harness green 256/256.
 **Device send-back (a)-(e) still pending** — no "fixed" claim until the five device
 states + dump with DISPLAY_ROT/ORIENT_APPLY lines come back conforming.
+
+## Increment 31 — Round-26: ONE constant (rot=90 family +90)
+
+**Head `77d74cf`, CI run 36026968142 SUCCESS** — first-try green. Exactly two files:
+`StOrientation.kt` (the constant) + `StOrientationGoldenTest.kt` (anchors + closed form).
+
+Owner device evidence on the r25 build: front (uvRot=90/mirrorX=T) displayed up-at-RIGHT
+(90 CCW off); back (90/F) up-at-LEFT (90 CW off); video (90/T, class 90/h) up-at-LEFT.
+Same 90° pre-mirror residual on every rot=90 chain; the mirror flips its display direction.
+Owner ladder: r24 uvRot=270 -> 180 off; r25 uvRot=90 -> 90 off; r26 uvRot=180.
+
+THE CHANGE (one line in compensate()):
+  r90Bias = if (cls.rotCwDeg == 90) 90 else 0
+  uvRot = (rotCw - display + r90Bias + vShift) % 360   (vShift = V?180, unchanged; mx unchanged)
+
+Anchors now (display 0, class 90/none): front uvRot=180/mirrorX=true (net MH_R90);
+back uvRot=180/mirrorX=false (net R90); video (90/h, same function) uvRot=180/mirrorX=true
+(net R90). Golden closed form: clean rot!=90 classes still R(360-display) BYTE-IDENTICAL
+comp to r25 (machine-checked); rot=90 family clean -> R(450-display). Sim + CI: 256/256.
+
+Expected ORIENT_APPLY per send-back state (display 0):
+  (a) front upright        st_class=rot90/none  -> uvRot=180 mirrorX=true
+  (b) back upright         st_class=rot90/none  -> uvRot=180 mirrorX=false
+  (c) front rot 90 LEFT    (display 90)         -> uvRot=90  mirrorX=true
+  (d) front rot 90 RIGHT   (display 270)        -> uvRot=270 mirrorX=true
+  (e) video upright        st_class=rot90/h     -> uvRot=180 mirrorX=true
+
+NO "fixed" claim — device send-back (a)-(e) pending. If any state is still wrong, the
+owner names the next value from the observed residual (ladder: 0 is the only untried
+constant); we change the bias, nothing else.
