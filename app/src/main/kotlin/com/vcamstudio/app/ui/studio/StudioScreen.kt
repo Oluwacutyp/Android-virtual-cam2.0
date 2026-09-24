@@ -62,6 +62,12 @@ import com.vcamstudio.engine.render.model.LensFacing
 import com.vcamstudio.engine.render.model.LayerDefinition
 import com.vcamstudio.engine.render.model.SceneDefinition
 import com.vcamstudio.engine.render.model.TransitionType
+import androidx.compose.foundation.combinedClickable
+import androidx.activity.compose.BackHandler
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.text.font.FontWeight
+import com.vcamstudio.engine.render.render.EngineHealth
+import androidx.compose.foundation.ExperimentalFoundationApi
 
 /**
  * The broadcast-console layout (blueprint §E): stage first, then transition
@@ -142,7 +148,9 @@ fun StudioScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        RecChip(state.recording, vm::toggleRecording)
+                        val recEnabled = state.health != EngineHealth.UNHEALTHY &&
+                            state.scenes.isNotEmpty() && state.activeSceneId.isNotEmpty()
+                        RecChip(state.recording, recEnabled, vm::toggleRecording)
                         StatusChip("%.0f fps".format(state.diagnostics.fps), StudioAccent)
                         StatusChip(state.health.name, healthColor(state.health))
                         Text(
@@ -412,6 +420,7 @@ private fun TransitionRow(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ScenesStrip(
     scenes: List<SceneDefinition>,
@@ -422,27 +431,70 @@ private fun ScenesStrip(
 ) {
     Column(Modifier.padding(horizontal = 12.dp)) {
         Text("SCENES", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        // Round-29: per-interaction edit mode. The delete affordance is INVISIBLE
+        // in normal state (it read as a stuck delete-mode before); long-press a
+        // tab to reveal its delete action, and it auto-exits on any tap, scene
+        // switch, or back-press — it cannot persist.
+        var editSceneId by remember { mutableStateOf<String?>(null) }
+        BackHandler(enabled = editSceneId != null) { editSceneId = null }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(scenes, key = { it.id }) { scene ->
                 val active = scene.id == activeId
+                val inEdit = editSceneId == scene.id && scenes.size > 1
                 Column(
                     Modifier
                         .clip(RoundedCornerShape(8.dp))
-                        .background(if (active) MaterialTheme.colorScheme.surfaceVariant else StudioSurface)
+                        .background(
+                            when {
+                                active -> StudioAccent.copy(alpha = 0.28f)
+                                inEdit -> MaterialTheme.colorScheme.error.copy(alpha = 0.14f)
+                                else -> StudioSurface
+                            }
+                        )
                         .border(
-                            BorderStroke(1.dp, if (active) StudioAccent else StudioBorder),
+                            BorderStroke(
+                                if (active) 2.dp else 1.dp,
+                                when {
+                                    active -> StudioAccent
+                                    inEdit -> MaterialTheme.colorScheme.error
+                                    else -> StudioBorder
+                                },
+                            ),
                             RoundedCornerShape(8.dp),
                         )
-                        .clickable { onSelect(scene.id) }
+                        .combinedClickable(
+                            onClick = {
+                                editSceneId = null // tap-away auto-exits edit mode
+                                onSelect(scene.id)
+                            },
+                            onLongClick = { if (scenes.size > 1) editSceneId = if (inEdit) null else scene.id },
+                        )
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                 ) {
-                    Text(scene.name, style = MaterialTheme.typography.bodySmall)
-                    if (scenes.size > 1) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (active) {
+                            Text(
+                                "● ",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = StudioAccent,
+                            )
+                        }
+                        Text(
+                            scene.name,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                            color = if (active) StudioAccent else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                    if (inEdit) {
                         Text(
                             "delete",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.clickable { onDelete(scene.id) },
+                            modifier = Modifier.clickable {
+                                editSceneId = null // per-interaction: exits after the tap
+                                onDelete(scene.id)
+                            },
                         )
                     }
                 }
@@ -656,7 +708,13 @@ private fun ColorPickDialog(onPick: (Int) -> Unit, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun RecChip(state: RecordingController.State, onToggle: () -> Unit) {
+private fun RecChip(state: RecordingController.State, enabled: Boolean, onToggle: () -> Unit) {
+    // Round-29: the idle chip used StudioBorder grey and READ as disabled
+    // (device screenshot) even though it was clickable. Idle now renders in
+    // the active accent so it is obviously tappable; it is only disabled
+    // when the engine is unhealthy or no scene is loaded (per the round-29
+    // mandate: tappable whenever the engine is healthy and a scene exists).
+    val alpha = if (enabled) 1f else 0.4f
     when (state) {
         is RecordingController.State.Recording -> {
             var elapsed by remember(state.startedAtMs) {
@@ -671,13 +729,17 @@ private fun RecChip(state: RecordingController.State, onToggle: () -> Unit) {
             StatusChip(
                 text = "● REC %02d:%02d".format(elapsed / 60, elapsed % 60),
                 color = Color(0xFFF59E0B),
-                modifier = Modifier.clickable(onClick = onToggle),
+                modifier = Modifier
+                    .alpha(alpha)
+                    .clickable(onClick = onToggle),
             )
         }
         else -> StatusChip(
             text = "○ REC",
-            color = StudioBorder,
-            modifier = Modifier.clickable(onClick = onToggle),
+            color = StudioRed,
+            modifier = Modifier
+                .alpha(alpha)
+                .clickable(enabled = enabled, onClick = onToggle),
         )
     }
 }

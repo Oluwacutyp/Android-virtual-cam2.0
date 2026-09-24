@@ -351,12 +351,25 @@ class StudioViewModel @Inject constructor(
 
     fun addScene() = viewModelScope.launch { createSceneInternal() }
 
+    /**
+     * Round-29: deletion-proof scene naming. Count-based naming produced
+     * duplicates on the device (delete "Scene 1" -> survivor "Scene 2";
+     * create -> size+1 = "Scene 2" again). Name = max existing
+     * "Scene <N>" index + 1, so the sequence is always Scene 1, 2, 3, ...
+     * regardless of deletions.
+     */
+    private fun nextSceneName(): String {
+        val maxIndex = scenes.value.maxOfOrNull { scene ->
+            Regex("^Scene (\\d+)$").find(scene.name)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        } ?: 0
+        return "Scene ${maxIndex + 1}"
+    }
+
     private suspend fun createSceneInternal() {
         val res = sceneResolution.value
-        val index = scenes.value.size + 1
         val scene = SceneDefinition(
             id = newId("scene"),
-            name = "Scene $index",
+            name = nextSceneName(),
             width = res.width,
             height = res.height,
         )
@@ -581,7 +594,19 @@ class StudioViewModel @Inject constructor(
     }
 
     private fun startRecording() {
-        val scene = uiState.value.activeScene ?: return
+        // Round-29: a stale/empty activeSceneId used to SILENTLY kill the REC
+        // tap (button read as disabled on device). Recover instead: fall back
+        // to the first scene and repair the active id so recording always
+        // starts when a scene exists.
+        var scene = uiState.value.activeScene
+        if (scene == null) {
+            scene = scenes.value.firstOrNull() ?: run {
+                toast.value = "Nothing to record — create a scene first"
+                return
+            }
+            Timber.w("REC_FALLBACK activeSceneId stale -> recovering to %s", scene.name)
+            activeSceneId.value = scene.id
+        }
         val dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES) ?: context.filesDir
         val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
             .format(java.util.Date())
