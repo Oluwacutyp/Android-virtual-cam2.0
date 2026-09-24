@@ -56,6 +56,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.vcamstudio.app.ui.theme.StudioAccent
 import com.vcamstudio.app.ui.theme.StudioBg
 import com.vcamstudio.app.ui.theme.StudioBorder
+import com.vcamstudio.app.ui.theme.StudioRed
 import com.vcamstudio.app.ui.theme.StudioSurface
 import com.vcamstudio.engine.output.RecordingController
 import com.vcamstudio.engine.render.model.LensFacing
