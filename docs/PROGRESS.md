@@ -1481,3 +1481,29 @@ reset --hard to c14b6aa + re-apply of the 4 staged files (verified diff-identica
 Device verification (owner): REC active + timer while recording; 3 scenes Scene 1/2/3 with one
 highlight and no delete labels; long-press -> labels appear, tap-away -> disappear; recorded
 MP4 playable + shareable. Recording pipeline itself unchanged this round.
+
+## Increment 35 — Round 30 (f734da4): recorder codec-ordering fix + master audio graph
+
+Owner device evidence on r29 build (e3e82cf): (1) REC tap → toast "Recorder: setInputSurface() is valid only at Configured state; currently at Running…" — recording never began. (2) Media-bus mute showed MUTED but video-layer audio stayed audible (bypassed the bus). Mandated FIX A + FIX B, both shipped.
+
+### FIX A — codec lifecycle (RecordingSession.kt / RecordingController.kt)
+- Root cause: session property-init ran `createVideoCodec()` (configure + **start()**) before `createInputSurface()` → `IllegalStateException` on a Running codec → controller catch → onFailed → Idle.
+- Contract now enforced: construct = `configure()` both codecs (createInputSurface in Configured state; muxer still starts lazily on first video frame) → controller posts surface to app (`onSurfaceReady` → `engine.attachRecordingOutput`, render thread owns the EGL window) → `session.start()` = `codec.start()` ×2 + drain threads spawn → stop = `signalEndOfInputStream` → drain → `stop` → `release`.
+- `start()` failure inside the controller cleans the session up on its executor (`s.stop()`), reports onFailed; `toggleRecording` ignores Starting/Stopping.
+- RECORDER_STATE lines: `RECORDER_STATE CONFIGURED file=<name> WxH@fps` (session init), `SURFACE_ATTACHED WxH` (VM onSurfaceReady), `STARTED` (session.start), `STOPPED file=<name> bytes=<n>` (+ `(controller)` variant when the controller tears down). App wires `recorder.eventSink = { Timber.i(...) }`.
+
+### FIX B — audio graph exclusivity (MasterMonitor.kt / StudioViewModel.kt / VideoLayerController.kt)
+- Root cause: `TeeAudioProcessor` is a tee — ExoPlayer's `DefaultAudioSink` rendered straight to the speaker while the mixer's output reached only the recorder (its pump ran only while Recording), so bus faders/mutes had no audible effect.
+- New `MasterMonitor` (engine-audio): USAGE_MEDIA AudioTrack (48 kHz stereo PCM16); `write()` blocks → real-time pacing of the pump.
+- ONE mix pump, always on, in `StudioViewModel.init`: `mixer.read()` → master monitor always → `recorder.offerAudio` while Recording. The record-only pump is deleted.
+- Video-layer direct output pinned silent whenever a tap is installed (`player.volume = 0f` in `load`; `setMuted`/`setVolume` no-op in tapped mode). media3 applies player volume at the AudioTrack AFTER the tee ⇒ the tap keeps full-scale PCM; per-layer volume/mute is applied app-side on the MEDIA bus feed (videoParams re-read per buffer; zero-volume skips the offer).
+- Graph: Mic → MIC bus, video → MEDIA bus, buses (gain×mute) → master limiter → monitor/recorder. `AUDIO_ROUTE source=mic bus=mic` / `AUDIO_ROUTE source=video sourceId=<id> bus=media` logged at graph build. Muted MEDIA bus ⇒ ring drops frames ⇒ master receives silence within one 20 ms buffer.
+
+### Verification checklist (device, r30 build)
+- REC tap → amber ● REC timer counts; MP4 grows in app-private Movies/; appears in recordings list on stop; plays.
+- Mute cycle on a video layer: audible → silent ≤ one buffer (no tail > 100 ms) → Live → audible.
+- Log dump contains RECORDER_STATE CONFIGURED→SURFACE_ATTACHED→STARTED→STOPPED and both AUDIO_ROUTE lines.
+- 0 fps in the status bar while the mixer sheet is open = EXPECTED (preview backgrounded), not a bug.
+
+### CI
+- f734da4 (code) run: SUCCESS (first try). Docs increment: this commit.
