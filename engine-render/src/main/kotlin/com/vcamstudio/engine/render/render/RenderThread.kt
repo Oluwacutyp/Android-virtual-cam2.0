@@ -15,6 +15,7 @@ import com.vcamstudio.engine.render.gl.EglWindowSurface
 import com.vcamstudio.engine.render.gl.Framebuffer
 import com.vcamstudio.engine.render.gl.GlException
 import com.vcamstudio.engine.render.gl.checkGlError
+import com.vcamstudio.engine.render.geometry.StMirror
 import com.vcamstudio.engine.render.geometry.StOrientation
 import com.vcamstudio.engine.render.model.BlendMode
 import com.vcamstudio.engine.render.model.LayerDefinition
