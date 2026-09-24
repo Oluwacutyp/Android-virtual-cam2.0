@@ -129,6 +129,15 @@ object SourceUvMath {
      * (the single-point probe degenerated: with n=1 the rotation center
      * collapses onto the probe itself, making rotation/mirror no-ops — that
      * bug shipped in the r16 build and produced meaningless NET=OTHER lines).
+     *
+     * Round-27 step 2 (owner "VERIFY THE COMPOSITION MATH IS A RIGID
+     * TRANSFORM"): ALL EIGHT D4 transforms are now named — the two diagonal
+     * reflections were missing and printed as OTHER[...] (the r26 dump's
+     * `OTHER[u=(0,1) v=(1,0)]` is the transpose — a valid rigid transform,
+     * named MH_R90 in the golden harness and DIAG_MIRROR here). A composition
+     * whose normalized axes are not orthonormal (shear/degenerate) is
+     * reported as NOT_RIGID[...] with its determinant — the runtime assert
+     * the mandate asked for, report-only (never crashes the render thread).
      */
     fun classifyNet(
         st: FloatArray?,
@@ -149,6 +158,11 @@ object SourceUvMath {
         val mx = dvx / dvLen
         val my = dvy / dvLen
         fun near(v: Float, target: Float) = kotlin.math.abs(v - target) < 0.3f
+        // Rigid-transform check: |det| == 1 AND axes orthogonal. Scale-only
+        // STs normalize away; only true shear/degenerate inputs land here.
+        val det = nx * my - ny * mx
+        val dot = nx * mx + ny * my
+        val rigid = kotlin.math.abs(kotlin.math.abs(det) - 1f) < 0.05f && kotlin.math.abs(dot) < 0.05f
         return when {
             near(nx, 1f) && near(ny, 0f) && near(mx, 0f) && near(my, 1f) -> "IDENTITY"
             near(nx, -1f) && near(ny, 0f) && near(mx, 0f) && near(my, 1f) -> "MIRROR_H"
@@ -156,10 +170,17 @@ object SourceUvMath {
             near(nx, -1f) && near(ny, 0f) && near(mx, 0f) && near(my, -1f) -> "ROT180"
             near(nx, 0f) && near(ny, 1f) && near(mx, -1f) && near(my, 0f) -> "ROT90CCW"
             near(nx, 0f) && near(ny, -1f) && near(mx, 1f) && near(my, 0f) -> "ROT90CW"
+            near(nx, 0f) && near(ny, 1f) && near(mx, 1f) && near(my, 0f) -> "DIAG_MIRROR"
+            near(nx, 0f) && near(ny, -1f) && near(mx, -1f) && near(my, 0f) -> "ANTI_DIAG_MIRROR"
+            rigid -> String.format(
+                java.util.Locale.US,
+                "RIGID_UNNAMED[u=(%.2f,%.2f) v=(%.2f,%.2f)]",
+                nx, ny, mx, my,
+            )
             else -> String.format(
                 java.util.Locale.US,
-                "OTHER[u=(%.2f,%.2f) v=(%.2f,%.2f)]",
-                nx, ny, mx, my,
+                "NOT_RIGID[u=(%.2f,%.2f) v=(%.2f,%.2f) det=%.2f]",
+                nx, ny, mx, my, det,
             )
         }
     }

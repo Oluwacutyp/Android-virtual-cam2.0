@@ -127,14 +127,33 @@ class StOrientationGoldenTest {
         else -> "OTHER"
     }
 
+    private val RIGID8: List<FloatArray> by lazy {
+        listOf(I, R90, R180, R270, MH, MV, mmul(MH, R90), mmul(MH, R270))
+    }
+
+    /**
+     * Round-27 step 2: the composition {ST_class} + {comp} must be one of
+     * EXACTLY the 8 rigid transforms of the square
+     * {R0,R90,R180,R270} x {no-mirror, mirror} (the mirror family includes
+     * the two diagonal reflections). Fails loudly on anything else — a shear
+     * or degenerate map must never reach a device dump unnoticed.
+     */
+    private fun assertRigid(net: FloatArray, case: String) {
+        assertTrue(
+            "$case: net not one of the 8 rigid transforms: ${net.toList()}",
+            RIGID8.any { feq(net, it) },
+        )
+    }
+
     /**
      * Frame-free geometric laws the mandate's algebra MUST satisfy, asserted
      * per case on the composed net (canonical frame):
-     *   clean desired  -> net == R(360 - display) EXACTLY for rot != 90
-     *                     classes; for the rot=90 family the r26 device
-     *                     calibration post-applies R90: R(450 - display);
-     *   mirror desired -> net improper (a displayed mirror state), axis
-     *                     pinned by the anchor test on the device dump ST.
+     *   RIGID           -> the net is one of the 8 (assertRigid, round 27);
+     *   clean desired   -> net == R(360 - display) EXACTLY for rot != 90
+     *                      classes; for the rot=90 family the r26 device
+     *                      calibration post-applies R90: R(450 - display);
+     *   mirror desired  -> net improper (a displayed mirror state), axis
+     *                      pinned by the anchor test on the device dump ST.
      */
     private fun assertMandateNet(
         net: FloatArray,
@@ -143,8 +162,8 @@ class StOrientationGoldenTest {
         display: Int,
         case: String,
     ) {
+        assertRigid(net, case)
         val label = d4Label(net)
-        assertTrue("$case: net not axis-aligned: $label", label != "OTHER")
         val improper = label.startsWith("MH") || label == "MV"
         assertEquals("$case: displayed-mirror state", desiredMirrorH, improper)
         if (!desiredMirrorH) {
@@ -244,11 +263,13 @@ class StOrientationGoldenTest {
         // r25 build (up at RIGHT), so the correct net is R90 pre-multiplied:
         // R180 . MH . R90classLin = MH_R90. Back: R180 . R90classLin = R90
         // (r25's canonical R0 read up-at-LEFT — 90 CW off).
+        assertRigid(frontNet, "front net (round-27 step 2)")
         assertEquals("MH_R90", d4Label(frontNet))
         assertEquals(StClass(90, StMirror.NONE), StOrientation.classify(devSt))
 
         // Back net through the chain MUST be R90 (the r26 device constant).
         val backNet = mmul(mrot(back.uvRotDeg.toInt()), mmul(if (back.mirrorX) MH else I, classLin(90, StMirror.NONE)))
+        assertRigid(backNet, "back net (round-27 step 2)")
         assertEquals("R90", d4Label(backNet))
 
         // Video (dump: class rot=90 mirror=h) — SAME function, no own formula:
@@ -258,7 +279,43 @@ class StOrientationGoldenTest {
         assertEquals(180f, video.uvRotDeg, 0.01f)
         assertTrue(video.mirrorX)
         val videoNet = mmul(mrot(video.uvRotDeg.toInt()), mmul(if (video.mirrorX) MH else I, classLin(90, StMirror.H)))
+        assertRigid(videoNet, "video net (round-27 step 2)")
         assertEquals("R90", d4Label(videoNet))
+    }
+
+    @Test
+    fun `production net decoder names all 8 rigid transforms (round-27 step 2)`() {
+        // Bridge test: the RUNTIME decoder (SourceUvMath.classifyNet — the one
+        // that produced the r26 dump line OTHER[u=(0,1) v=(1,0)]) must name
+        // ALL EIGHT D4 transforms. Production composition order: ST ->
+        // mirrorX -> rotDeg (CCW). Name mapping: harness MH_R90 (the
+        // transpose, u=(0,1) v=(1,0)) is DIAG_MIRROR; MH_R270 is
+        // ANTI_DIAG_MIRROR.
+        val identity = canonicalSt(0, StMirror.NONE)
+        val rows = listOf(
+            Triple(identity, false to 0f, "IDENTITY"),
+            Triple(identity, true to 0f, "MIRROR_H"),
+            Triple(canonicalSt(0, StMirror.V), false to 0f, "MIRROR_V"),
+            Triple(canonicalSt(180, StMirror.NONE), false to 0f, "ROT180"),
+            Triple(identity, false to 90f, "ROT90CCW"),
+            Triple(identity, false to 270f, "ROT90CW"),
+            Triple(identity, true to 270f, "DIAG_MIRROR"),
+            Triple(identity, true to 90f, "ANTI_DIAG_MIRROR"),
+        )
+        for ((st, mr, expected) in rows) {
+            assertEquals(expected, SourceUvMath.classifyNet(st, mr.second, mr.first))
+        }
+        // A genuinely non-rigid composition (shear) must be flagged, never
+        // named. Shear 0.6: ny=0.51 escapes the legacy 0.3 near-tolerance
+        // and det=0.86 escapes the rigid band (a 0.3 shear would still be
+        // NAMED as its nearest rigid — tolerance is legacy round-16).
+        val shear = floatArrayOf(
+            1f, 0.6f, 0f, 0f,
+            0f, 1f, 0f, 0f,
+            0f, 0f, 1f, 0f,
+            0f, 0f, 0f, 1f,
+        )
+        assertTrue(SourceUvMath.classifyNet(shear, 0f, false).startsWith("NOT_RIGID"))
     }
 
     @Test

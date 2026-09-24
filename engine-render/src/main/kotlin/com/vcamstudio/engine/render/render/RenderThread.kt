@@ -220,6 +220,14 @@ internal class RenderThread(
     // when the hash changes — recompute per ST change, never hardcoded.
     private val stClassCache = HashMap<String, Pair<String, Pair<Int, String>>>()
 
+    // Round-27 (owner "DIAGNOSE BEFORE FIXING"): a candidate class that
+    // differs from the accepted one must repeat on two consecutive frame
+    // events before it is promoted. Until then the previous compensation is
+    // KEPT and the transition logs ST_CLASS_FLIP (rate-limited).
+    private data class PendingStClass(val hash: String, val rot: Int, val mirrorTag: String, val seen: Int)
+    private val stPending = HashMap<String, PendingStClass>()
+    private val lastFlipLogMs = HashMap<String, Long>()
+
     private var choreographer: Choreographer? = null
     private var lastPresentClockMs = 0L
 
@@ -602,6 +610,7 @@ internal class RenderThread(
     fun closeSource(sourceId: String) {
         bitmapSources.remove(sourceId)?.release()
         stClassCache.remove(sourceId) // round-28: classification dies with the source
+        stPending.remove(sourceId); lastFlipLogMs.remove(sourceId) // round-27
         externalSources.remove(sourceId)?.let {
             it.release()
             postMain { listener?.onExternalSourceReleased(sourceId) }
@@ -614,6 +623,7 @@ internal class RenderThread(
         for (id in stale) {
             val src = externalSources.remove(id) ?: continue
             stClassCache.remove(id) // round-28: classification dies with the source
+            stPending.remove(id); lastFlipLogMs.remove(id) // round-27
             src.release()
             postMain { listener?.onExternalSourceReleased(id) }
         }
@@ -799,21 +809,75 @@ internal class RenderThread(
     }
 
     /**
-     * Round-28 (owner "ROUND 24 — ROTATION"), amended round-25: decompose
+     * Round-28 (owner "ROUND 24 — ROTATION"), amended rounds 25/27: decompose
      * the producer ST into its net orientation class and log `ST_CLASS
-     * id=<src> rot=<n> mirror=<none|h|v>` on EVERY ST change (st-hash gated,
-     * never hardcoded). Crop/scale STs (not pure axis-aligned orientations)
-     * log ST_CLASS_UNCLASSIFIED once per hash and are treated as IDENTITY —
-     * the callback still fires with rot=0/mirror=none so the layer keeps a
+     * id=<src> rot=<n> mirror=<none|h|v>` on every ACCEPTED ST change
+     * (st-hash gated, never hardcoded). Round-27 step 1 — the classifier is
+     * PINNED before any compensate() runs:
+     *
+     *   1. the ST is read TWICE and both reads are classified; a mismatch
+     *      logs ST_CLASS_FLIP (scope=in-read) and HOLDS (no callback — the
+     *      previous compensation stays applied);
+     *   2. a candidate class/hash that differs from the accepted one must
+     *      repeat on two consecutive frame events (stability window) before
+     *      promotion; the first sighting logs ST_CLASS_FLIP
+     *      (scope=cross-event) and holds. Alternating producers (two sources
+     *      fighting over one logical camera, or a HAL flipping transforms
+     *      per frame) therefore show as repeated FLIP lines while the layer
+     *      keeps its last good compensation instead of oscillating.
+     *
+     * Crop/scale STs (not pure axis-aligned orientations) log
+     * ST_CLASS_UNCLASSIFIED once per hash and are treated as IDENTITY — the
+     * callback still fires with rot=0/mirror=none so the layer keeps a
      * compensation (do NOT skip). Pure corner-probe on the render thread;
      * the app callback (main thread) derives the layer UV compensation from
      * the class — the single canonical rotation place.
      */
     private fun classifySourceOrientation(src: ExternalTextureSource) {
-        val hash = stHashOf(src.transformMatrix)
+        // (1) literal double-read: the matrix can only change inside
+        // updateTexImage (same thread), so an in-call mismatch means an
+        // unstable transform handed to us mid-flight — never compensate on it.
+        val firstRead = src.transformMatrix.copyOf()
+        val secondRead = src.transformMatrix.copyOf()
+        val clsA = StOrientation.classify(firstRead)
+        val clsB = StOrientation.classify(secondRead)
+        if (clsA != clsB) {
+            logFlipRateLimited(
+                src.sourceId, "in-read",
+                clsA?.label() ?: "unclassified",
+                clsB?.label() ?: "unclassified",
+            )
+            return // hold previous compensation
+        }
+        val hash = stHashOf(firstRead)
         val cached = stClassCache[src.sourceId]
-        if (cached != null && cached.first == hash) return
-        val cls = StOrientation.classify(src.transformMatrix)
+        if (cached != null && cached.first == hash) {
+            stPending.remove(src.sourceId)
+            return
+        }
+        // (2) candidate differs from accepted (or nothing accepted yet):
+        // require it to repeat on the next event before promoting.
+        val cls = clsA
+        val candidate = PendingStClass(
+            hash,
+            cls?.rotCwDeg ?: 0,
+            cls?.mirror?.tag ?: StMirror.NONE.tag,
+            1,
+        )
+        val pending = stPending[src.sourceId]
+        val updated = if (pending != null && pending.hash == hash) {
+            pending.copy(seen = pending.seen + 1)
+        } else {
+            candidate
+        }
+        stPending[src.sourceId] = updated
+        if (updated.seen < 2) {
+            val firstLabel = cached?.let { "rot=${it.second.first} mirror=${it.second.second}" } ?: "none"
+            val secondLabel = cls?.label() ?: "unclassified"
+            logFlipRateLimited(src.sourceId, "cross-event", firstLabel, secondLabel)
+            return // hold previous compensation until the candidate is stable
+        }
+        stPending.remove(src.sourceId)
         if (cls == null) {
             // Not a pure axis-aligned orientation (crop/scale/shear ST, e.g.
             // some video producers). Round-25 mandate: treat as identity and
@@ -826,6 +890,15 @@ internal class RenderThread(
         stClassCache[src.sourceId] = hash to (cls.rotCwDeg to cls.mirror.tag)
         noteEvent("ST_CLASS id=${src.sourceId} ${cls.label()}")
         postMain { listener?.onSourceOrientationClassified(src.sourceId, cls.rotCwDeg, cls.mirror.tag) }
+    }
+
+    /** ST_CLASS_FLIP is diagnostic gold — but never let it flood the ring. */
+    private fun logFlipRateLimited(sourceId: String, scope: String, first: String, second: String) {
+        val now = clock.nowMs()
+        val last = lastFlipLogMs[sourceId] ?: 0L
+        if (now - last < 1000L) return
+        lastFlipLogMs[sourceId] = now
+        noteEvent("ST_CLASS_FLIP id=$sourceId scope=$scope first=$first second=$second held=comp")
     }
 
     private fun allSources(): Collection<TextureSource> {
