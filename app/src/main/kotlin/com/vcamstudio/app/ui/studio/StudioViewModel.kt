@@ -10,6 +10,7 @@ import com.vcamstudio.app.settings.StudioSettings
 import com.vcamstudio.core.dispatch.DispatcherProvider
 import com.vcamstudio.engine.audio.AudioBusId
 import com.vcamstudio.engine.audio.AudioMixer
+import com.vcamstudio.engine.audio.MasterMonitor
 import com.vcamstudio.engine.audio.MicLevelMonitor
 import com.vcamstudio.engine.capture.CameraSource
 import com.vcamstudio.engine.capture.LensFacing
@@ -120,7 +121,6 @@ class StudioViewModel @Inject constructor(
     private val sceneResolution = MutableStateFlow(SceneResolution.P_720)
     private val lutNames = MutableStateFlow<List<String>>(emptyList())
     private val lastRecordingPath = MutableStateFlow<String?>(null)
-    private var audioPumpJob: kotlinx.coroutines.Job? = null
 
     private val videoControllers = LinkedHashMap<String, VideoLayerController>()
     private val videoParams = LinkedHashMap<String, VideoParams>()
@@ -149,6 +149,15 @@ class StudioViewModel @Inject constructor(
     private var loggedDisplayRotDeg: Int = -1
 
     private var lifecycleOwner: LifecycleOwner? = null
+
+    /**
+     * Round-30: the audible master monitor + the ONE mix pump. The mixer is
+     * single-consumer: a single loop reads mixed frames and feeds BOTH the
+     * monitor (speaker) and — while recording — the encoder. Video-layer
+     * audio therefore obeys the MEDIA bus mute end to end.
+     */
+    private val masterMonitor = MasterMonitor()
+    private var audioOutJob: kotlinx.coroutines.Job? = null
 
     val uiState: StateFlow<UiState> = combine(
         combine(scenes, activeSceneId, selectedLayerId, sheet, rawMode) { s, a, sel, sh, raw ->
@@ -214,7 +223,26 @@ class StudioViewModel @Inject constructor(
         }
 
         // Mic PCM (48 kHz mono) feeds the mixer MIC bus for recording.
+        Timber.i("AUDIO_ROUTE source=mic bus=mic")
         mic.pcmSink = { pcm, _ -> mixer.offerPcm(AudioBusId.MIC, pcm, 1) }
+
+        // Round-30: RECORDER_STATE transitions surface in the app log/dump.
+        recorder.eventSink = { msg -> Timber.i("%s", msg) }
+
+        // Round-30: the ONE mix pump — always on. Feeds the master monitor
+        // (speaker; write() blocks -> real-time pacing) and the recorder
+        // while recording. Recording no longer owns a pump.
+        audioOutJob = viewModelScope.launch(dispatchers.io) {
+            val out = ShortArray(AudioMixer.FRAME_FRAMES * 2)
+            while (isActive) {
+                mixer.read(out)
+                val monitored = masterMonitor.write(out)
+                if (recorder.state.value is RecordingController.State.Recording) {
+                    recorder.offerAudio(out.copyOf())
+                }
+                if (!monitored) kotlinx.coroutines.delay(15)
+            }
+        }
 
         viewModelScope.launch {
             settings.sceneResolution.collect { sceneResolution.value = it }
@@ -616,7 +644,7 @@ class StudioViewModel @Inject constructor(
             file, scene.width, scene.height,
             onSurfaceReady = { surface ->
                 engine.attachRecordingOutput(surface, scene.width, scene.height)
-                startAudioPump()
+                Timber.i("RECORDER_STATE SURFACE_ATTACHED %sx%s", scene.width, scene.height)
             },
             onFailed = { msg -> toast.value = "Recorder: $msg" },
         )
@@ -624,7 +652,6 @@ class StudioViewModel @Inject constructor(
     }
 
     private fun stopRecording() {
-        stopAudioPump()
         recorder.stop { file ->
             engine.detachRecordingOutput()
             if (file != null && file.length() > 0) {
@@ -636,21 +663,8 @@ class StudioViewModel @Inject constructor(
         }
     }
 
-    /** 20 ms pump: mixer -> recorder AAC feed (runs while recording). */
-    private fun startAudioPump() {
-        audioPumpJob = viewModelScope.launch(dispatchers.io) {
-            val out = ShortArray(AudioMixer.FRAME_FRAMES * 2)
-            while (isActive && recorder.state.value is RecordingController.State.Recording) {
-                mixer.read(out)
-                recorder.offerAudio(out.copyOf())
-            }
-        }
-    }
-
-    private fun stopAudioPump() {
-        audioPumpJob?.cancel()
-        audioPumpJob = null
-    }
+    // (Round-30: the record-time pump was REPLACED by the always-on master
+    // mix pump in init — one consumer for the mixer, feeding monitor + rec.)
 
     // ------------------------------------------------------------------ mixer
 
@@ -837,9 +851,30 @@ class StudioViewModel @Inject constructor(
         if (videoLayer != null && params != null) {
             releaseVideoController(sourceId)
             val context = appContext ?: return
+            // Round-30: video audio routes through the MEDIA bus (one graph:
+            // every source feeds exactly one bus; buses feed the master
+            // limiter). The tap feeds the bus with the LAYER's own
+            // volume/mute applied; the player's direct device output is
+            // silenced (load pins player.volume=0 when tapped — volume in
+            // media3 applies at the AudioTrack, AFTER the tee, so the tap
+            // still receives full-scale PCM). Mutations of the layer fader
+            // re-read videoParams here — no stale capture.
+            Timber.i("AUDIO_ROUTE source=video sourceId=%s bus=media", sourceId)
             val controller = VideoLayerController(
                 context, sourceId,
-                MixerAudioTap { pcm, ch, _ -> mixer.offerPcm(AudioBusId.MEDIA, pcm, ch) },
+                MixerAudioTap { pcm, ch, _ ->
+                    val p = videoParams[sourceId]
+                    val vol = if (p?.muted == true) 0f else (p?.volume ?: 1f).coerceIn(0f, 1f)
+                    if (vol >= 0.999f) {
+                        mixer.offerPcm(AudioBusId.MEDIA, pcm, ch)
+                    } else if (vol > 0.001f) {
+                        val scaled = ShortArray(pcm.size)
+                        for (i in pcm.indices) {
+                            scaled[i] = (pcm[i] * vol).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
+                        }
+                        mixer.offerPcm(AudioBusId.MEDIA, scaled, ch)
+                    }
+                },
             )
             controller.onError = { msg -> toast.value = "Video playback error: $msg" }
             controller.onVideoSizeChanged = { w, h, _ ->
@@ -989,9 +1024,10 @@ class StudioViewModel @Inject constructor(
     private fun newId(prefix: String) = "$prefix-${UUID.randomUUID().toString().take(8)}"
 
     override fun onCleared() {
+        audioOutJob?.cancel()
+        masterMonitor.release()
         engine.onExternalSourceReady = null
         engine.onExternalSourceReleased = null
-        audioPumpJob?.cancel()
         if (recorder.isBusy) recorder.stop()
         videoControllers.values.forEach { it.release() }
         videoControllers.clear()

@@ -29,7 +29,7 @@ import androidx.media3.ui.PlayerView
 class VideoLayerController(
     context: Context,
     val sourceId: String,
-    audioTap: MixerAudioTap? = null,
+    private val audioTap: MixerAudioTap? = null,
 ) {
 
     /** Effective display size (pixel-width-ratio applied), reported to the UI. */
@@ -113,7 +113,13 @@ class VideoLayerController(
         }
         player.setMediaItem(item.build())
         player.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
-        player.volume = if (muted) 0f else volume.coerceIn(0f, 1f)
+        // Round-30: with a mixer tap installed, ALL audio routes through the
+        // MEDIA bus (the master monitor is the audible path). The player's
+        // own device output stays pinned silent — media3 applies player
+        // volume at the AudioTrack, AFTER the TeeAudioProcessor, so the tap
+        // still receives full-scale PCM. Per-layer volume/mute is applied on
+        // the bus feed app-side.
+        player.volume = if (audioTap != null) 0f else if (muted) 0f else volume.coerceIn(0f, 1f)
         player.playbackParameters = player.playbackParameters.withSpeed(speed.coerceIn(0.25f, 4f))
         player.prepare()
         player.playWhenReady = true
@@ -137,10 +143,12 @@ class VideoLayerController(
     }
 
     fun setMuted(muted: Boolean, lastVolume: Float = 1f) {
+        if (audioTap != null) return // bus-routed: app applies layer volume on the MEDIA feed
         player.volume = if (muted) 0f else lastVolume.coerceIn(0f, 1f)
     }
 
     fun setVolume(volume: Float, muted: Boolean) {
+        if (audioTap != null) return // bus-routed: app applies layer volume on the MEDIA feed
         player.volume = if (muted) 0f else volume.coerceIn(0f, 1f)
     }
 

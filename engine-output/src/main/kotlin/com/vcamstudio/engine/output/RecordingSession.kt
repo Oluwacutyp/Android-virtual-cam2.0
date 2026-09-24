@@ -16,11 +16,24 @@ import java.util.concurrent.TimeUnit
  * One MP4 recording: H.264 with surface input (fed by the render engine) +
  * AAC-LC fed by the mixer, muxed via [MediaMuxer].
  *
- * Lifecycle: construct (encoders start) → attach [inputSurface] to the engine
- * as a recording output → [offerAudioPcm] from the mixer pump → [stop] drains
- * both encoders and finalizes the file. Samples produced before the muxer
- * starts (waiting on both track formats) are dropped — sub-second head loss,
- * never a corrupt file.
+ * Round-30 (owner "REC FAILS ON INPUT-SURFACE ORDERING") — the MediaCodec
+ * lifecycle order is the CONTRACT here. The r29 build called start() inside
+ * the constructor and only then createInputSurface(), which throws
+ * "setInputSurface() is valid only at Configured state; currently at
+ * Running" (framework state check shared by createInputSurface). The fixed
+ * order, exactly as mandated:
+ *
+ *   1. construct: configure(video) -> createInputSurface() -> configure(audio)
+ *      [codec state: CONFIGURED; nothing started]
+ *   2. controller hands [inputSurface] to the render engine (EGL window)
+ *   3. [start()]: codec.start() for both encoders + drain threads
+ *   4. frames arrive; encoder produces output
+ *   5. [stop()]: signalEndOfInputStream() -> drain -> stop -> release
+ *
+ * Every transition logs RECORDER_STATE (CONFIGURED / STARTED / STOPPED) via
+ * [stateLog] + logcat. Samples produced before the muxer starts (waiting on
+ * both track formats) are dropped — sub-second head loss, never a corrupt
+ * file.
  */
 class RecordingSession(
     val file: File,
@@ -30,6 +43,7 @@ class RecordingSession(
     private val videoBitrateBps: Int,
     private val audioSampleRate: Int,
     private val audioBitrateBps: Int,
+    private val stateLog: ((String) -> Unit)? = null,
 ) {
     private val muxLock = Any()
     private val muxer = MediaMuxer(file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
@@ -51,8 +65,29 @@ class RecordingSession(
 
     private val audioPump = LinkedBlockingQueue<ShortArray>()
 
-    private val videoThread = Thread({ drainVideo() }, "vcam-rec-video").apply { start() }
-    private val audioThread = Thread({ drainAudio() }, "vcam-rec-audio").apply { start() }
+    // Round-30: drain threads exist only after codec.start() — dequeue on an
+    // un-started codec throws.
+    private var videoThread: Thread? = null
+    private var audioThread: Thread? = null
+
+    init {
+        stateLog?.invoke("RECORDER_STATE CONFIGURED file=${file.name} ${width}x${height}@${fps}")
+        Log.i(TAG, "RECORDER_STATE CONFIGURED")
+    }
+
+    /**
+     * Step 3 of the mandated order — call AFTER the input surface is attached
+     * to the renderer. Starts both encoders and the drain threads.
+     */
+    fun start() {
+        check(!stopRequested) { "session already stopped" }
+        videoCodec.start()
+        audioCodec.start()
+        videoThread = Thread({ drainVideo() }, "vcam-rec-video").apply { start() }
+        audioThread = Thread({ drainAudio() }, "vcam-rec-audio").apply { start() }
+        stateLog?.invoke("RECORDER_STATE STARTED")
+        Log.i(TAG, "RECORDER_STATE STARTED")
+    }
 
     private fun createVideoCodec(): MediaCodec {
         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
@@ -64,9 +99,11 @@ class RecordingSession(
             setInteger(MediaFormat.KEY_FRAME_RATE, fps)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
         }
+        // Round-30: configure ONLY. createInputSurface() is legal exclusively
+        // in the Configured state; starting here (the r29 bug) made the
+        // surface call throw and recording never began.
         return MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC).apply {
             configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            start()
         }
     }
 
@@ -78,7 +115,6 @@ class RecordingSession(
         }
         return MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC).apply {
             configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            start()
         }
     }
 
@@ -206,10 +242,12 @@ class RecordingSession(
     fun stop(): File {
         stopRequested = true
         runCatching { videoCodec.signalEndOfInputStream() }
-        videoThread.join(3_000)
-        audioThread.join(3_000)
-        if (videoThread.isAlive) videoThread.interrupt()
-        if (audioThread.isAlive) audioThread.interrupt()
+        val vt = videoThread
+        val at = audioThread
+        vt?.join(3_000)
+        at?.join(3_000)
+        vt?.takeIf { it.isAlive }?.interrupt()
+        at?.takeIf { it.isAlive }?.interrupt()
         runCatching { videoCodec.stop() }
         runCatching { videoCodec.release() }
         runCatching { audioCodec.stop() }
@@ -221,7 +259,8 @@ class RecordingSession(
             }
             runCatching { muxer.release() }
         }
-        Log.i(TAG, "recording finalized: ${file.absolutePath} (${file.length()} bytes)")
+        stateLog?.invoke("RECORDER_STATE STOPPED file=${file.name} bytes=${file.length()}")
+        Log.i(TAG, "RECORDER_STATE STOPPED recording finalized: ${file.absolutePath} (${file.length()} bytes)")
         return file
     }
 

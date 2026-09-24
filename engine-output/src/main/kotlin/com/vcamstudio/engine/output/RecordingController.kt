@@ -33,6 +33,9 @@ class RecordingController {
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "vcam-rec-ctl") }
     private val main = Handler(Looper.getMainLooper())
 
+    /** Round-30: app-side sink for RECORDER_STATE lines (Timber/dump). */
+    var eventSink: ((String) -> Unit)? = null
+
     @Volatile
     private var session: RecordingSession? = null
 
@@ -56,15 +59,31 @@ class RecordingController {
         _state.value = State.Starting
         executor.execute {
             try {
+                // Round-30 mandated order: construct (configure + input
+                // surface, state CONFIGURED) -> attach surface to the
+                // renderer (onSurfaceReady) -> session.start() (STARTED).
+                // createInputSurface() after codec.start() (the r29 bug)
+                // threw "valid only at Configured state".
                 val s = RecordingSession(
                     file, width, height, fps,
                     VIDEO_BITRATE_BPS, AUDIO_SAMPLE_RATE, AUDIO_BITRATE_BPS,
-                )
+                ) { msg -> main.post { eventSink?.invoke(msg) } }
                 session = s
                 lastRecording = file
                 main.post {
-                    _state.value = State.Recording(file, System.currentTimeMillis())
                     onSurfaceReady(s.inputSurface)
+                    try {
+                        s.start()
+                        _state.value = State.Recording(file, System.currentTimeMillis())
+                    } catch (t: Throwable) {
+                        session = null
+                        _state.value = State.Idle
+                        Log.e(TAG, "recorder start failed (codec.start)", t)
+                        executor.execute {
+                            runCatching { s.stop() }
+                        }
+                        onFailed(t.message ?: "recorder start failed")
+                    }
                 }
             } catch (t: Throwable) {
                 session = null
@@ -93,6 +112,7 @@ class RecordingController {
             session = null
             main.post {
                 _state.value = State.Idle
+                eventSink?.invoke("RECORDER_STATE STOPPED (controller)")
                 onStopped(file)
             }
         }
