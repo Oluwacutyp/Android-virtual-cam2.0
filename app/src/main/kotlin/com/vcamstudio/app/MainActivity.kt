@@ -11,14 +11,28 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.LifecycleOwner
 import com.vcamstudio.app.ui.onboarding.PermissionsGate
 import com.vcamstudio.app.ui.studio.StudioScreen
+import com.vcamstudio.app.ui.studio.StudioViewModel
 import com.vcamstudio.app.ui.theme.StudioTheme
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
     /** Given to the ViewModel so CameraSource can bind to this lifecycle. */
     private var lifecycleBridge: LifecycleOwner? = null
+
+    /** Round-25: display-rotation changes re-run the ST-class compensation. */
+    @Inject
+    lateinit var studioViewModel: StudioViewModel
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // Manifest handles orientation configChanges in-place (portrait
+        // locked, no recreate) — the ONLY hook where Display.getRotation()
+        // can change under this app. Re-run compensation per round-25.
+        studioViewModel.onDisplayRotationMaybeChanged()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

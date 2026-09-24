@@ -15,18 +15,16 @@ package com.vcamstudio.engine.render.geometry
  * through the ST and match the resulting (TL, du, dv) signature. NEVER a
  * hardcoded sensor/table guess — the ST is read fresh every time.
  *
- * [compensate] is the pure round-28 mandate formula: given the ST class and
- * the desired net orientation (back -> ROT_0 identity, front selfie ->
- * ROT_0 + horizontal mirror), derive the layer UV rotation and mirror:
+ * [compensate] is the pure mandate formula (round-25 sign, device
+ * calibrated): given the ST class, the desired mirror (front selfie only)
+ * and the display rotation, derive the layer UV rotation and mirror:
  *
- *     base    = front ? (360 - rotCw) % 360 : rotCw   (rot cancels in the
- *                                                      opposite sense per facing)
- *     uvRot   = (base + (mirror == V ? 180 : 0) + 360) % 360
- *     mirrorX = (mirror != NONE) XOR front            (desired H only on front)
+ *     mx    = (mirror != NONE) XOR desiredMirrorH
+ *     uvRot = mx ? (rotCw - display) : (display - rotCw)   (mod 360)
+ *     uvRot = (uvRot + (mirror == V ? 180 : 0)) mod 360
  *
- * Verified by StOrientationGoldenTest: 8 classes x {front, back} x
- * sensor fold {0, 90, 180, 270} = 64 cases, every case nets to the desired
- * orientation with exactly ONE (rot, mirrorX) compensation.
+ * Verified by StOrientationGoldenTest: 8 classes x {mirror, clean} x
+ * sensor fold {0, 90, 180, 270} x display {0, 90, 180, 270} = 256 cases.
  */
 enum class StMirror(val tag: String) {
     NONE("none"),
@@ -70,23 +68,32 @@ object StOrientation {
     }
 
     /**
-     * Round-28 mandate compensation: cancel the ST's rot/mirror and land the
-     * desired net orientation. Back camera -> identity (upright, not
-     * mirrored); front selfie -> horizontal mirror (upright, mirrored).
+     * Round-25 mandate (owner "ROUND 25 — ROTATION. SIGN FLIP + VIDEO
+     * ROUTING") — supersedes the r28 sign. The rot cancel is the mandate's
+     * literal swapped order, ONE branch for ALL sources (cameras AND video):
      *
-     * Machine-verified over all 8 classes x 2 facings (StOrientationGoldenTest,
-     * unique-hit proof): the sampling rot cancels the class rot in the OPPOSITE
-     * sense per facing (back: sampling CCW-rot value == class CW rot; front:
-     * mirrored target conjugates the cancel), and a V-mirrored ST class needs
-     * an extra 180 (V == H + 180 in this decomposition). mirrorX is the XOR of
-     * the desired (front-only H) and the ST's mirroredness.
+     *     mx    = (st mirror != NONE) XOR desiredMirrorH
+     *     uvRot = (rotCw - displayDeg + (mirror == V ? 180 : 0) + 360) % 360
+     *
+     * Device-calibrated (round-25 report, dump ST class rot=90/none):
+     * front -> uvRot=90/mirrorX=true (was 270/true in r28 — the whole flip);
+     * back and video net to CANONICAL IDENTITY (composed net = R(-display):
+     * upright in any display frame, the strongest anchor there is). A
+     * V-mirrored ST class needs the extra 180 (V == H + 180 in this
+     * decomposition); a V class at display 0 with clean desired nets
+     * identity only with that shift (machine-checked over 256 cases).
+     *
+     * desiredMirrorH: front selfie = true (upright + horizontally mirrored);
+     * back camera and video = false (upright, not mirrored). displayRotDeg =
+     * Display.getRotation() * 90, re-read on every configuration change
+     * (mandate 2) and folded into desired_net.rot; mirror unchanged by it.
      */
-    fun compensate(cls: StClass, frontFacing: Boolean): StCompensation {
-        val base = if (frontFacing) (360 - cls.rotCwDeg) % 360 else cls.rotCwDeg
+    fun compensate(cls: StClass, desiredMirrorH: Boolean, displayRotDeg: Int): StCompensation {
+        val mx = (cls.mirror != StMirror.NONE) != desiredMirrorH
+        val display = ((displayRotDeg % 360) + 360) % 360
         val vShift = if (cls.mirror == StMirror.V) 180 else 0
-        val uvRot = ((base + vShift) % 360 + 360) % 360
-        val mirrorX = (cls.mirror != StMirror.NONE) != frontFacing // XOR of mirrors
-        return StCompensation(uvRot.toFloat(), mirrorX)
+        val uvRot = ((cls.rotCwDeg - display + vShift) % 360 + 360) % 360
+        return StCompensation(uvRot.toFloat(), mx)
     }
 
     // ------------------------------------------------------------------ impl

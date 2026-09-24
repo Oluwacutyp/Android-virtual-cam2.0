@@ -1248,3 +1248,51 @@ harness.
    green; no GL_TRIANGLE_STRIP anywhere).
 Out of scope honored: TRIANGLES path, skip path/blit state, r25-r27
 changes — untouched.
+
+## Increment 29 — rotation: mandated sign flip + display-rotation fold + video routed through the same compensate()
+
+Owner round-25 report on the r28 build: BOTH cameras ~90 deg off (subject up
+pointing LEFT), video 180 off, phone rotation changes nothing. Dump facts:
+ST_CLASS cam rot=90/none, video rot=90/h, DRAW_STATS L0 uvRot=270/mx=true
+(the r28 values), NET=MIRROR_H. Mandate: the compensation sign is flipped;
+display rotation was never folded in; video ran its own metadata-UV math.
+
+1. SIGN FLIP (mandate 1, literal): StOrientation.compensate now computes
+   uvRot = (st.rotCw - displayRot + (mirror==V ? 180 : 0) + 360) % 360 — the
+   mandate's swapped order, ONE branch for all sources. mirrorX unchanged:
+   (st mirror != NONE) XOR desiredMirrorH. Device anchors (class rot=90/none,
+   display 0): front -> uvRot=90/mirrorX=true (r28 ran 270/true — the whole
+   flip); back -> uvRot=90/mirrorX=false whose composed net is CANONICAL
+   IDENTITY (upright in any frame convention; if the back sensor folds
+   rot=270 the same formula yields the mandated 270 with the same identity
+   net). Video class rot=90/h -> uvRot=90/mirrorX=true -> identity net
+   (upright, unmirrored). Matrix-verified over all 8 classes x 2 desired x
+   4 sensor folds x 4 displays: clean cases net EXACTLY R(360-display);
+   mirror cases net improper iff desired-mirrored (frame-free law).
+2. DISPLAY ROTATION (mandate 2): VM reads Display.getRotation() * 90 (the
+   API returns constants 0..3, not degrees) on every ST_CLASS application,
+   logs DISPLAY_ROT=<deg> on every change and inside every ORIENT_APPLY
+   line (new contract: ORIENT_APPLY id=.. DISPLAY_ROT=<deg> st_class=..
+   -> uvRot=.. mirrorX=.. changed=..). Manifest is portrait-locked with
+   in-place configChanges, so MainActivity.onConfigurationChanged is the
+   only rotation hook — wired to VM.onDisplayRotationMaybeChanged(), which
+   re-runs compensation from the LAST classified ST classes (no waiting for
+   new ST events); ON_START also re-reads (activity recreation path).
+   desired_net.mirror unchanged by display rotation, per mandate.
+3. VIDEO ROUTING (mandate 3): the separate metadata-UV math in
+   onVideoSizeChanged is DELETED (uvRot=(360-rot)%360 gone); video layers
+   now receive compensation through the SAME ST_CLASS -> compensate() path
+   as cameras (matched by Video.sourceId, desiredMirror=false). Crop/scale
+   STs (ST_CLASS_UNCLASSIFIED) are treated as IDENTITY: the callback now
+   fires rot=0/mirror=none (logged treated=identity) instead of skipping.
+4. GOLDEN HARNESS: StOrientationGoldenTest extended 64 -> 256 cases (8 ST
+   classes x {mirror, clean} x sensor fold {0,90,180,270} x display
+   {0,90,180,270}): each case folds a canonical ST, classifies with the REAL
+   classifier, compensates with the REAL function, composes the exact engine
+   chain net (Rot . Mirror . ST) as matrices, and asserts the frame-free
+   laws: displayed-mirror iff desired-mirrored; clean nets EXACTLY
+   R(360-display). Plus round-25 device anchors (front 90/true, back/video
+   identity nets) and an r28-regression guard (270/true must not reappear
+   at display 0 for class rot90/none).
+Out of scope honored: TRIANGLES path, skip path/blit state, r25-r28 engine
+present/blit behavior — untouched. PROGRESS inc 29.

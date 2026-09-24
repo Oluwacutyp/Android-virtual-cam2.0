@@ -798,12 +798,15 @@ internal class RenderThread(
     }
 
     /**
-     * Round-28 (owner "ROUND 24 — ROTATION"): decompose the producer ST into
-     * its net orientation class and log `ST_CLASS id=<src> rot=<n>
-     * mirror=<none|h|v>` on EVERY ST change (st-hash gated, never hardcoded).
-     * Pure corner-probe on the render thread; the app callback (main thread)
-     * derives the layer UV compensation from the class — the single
-     * canonical rotation place.
+     * Round-28 (owner "ROUND 24 — ROTATION"), amended round-25: decompose
+     * the producer ST into its net orientation class and log `ST_CLASS
+     * id=<src> rot=<n> mirror=<none|h|v>` on EVERY ST change (st-hash gated,
+     * never hardcoded). Crop/scale STs (not pure axis-aligned orientations)
+     * log ST_CLASS_UNCLASSIFIED once per hash and are treated as IDENTITY —
+     * the callback still fires with rot=0/mirror=none so the layer keeps a
+     * compensation (do NOT skip). Pure corner-probe on the render thread;
+     * the app callback (main thread) derives the layer UV compensation from
+     * the class — the single canonical rotation place.
      */
     private fun classifySourceOrientation(src: ExternalTextureSource) {
         val hash = stHashOf(src.transformMatrix)
@@ -812,9 +815,11 @@ internal class RenderThread(
         val cls = StOrientation.classify(src.transformMatrix)
         if (cls == null) {
             // Not a pure axis-aligned orientation (crop/scale/shear ST, e.g.
-            // some video producers). Log once per hash, never spam per frame.
-            stClassCache[src.sourceId] = hash to (-1 to "other")
-            noteEvent("ST_CLASS_UNCLASSIFIED id=${src.sourceId} st_hash=$hash")
+            // some video producers). Round-25 mandate: treat as identity and
+            // log it — never skip.
+            stClassCache[src.sourceId] = hash to (0 to StMirror.NONE.tag)
+            noteEvent("ST_CLASS_UNCLASSIFIED id=${src.sourceId} st_hash=$hash treated=identity")
+            postMain { listener?.onSourceOrientationClassified(src.sourceId, 0, StMirror.NONE.tag) }
             return
         }
         stClassCache[src.sourceId] = hash to (cls.rotCwDeg to cls.mirror.tag)

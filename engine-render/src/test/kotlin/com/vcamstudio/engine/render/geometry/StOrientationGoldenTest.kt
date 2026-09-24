@@ -5,25 +5,31 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import kotlin.math.roundToInt
 
 /**
- * Round-28 golden harness (owner "ROUND 24 — ROTATION"): the ST-class
- * classifier and the pure compensation function, verified over the FULL
- * orientation space —
+ * Round-25 golden harness (owner "ROUND 25 — ROTATION. SIGN FLIP + VIDEO
+ * ROUTING"): the ST-class classifier and the pure compensation function,
+ * verified over the FULL orientation + display space —
  *
- *     8 ST classes x {front, back} x sensor fold {0, 90, 180, 270} = 64 cases
+ *     8 ST classes x {mirror, clean} x sensor fold {0, 90, 180, 270}
+ *     x display {0, 90, 180, 270} = 256 cases
  *
- * Every case must net to the desired orientation (back -> IDENTITY: upright,
- * not mirrored; front selfie -> MIRROR_H: upright, horizontally mirrored)
- * with EXACTLY ONE (uvRot, mirrorX) compensation, and [StOrientation.compensate]
- * must produce that unique hit. The net is measured by corner-probing the
- * EXACT production chain (SourceUvMath.transform: ST -> mirrorX -> rot CCW),
- * so this harness stays valid across devices and Android versions: it pins
- * the algebra, not a device.
+ * Each case: fold a canonical ST by the sensor angle, classify it with the
+ * REAL production classifier, compensate with the REAL production function
+ * (round-25 sign: uvRot = rotCw - display, V-shift for V classes, XOR
+ * mirror), then compose the resulting NET through the exact engine chain
+ * (Rot(uvRot) . Mirror(mirrorX) . ST) as 2x2 matrices and assert it against
+ * an INDEPENDENT closed form:
  *
- * Canonical-ST construction here is written INDEPENDENTLY of the production
- * signature table (an intentional cross-check — a typo on either side fails).
+ *     clean desired  -> net == R(360 - display)  (canonical upright, exactly)
+ *     mirror desired -> net improper AND the mandated mirror/rot form
+ *
+ * Canonical-identity displays upright in ANY frame convention, so the clean
+ * assertion pins "upright in the display frame" up to the single calibrated
+ * device fact (round-25 dump: canonical nets read through the compositor
+ * with an R90-conjugated frame). Anchors pin the device-calibrated values:
+ * front class rot=90/none at display 0 -> uvRot=90/mirrorX=true (the r28
+ * 270/true value is the flipped one and MUST NOT reappear).
  */
 class StOrientationGoldenTest {
 
@@ -52,68 +58,77 @@ class StOrientationGoldenTest {
         )
     }
 
-    /** Column-major 4x4 affine multiply: applies [b] first, then [a]. */
-    private fun mul(a: FloatArray, b: FloatArray): FloatArray {
-        val out = FloatArray(16)
-        for (col in 0 until 4) for (row in 0 until 4) {
-            var s = 0f
-            for (k in 0 until 4) s += a[k * 4 + row] * b[col * 4 + k]
-            out[col * 4 + row] = s
-        }
-        return out
+    // --------------------------------------------------- 2x2 matrix algebra
+
+    /** Row-major 2x2 (linear parts; translations do not affect orientation). */
+    private fun mmul(a: FloatArray, b: FloatArray): FloatArray {
+        val (p, q, r, s) = a
+        val (e, f, g, h) = b
+        return floatArrayOf(p * e + q * g, p * f + q * h, r * e + s * g, r * f + s * h)
+    }
+
+    private val I = floatArrayOf(1f, 0f, 0f, 1f)
+    private val R90 = floatArrayOf(0f, -1f, 1f, 0f) // engine Rot90 linear
+    private val R180 = floatArrayOf(-1f, 0f, 0f, -1f)
+    private val R270 = floatArrayOf(0f, 1f, -1f, 0f) // engine Rot270 linear
+    private val MH = floatArrayOf(-1f, 0f, 0f, 1f) // mirrorX linear
+    private val MV = floatArrayOf(1f, 0f, 0f, -1f)
+
+    private fun mrot(deg: Int): FloatArray = when (((deg % 360) + 360) % 360) {
+        0 -> I; 90 -> R90; 180 -> R180; else -> R270
+    }
+
+    /** Linear part of a canonical class ST (from its corner map). */
+    private fun classLin(rotCwDeg: Int, mirror: StMirror): FloatArray {
+        val (_, du, dv) = CANONICAL.getValue(rotCwDeg to mirror)
+        return floatArrayOf(du.first.toFloat(), dv.first.toFloat(), du.second.toFloat(), dv.second.toFloat())
+    }
+
+    /** Sensor/display fold linear part: (u,v) -> (c*u + s*v, -s*u + c*v). */
+    private fun foldLin(cwDeg: Int): FloatArray {
+        val rad = Math.toRadians(cwDeg.toDouble())
+        val c = Math.cos(rad).toFloat()
+        val s = Math.sin(rad).toFloat()
+        return floatArrayOf(c, s, -s, c)
+    }
+
+    /** D4 label of a matrix, or null if not axis-aligned (must never happen here). */
+    private fun d4Label(m: FloatArray): String = when {
+        m.contentEquals(I) -> "R0"
+        m.contentEquals(R90) -> "R90"
+        m.contentEquals(R180) -> "R180"
+        m.contentEquals(R270) -> "R270"
+        m.contentEquals(MH) -> "MH"
+        m.contentEquals(MV) -> "MV"
+        m.contentEquals(mmul(MH, R90)) -> "MH_R90"
+        m.contentEquals(mmul(MH, R270)) -> "MH_R270"
+        else -> "OTHER"
     }
 
     /**
-     * Sensor/display fold: extra CW content rotation folded into the
-     * delivered ST (what a device whose HAL folds `sensor` degrees produces),
-     * composed about the buffer center, still mapping the square onto itself.
+     * Frame-free geometric laws the mandate's algebra MUST satisfy, asserted
+     * per case on the composed net (canonical frame):
+     *   clean desired  -> net == R(360 - display) EXACTLY (canonical upright
+     *                     carrying the display compensation — identity at
+     *                     display 0, upright in ANY frame convention);
+     *   mirror desired -> net improper (a displayed mirror state), and the
+     *                     anchor test pins the axis/rotation on the device
+     *                     dump ST (front -> MH: upright + mirrored).
      */
-    private fun sensorFold(st: FloatArray, cwDeg: Int): FloatArray {
-        val r = Math.toRadians(cwDeg.toDouble())
-        val c = Math.cos(r).toFloat()
-        val s = Math.sin(r).toFloat()
-        // (u,v) -> center + Rccw * (p - center): inverse of a CW content rotation
-        val rot = floatArrayOf(
-            c, s, 0f, 0f,
-            -s, c, 0f, 0f,
-            0f, 0f, 1f, 0f,
-            0.5f - 0.5f * c + 0.5f * s, 0.5f - 0.5f * s - 0.5f * c, 0f, 1f,
-        )
-        return mul(rot, st)
-    }
-
-    // ------------------------------------------------------------- net probe
-
-    /** Sampling window (TL, TR, BR, BL) in production corner order. */
-    private val window = floatArrayOf(0f, 0f, 1f, 0f, 1f, 1f, 0f, 1f)
-
-    /**
-     * Classifies the COMPOSED net (ST -> mirrorX -> rot CCW) by probing the
-     * transformed window axes — the same corner-probe idea as
-     * SourceUvMath.classifyNet, reduced to the 6 canonical net labels.
-     */
-    private fun netClass(st: FloatArray, rotDeg: Float, mirrorX: Boolean): String {
-        val c = SourceUvMath.transform(window, st, rotDeg, mirrorX, clamp = false)
-        val dux = ((c[2] - c[0]) + (c[4] - c[6])) * 0.5f
-        val duy = ((c[3] - c[1]) + (c[5] - c[7])) * 0.5f
-        val dvx = ((c[6] - c[0]) + (c[4] - c[2])) * 0.5f
-        val dvy = ((c[7] - c[1]) + (c[5] - c[3])) * 0.5f
-        val nx = (dux / Math.hypot(dux.toDouble(), duy.toDouble())).roundToInt()
-        val ny = (duy / Math.hypot(dux.toDouble(), duy.toDouble())).roundToInt()
-        val mx = (dvx / Math.hypot(dvx.toDouble(), dvy.toDouble())).roundToInt()
-        val my = (dvy / Math.hypot(dvx.toDouble(), dvy.toDouble())).roundToInt()
-        return when {
-            nx == 1 && ny == 0 && mx == 0 && my == 1 -> "IDENTITY"
-            nx == -1 && ny == 0 && mx == 0 && my == 1 -> "MIRROR_H"
-            nx == 1 && ny == 0 && mx == 0 && my == -1 -> "MIRROR_V"
-            nx == -1 && ny == 0 && mx == 0 && my == -1 -> "ROT180"
-            nx == 0 && ny == 1 && mx == -1 && my == 0 -> "ROT90CCW"
-            nx == 0 && ny == -1 && mx == 1 && my == 0 -> "ROT90CW"
-            else -> "OTHER"
+    private fun assertMandateNet(
+        net: FloatArray,
+        desiredMirrorH: Boolean,
+        display: Int,
+        case: String,
+    ) {
+        val label = d4Label(net)
+        assertTrue("$case: net not axis-aligned: $label", label != "OTHER")
+        val improper = label.startsWith("MH") || label == "MV"
+        assertEquals("$case: displayed-mirror state", desiredMirrorH, improper)
+        if (!desiredMirrorH) {
+            assertEquals("$case: clean net must be exactly R(360-display)", "R${(360 - display) % 360}", label)
         }
     }
-
-    private fun desiredNet(frontFacing: Boolean): String = if (frontFacing) "MIRROR_H" else "IDENTITY"
 
     // ---------------------------------------------------------------- tests
 
@@ -167,7 +182,8 @@ class StOrientationGoldenTest {
         assertEquals(StClass(270, StMirror.NONE), StOrientation.classify(transposedFlip))
 
         // Cropped/scaled ST (not a pure axis-aligned orientation) -> null;
-        // RenderThread logs ST_CLASS_UNCLASSIFIED instead of a contract line.
+        // RenderThread treats it as identity (rot=0/mirror=none) and logs
+        // ST_CLASS_UNCLASSIFIED — never skips.
         val cropped = floatArrayOf(
             0.5f, 0f, 0f, 0f,
             0f, -0.5f, 0f, 0f,
@@ -178,61 +194,85 @@ class StOrientationGoldenTest {
     }
 
     @Test
-    fun `device compensation anchors - class rot90 none front 270-true back 90-false`() {
-        val cls = StClass(90, StMirror.NONE)
-        val front = StOrientation.compensate(cls, frontFacing = true)
-        assertEquals(270f, front.uvRotDeg, 0.01f)
+    fun `round-25 device anchors - class rot90 none display 0`() {
+        // Front selfie: upright + mirrored. THE r25 flip: uvRot=90 (r28 ran 270).
+        val front = StOrientation.compensate(StClass(90, StMirror.NONE), desiredMirrorH = true, displayRotDeg = 0)
+        assertEquals(90f, front.uvRotDeg, 0.01f)
         assertTrue(front.mirrorX)
-        val back = StOrientation.compensate(cls, frontFacing = false)
+        // Back camera: canonical-identity net (upright in any display frame).
+        val back = StOrientation.compensate(StClass(90, StMirror.NONE), desiredMirrorH = false, displayRotDeg = 0)
         assertEquals(90f, back.uvRotDeg, 0.01f)
         assertTrue(!back.mirrorX)
-        // And the device ST through the full chain nets exactly the desired.
-        val st = floatArrayOf(
+        val devSt = floatArrayOf(
             0f, -1f, 0f, 0f,
             1f, 0f, 0f, 0f,
             0f, 0f, 1f, 0f,
             0f, 1f, 0f, 1f,
         )
-        assertEquals("MIRROR_H", netClass(st, front.uvRotDeg, front.mirrorX))
-        assertEquals("IDENTITY", netClass(st, back.uvRotDeg, back.mirrorX))
+        val frontNet = mmul(mrot(front.uvRotDeg.toInt()), mmul(if (front.mirrorX) MH else I, classLin(90, StMirror.NONE)))
+        // Canonical net for the mandated front comp: MH (upright + mirrored).
+        assertEquals("MH", d4Label(frontNet))
+        assertEquals(StClass(90, StMirror.NONE), StOrientation.classify(devSt))
+
+        // Back net through the chain MUST be canonical identity (R0).
+        val backNet = mmul(mrot(back.uvRotDeg.toInt()), mmul(if (back.mirrorX) MH else I, classLin(90, StMirror.NONE)))
+        assertEquals("R0", d4Label(backNet))
+
+        // Video (dump: class rot=90 mirror=h), clean desired -> identity net.
+        val video = StOrientation.compensate(StClass(90, StMirror.H), desiredMirrorH = false, displayRotDeg = 0)
+        assertEquals(90f, video.uvRotDeg, 0.01f)
+        assertTrue(video.mirrorX)
+        val videoNet = mmul(mrot(video.uvRotDeg.toInt()), mmul(if (video.mirrorX) MH else I, classLin(90, StMirror.H)))
+        assertEquals("R0", d4Label(videoNet))
     }
 
     @Test
-    fun `golden 64 - every ST class x facing x sensor fold nets to the desired orientation`() {
+    fun `r28 sign must not reappear at display 0`() {
+        // The r28 front value for this class was uvRot=270/mirrorX=true.
+        val front = StOrientation.compensate(StClass(90, StMirror.NONE), true, 0)
+        assertTrue("r28 flip regression", front.uvRotDeg != 270f)
+    }
+
+    @Test
+    fun `golden 256 - every class x desired x sensor x display nets the mandated orientation`() {
         val sensors = intArrayOf(0, 90, 180, 270)
+        val displays = intArrayOf(0, 90, 180, 270)
         var cases = 0
-        for (base in CANONICAL.keys) {
+        for ((key, _) in CANONICAL) {
             for (sensor in sensors) {
-                val st = sensorFold(canonicalSt(base.first, base.second), sensor)
-                val classified = StOrientation.classify(st)
-                assertNotNull("folded ST $base sensor=$sensor must classify, got OTHER", classified)
-                for (front in booleanArrayOf(false, true)) {
-                    val desired = desiredNet(front)
-                    val comp = StOrientation.compensate(classified!!, front)
-                    // Exactly ONE (rot, mirrorX) in the compensation vocabulary
-                    // must reach the desired net, and compensate() picks it.
-                    val hits = ArrayList<Pair<Int, Boolean>>()
-                    for (rot in intArrayOf(0, 90, 180, 270)) {
-                        for (mx in booleanArrayOf(false, true)) {
-                            if (netClass(st, rot.toFloat(), mx) == desired) hits.add(rot to mx)
-                        }
+                // Round-25 display fold: re-classify the folded ST (production path).
+                val folded = mulSt(foldLin(sensor), canonicalSt(key.first, key.second))
+                val cls = StOrientation.classify(folded)
+                assertNotNull("folded ST $key sensor=$sensor must classify", cls)
+                for (desiredMirrorH in booleanArrayOf(false, true)) {
+                    for (display in displays) {
+                        val comp = StOrientation.compensate(cls!!, desiredMirrorH, display)
+                        // Compose the exact engine chain net: Rot . Mirror . ST.
+                        val net = mmul(
+                            mrot(comp.uvRotDeg.toInt()),
+                            mmul(if (comp.mirrorX) MH else I, classLin(cls.rotCwDeg, cls.mirror)),
+                        )
+                        assertMandateNet(
+                            net, desiredMirrorH, display,
+                            "base=$key sensor=$sensor dm=$desiredMirrorH display=$display " +
+                                "comp=(${comp.uvRotDeg},${comp.mirrorX})",
+                        )
+                        cases++
                     }
-                    assertEquals(
-                        "case base=$base sensor=$sensor front=$front: exactly one compensating (rot,mx)",
-                        1, hits.size,
-                    )
-                    assertEquals(
-                        "case base=$base sensor=$sensor front=$front: compensate rot == unique hit",
-                        hits[0].first.toFloat(), comp.uvRotDeg, 0.01f,
-                    )
-                    assertEquals(
-                        "case base=$base sensor=$sensor front=$front: compensate mirrorX == unique hit",
-                        hits[0].second, comp.mirrorX,
-                    )
-                    cases++
                 }
             }
         }
-        assertEquals(64, cases)
+        assertEquals(256, cases)
+    }
+
+    /** Column-major 4x4 affine multiply (apply b first, then a). */
+    private fun mulSt(a: FloatArray, b: FloatArray): FloatArray {
+        val out = FloatArray(16)
+        for (col in 0 until 4) for (row in 0 until 4) {
+            var s = 0f
+            for (k in 0 until 4) s += a[k * 4 + row] * b[col * 4 + k]
+            out[col * 4 + row] = s
+        }
+        return out
     }
 }

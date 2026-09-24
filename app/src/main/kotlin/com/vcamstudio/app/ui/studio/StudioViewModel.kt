@@ -129,11 +129,24 @@ class StudioViewModel @Inject constructor(
     private val cameraSurfaces = LinkedHashMap<String, android.view.Surface>()
 
     /**
-     * Round-28: last ST-class-derived compensation per camera-layer source
-     * id. Seeds the rebind path (camera Bound collect) so lifecycle bounces
-     * don't flash mis-oriented frames before the next ST_CLASS event.
+     * Round-28: last ST-class-derived compensation per layer id. Seeds the
+     * rebind path (camera Bound collect) so lifecycle bounces don't flash
+     * mis-oriented frames before the next ST_CLASS event.
      */
     private val lastOrientationComp = LinkedHashMap<String, StCompensation>()
+
+    /**
+     * Round-25: last classified ST class per source id (cameras AND videos).
+     * Display-rotation changes re-run compensation from these without
+     * waiting for a new ST event.
+     */
+    private val lastStClassBySource = LinkedHashMap<String, StClass>()
+
+    /** Round-25: last known display rotation in DEGREES (null = never read). */
+    private var lastDisplayRotDeg: Int? = null
+
+    /** Round-25: display rotation value already reported, to log changes only. */
+    private var loggedDisplayRotDeg: Int = -1
 
     private var lifecycleOwner: LifecycleOwner? = null
 
@@ -255,6 +268,10 @@ class StudioViewModel @Inject constructor(
     fun onLifecycleEvent(event: androidx.lifecycle.Lifecycle.Event) {
         if (event != androidx.lifecycle.Lifecycle.Event.ON_START) return
         if (lifecycleOwner == null) return
+        // Round-25: activity (re)start may follow a rotation/recreate —
+        // re-read display rotation and re-run compensation from the last
+        // classified ST classes before frames land.
+        onDisplayRotationMaybeChanged()
         if (rawMode.value) {
             Timber.i("LIFECYCLE_REBIND raw")
             maybeBindRawCamera()
@@ -800,16 +817,12 @@ class StudioViewModel @Inject constructor(
                 MixerAudioTap { pcm, ch, _ -> mixer.offerPcm(AudioBusId.MEDIA, pcm, ch) },
             )
             controller.onError = { msg -> toast.value = "Video playback error: $msg" }
-            controller.onVideoSizeChanged = { w, h, rot ->
+            controller.onVideoSizeChanged = { w, h, _ ->
                 engine.resizeSource(sourceId, w, h)
-                // Reverted to the c73a4d5 semantics per owner directive.
-                val uvRot = ((360 - rot) % 360).toFloat()
-                val layerId = videoLayer.id
-                updateLayer(layerId) { def ->
-                    if (def is LayerDefinition.Video && def.transform.uvRotationDeg != uvRot) {
-                        def.copy(transform = def.transform.copy(uvRotationDeg = uvRot))
-                    } else def
-                }
+                // Round-25: the separate metadata-UV math is DELETED — video
+                // orientation routes through the SAME ST-class compensate()
+                // as cameras (ST_CLASS event -> applyOrientation). Metadata
+                // dims still drive the source aspect via resizeSource.
             }
             videoControllers[sourceId] = controller
             controller.load(
@@ -832,37 +845,100 @@ class StudioViewModel @Inject constructor(
     }
 
     /**
-     * Round-28 (owner "ROUND 24 — ROTATION"): the engine classified this
-     * source's producer ST into a new orientation class. Derive the layer UV
-     * compensation from the class as a pure function — back camera nets
-     * ROT_0 (upright, not mirrored), front selfie nets ROT_0 + horizontal
-     * mirror (upright, mirrored) — and apply it to the matching camera layer.
-     * This is the ONE canonical rotation place for the GL path; no sensor
-     * arithmetic anywhere (the r18 formula is superseded by this mandate).
-     * Video layers keep their own metadata-rotation path (out of scope).
+     * Round-25 (owner "ROUND 25 — ROTATION. SIGN FLIP + VIDEO ROUTING"):
+     * the engine classified this source's producer ST into a new orientation
+     * class. Derive the layer UV compensation from the class as a pure
+     * function — front selfie nets upright + mirrored, back camera and video
+     * net upright, unmirrored — with the DISPLAY rotation folded into the
+     * rot component (re-read here, so a rotation that happened before this
+     * event is already accounted for). ONE formula, ONE place, for cameras
+     * AND video (the separate video metadata-UV math is deleted).
      */
     private fun onSourceOrientationClassified(sourceId: String, rotCwDeg: Int, mirrorTag: String) {
         val mirror = StMirror.fromTag(mirrorTag) ?: return
+        val displayDeg = readDisplayRotationDeg() ?: lastDisplayRotDeg ?: 0
+        lastDisplayRotDeg = displayDeg
+        if (displayDeg != loggedDisplayRotDeg) {
+            loggedDisplayRotDeg = displayDeg
+            Timber.i("DISPLAY_ROT=%d", displayDeg)
+        }
+        val cls = StClass(rotCwDeg, mirror)
+        lastStClassBySource[sourceId] = cls
+        applyOrientation(sourceId, cls, displayDeg)
+    }
+
+    /** Display rotation in DEGREES (Display.getRotation() constants are 0..3, not degrees). */
+    private fun readDisplayRotationDeg(): Int? {
+        val activity = lifecycleOwner as? android.app.Activity ?: return null
+        return try {
+            @Suppress("DEPRECATION")
+            val rotation = activity.windowManager.defaultDisplay.rotation
+            rotation * 90
+        } catch (t: Throwable) {
+            Timber.w("DISPLAY_ROT_READ_FAILED %s", t.message)
+            null
+        }
+    }
+
+    /**
+     * Round-25 mandate 2: display rotation re-read on every configuration
+     * change; compensation re-runs from the LAST classified ST classes.
+     * Logs DISPLAY_ROT=<deg> on every actual change. Wired from the
+     * Activity's onConfigurationChanged.
+     */
+    fun onDisplayRotationMaybeChanged() {
+        val deg = readDisplayRotationDeg() ?: return
+        val previous = lastDisplayRotDeg
+        lastDisplayRotDeg = deg
+        if (deg != loggedDisplayRotDeg) {
+            loggedDisplayRotDeg = deg
+            Timber.i("DISPLAY_ROT=%d reason=config", deg)
+        }
+        if (previous == null || previous == deg) return
+        for ((sourceId, cls) in lastStClassBySource.toList()) {
+            applyOrientation(sourceId, cls, deg)
+        }
+    }
+
+    /**
+     * Applies the compensation for one source's ST class + display rotation
+     * to its layer (Camera matches by layer id, Video by sourceId), logs
+     * ORIENT_APPLY (with DISPLAY_ROT, per the round-25 contract) and commits
+     * on change.
+     */
+    private fun applyOrientation(sourceId: String, cls: StClass, displayDeg: Int) {
         var applied: StCompensation? = null
         var changedAny = false
         scenes.value = scenes.value.map { s ->
             s.copy(layers = s.layers.map { l ->
-                if (l is LayerDefinition.Camera && l.id == sourceId) {
-                    val front = l.lensFacing == RenderLensFacing.FRONT
-                    val comp = StOrientation.compensate(StClass(rotCwDeg, mirror), front)
-                    applied = comp
-                    lastOrientationComp[sourceId] = comp
-                    if (l.transform.uvRotationDeg != comp.uvRotDeg || l.transform.mirrorX != comp.mirrorX) {
-                        changedAny = true
-                        l.copy(transform = l.transform.copy(uvRotationDeg = comp.uvRotDeg, mirrorX = comp.mirrorX))
-                    } else l
-                } else l
+                when {
+                    l is LayerDefinition.Camera && l.id == sourceId -> {
+                        val desiredMirrorH = l.lensFacing == RenderLensFacing.FRONT
+                        val comp = StOrientation.compensate(cls, desiredMirrorH, displayDeg)
+                        applied = comp
+                        lastOrientationComp[sourceId] = comp
+                        if (l.transform.uvRotationDeg != comp.uvRotDeg || l.transform.mirrorX != comp.mirrorX) {
+                            changedAny = true
+                            l.copy(transform = l.transform.copy(uvRotationDeg = comp.uvRotDeg, mirrorX = comp.mirrorX))
+                        } else l
+                    }
+                    l is LayerDefinition.Video && l.sourceId == sourceId -> {
+                        val comp = StOrientation.compensate(cls, desiredMirrorH = false, displayRotDeg = displayDeg)
+                        applied = comp
+                        lastOrientationComp[l.id] = comp
+                        if (l.transform.uvRotationDeg != comp.uvRotDeg || l.transform.mirrorX != comp.mirrorX) {
+                            changedAny = true
+                            l.copy(transform = l.transform.copy(uvRotationDeg = comp.uvRotDeg, mirrorX = comp.mirrorX))
+                        } else l
+                    }
+                    else -> l
+                }
             })
         }
         val comp = applied
         Timber.i(
-            "ORIENT_APPLY id=%s st_class=rot%d/%s -> uvRot=%.0f mirrorX=%s changed=%s",
-            sourceId, rotCwDeg, mirrorTag,
+            "ORIENT_APPLY id=%s DISPLAY_ROT=%d st_class=%s -> uvRot=%.0f mirrorX=%s changed=%s",
+            sourceId, displayDeg, cls.label(),
             comp?.uvRotDeg ?: -1f, comp?.mirrorX?.toString() ?: "?", changedAny,
         )
         if (changedAny) commit()
