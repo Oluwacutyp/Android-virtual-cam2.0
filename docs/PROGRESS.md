@@ -1296,3 +1296,36 @@ display rotation was never folded in; video ran its own metadata-UV math.
    at display 0 for class rot90/none).
 Out of scope honored: TRIANGLES path, skip path/blit state, r25-r28 engine
 present/blit behavior — untouched. PROGRESS inc 29.
+
+## Increment 30 — Round-25 harness GREEN (golden 256/256 + device anchors)
+
+**Head `bc2f77b`, CI run 36016239248 SUCCESS** (`:app:assembleDebug`, unit tests, lint).
+APK artifact `vcam-studio-debug-apk` published on that run — this is the r25 device build.
+
+Root-cause chain for the three red rounds after 6c546ff (all in the TEST file, production
+code untouched since 6c546ff):
+
+1. `66f9a3e` anchors/golden ran the 256-case body — `foldLin` was a bare 2x2 linear
+   `[c,s,-s,c]` being indexed as a 4x4 column-major affine. Fixed (`f12f14b`) to a FULL
+   square-to-square affine: col-major `[c,-s,0,0, s,c,0,0, 0,0,1,0, t1,t2,0,1]`,
+   t1 = 0.5-0.5(c+s), t2 = 0.5+0.5s-0.5c. Verified 0/32 folded classify-nulls in sim.
+2. Front anchor corrected `MH` -> `MV` (`f12f14b`): canonical net of the mandated
+   (90, mirrorX=true) front comp IS MV; the device display frame reads canonical MV as
+   upright+mirrored (r27 screenshot calibration: device frame R90-conjugates canonical
+   nets — r28's canonical MH front displayed upside-down).
+3. The real blocker (`20807de` diagnostics, `bc2f77b` fix):
+   `FloatArray.contentEquals` is `Arrays.equals(float[])` -> `Float.equals` semantics:
+   **-0.0f != +0.0f**. `mmul` products like `0f*(-1f) + (-1f)*0f = -0f` poisoned every
+   Rot∘Mirror∘ST net (front net was literally `[1, -0, -0, -1]`), so `d4Label` returned
+   "OTHER" for perfectly valid MV/MH nets. Python sims never caught it (IEEE `==` is
+   zero-sign-blind). Fix: `feq()` comparator (size + per-entry |a-b| < 1e-4f), D4 refs
+   verified pairwise disjoint under feq.
+
+CI diagnostics (`20807de`, permanent): failure-report step now extracts JUnit XML
+testcase names + `<failure message>` + first stack frames into the commit comment —
+assertion text no longer depends on the EOF-flaky reports artifact.
+
+Round-25 mandate state: (1) sign flip, (2) DISPLAY_ROT fold + ORIENT_APPLY/DISPLAY_ROT
+logging, (3) video routed through compensate() — all shipped; harness green 256/256.
+**Device send-back (a)-(e) still pending** — no "fixed" claim until the five device
+states + dump with DISPLAY_ROT/ORIENT_APPLY lines come back conforming.
