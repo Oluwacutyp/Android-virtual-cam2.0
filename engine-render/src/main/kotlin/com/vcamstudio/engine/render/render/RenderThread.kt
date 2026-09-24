@@ -128,7 +128,7 @@ internal class RenderThread(
 
     private var staticFboPainted = false
 
-    fun setStaticFboContent(enabled: Boolean) {
+    fun applyStaticFboContent(enabled: Boolean) {
         staticFboContent = enabled
         staticFboPainted = false // re-ON repaints
         noteEvent("STATIC_FBO mode=$enabled")
