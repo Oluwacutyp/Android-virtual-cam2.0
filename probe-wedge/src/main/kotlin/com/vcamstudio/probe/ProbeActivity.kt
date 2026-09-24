@@ -13,6 +13,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.opengl.EGL14
 import android.opengl.EGLConfig
+import android.opengl.EGLExt
+import android.opengl.GLES20
 import android.opengl.GLES30
 
 /**
@@ -137,7 +139,7 @@ class ProbeActivity : Activity() {
                 EGL14.EGL_GREEN_SIZE, 8,
                 EGL14.EGL_BLUE_SIZE, 8,
                 EGL14.EGL_ALPHA_SIZE, 8,
-                EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES3_BIT,
+                EGL14.EGL_RENDERABLE_TYPE, EGLExt.EGL_OPENGL_ES3_BIT,
                 EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT,
                 EGL14.EGL_NONE,
             )
@@ -261,14 +263,14 @@ class ProbeActivity : Activity() {
             GLES30.glShaderSource(vs, vsSrc)
             GLES30.glCompileShader(vs)
             val vsLog = GLES30.glGetShaderInfoLog(vs)
-            if (GLES30.glGetShaderi(vs, GLES30.GL_COMPILE_STATUS) == 0) {
+            if (GLES20.glGetShaderi(vs, GLES30.GL_COMPILE_STATUS) == 0) {
                 log.add("VS_COMPILE_FAILED log=$vsLog"); log.flush(); return null
             }
             val fs = GLES30.glCreateShader(GLES30.GL_FRAGMENT_SHADER)
             GLES30.glShaderSource(fs, fsSrc)
             GLES30.glCompileShader(fs)
             val fsLog = GLES30.glGetShaderInfoLog(fs)
-            if (GLES30.glGetShaderi(fs, GLES30.GL_COMPILE_STATUS) == 0) {
+            if (GLES20.glGetShaderi(fs, GLES30.GL_COMPILE_STATUS) == 0) {
                 log.add("FS_COMPILE_FAILED log=$fsLog"); log.flush(); return null
             }
             val prog = GLES30.glCreateProgram()
@@ -276,7 +278,7 @@ class ProbeActivity : Activity() {
             GLES30.glAttachShader(prog, fs)
             GLES30.glLinkProgram(prog)
             val linkLog = GLES30.glGetProgramInfoLog(prog)
-            if (GLES30.glGetProgrami(prog, GLES30.GL_LINK_STATUS) == 0) {
+            if (GLES20.glGetProgrami(prog, GLES30.GL_LINK_STATUS) == 0) {
                 log.add("LINK_FAILED log=$linkLog"); log.flush(); return null
             }
             if (vsLog.isNotBlank() || fsLog.isNotBlank() || linkLog.isNotBlank()) {
