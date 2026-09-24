@@ -5,6 +5,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.roundToInt
 
 /**
  * Round-28 golden harness (owner "ROUND 24 — ROTATION"): the ST-class
@@ -97,10 +98,10 @@ class StOrientationGoldenTest {
         val duy = ((c[3] - c[1]) + (c[5] - c[7])) * 0.5f
         val dvx = ((c[6] - c[0]) + (c[4] - c[2])) * 0.5f
         val dvy = ((c[7] - c[1]) + (c[5] - c[3])) * 0.5f
-        val nx = Math.round(dux / Math.hypot(dux.toDouble(), duy.toDouble()))
-        val ny = Math.round(duy / Math.hypot(dux.toDouble(), duy.toDouble()))
-        val mx = Math.round(dvx / Math.hypot(dvx.toDouble(), dvy.toDouble()))
-        val my = Math.round(dvy / Math.hypot(dvx.toDouble(), dvy.toDouble()))
+        val nx = (dux / Math.hypot(dux.toDouble(), duy.toDouble())).roundToInt()
+        val ny = (duy / Math.hypot(dux.toDouble(), duy.toDouble())).roundToInt()
+        val mx = (dvx / Math.hypot(dvx.toDouble(), dvy.toDouble())).roundToInt()
+        val my = (dvy / Math.hypot(dvx.toDouble(), dvy.toDouble())).roundToInt()
         return when {
             nx == 1 && ny == 0 && mx == 0 && my == 1 -> "IDENTITY"
             nx == -1 && ny == 0 && mx == 0 && my == 1 -> "MIRROR_H"
