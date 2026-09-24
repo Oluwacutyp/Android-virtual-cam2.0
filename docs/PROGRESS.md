@@ -1101,3 +1101,33 @@ clean, both devices. All existing probes sample at 1 Hz — the bad frame
 Out of scope honored: rotation untouched; TRIANGLES path untouched; no fix
 claim. Watchdog stall chains from backgrounded app = expected (idle
 nativePollOnce), per owner.
+
+## Increment 25 — TEST A: skip-swap REMOVED; TEST B: READBACK_FBO probe
+
+Ring evidence: layer_draws alternates 0/1 with the 30fps camera into the
+60Hz loop; skipped frames never reach eglSwapBuffers; swapPreserved=false.
+H1 (skip-swap + recycled back buffer = flicker) and H2 (default-FB
+readbacks return black on this Adreno — every PRESENT_PROBE was 0,0,0 while
+FBO_PROBE was non-black) both accepted.
+
+TEST A: present-on-change skip DELETED (no toggle — mandate says remove
+entirely; revert shape documented in code comment). Every Choreographer
+tick reaching the present path now draws the last scene FBO (blit when
+nothing new rendered) and calls eglSwapBuffers. swap_skipped field removed
+from FRAME_RING (lines ABSENT by construction).
+
+TEST B: PRESENT_PROBE (pre+post default-FB reads) removed entirely.
+Replaced by READBACK_FBO idx rgb — every 5th frame, the scene FBO is
+blitted (glBlitFramebuffer, LINEAR) into a dedicated 1x1 offscreen FBO and
+that is read back: honest "what did we just draw" at present time,
+independent of window-surface read semantics. Probe FBO released at
+shutdown. Interpretation: READBACK_FBO non-black on flicker frames + black
+display => present path guilty; both black => upstream dead frame.
+
+Additional: SWAP_MODE=preserved|undefined|unknown line in LAUNCH LOG at
+every window creation (from the EGL_SWAP_BEHAVIOR query); SWAP_RECENT dump
+section = rolling last-5 swaps (t/idx/ms/ok/id), synchronized writes.
+
+Out of scope honored: rotation untouched (NET=MIRROR_V parked); TRIANGLES
+path untouched (dump shows staging=[cap=144,pos=144,need=144], draw=
+TRIANGLES, 6-entry UVs — the r23 write-path fix is confirmed on device).

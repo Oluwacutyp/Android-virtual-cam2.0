@@ -214,14 +214,17 @@ internal class RenderThread(
 
     fun frameRingLines(): List<String> = frameRing.snapshot()
     fun probeRingLines(): List<String> = probeRing.snapshot()
+    fun recentSwapLines(): List<String> = synchronized(recentSwaps) { recentSwaps.toList() }
 
     // per-frame accumulators (render thread only, reset at doFrame start)
     private var frLayerDraws = 0
     private var frCamReady = false
     private var frVidReady = false
-    private var frSwapSkipped = false
     private var frSwapMs = 0L
     private var frRenderedAtStart = 0L
+
+    /** Round 25: rolling last-5 swaps with timestamps (second axis). */
+    private val recentSwaps = ArrayDeque<String>(6)
 
     fun noteEvent(line: String) {
         val stamped = "${clock.nowMs()} $line"
@@ -388,6 +391,13 @@ internal class RenderThread(
         outputs.values.forEach { runCatching { it.eglSurface?.release() } }
         outputs.clear()
         sceneFboA?.release(); sceneFboB?.release(); prevFbo?.release()
+        if (probeFbo != 0) {
+            runCatching {
+                GLES30.glDeleteFramebuffers(1, intArrayOf(probeFbo), 0)
+                GLES30.glDeleteTextures(1, intArrayOf(probeTex), 0)
+            }
+            probeFbo = 0; probeTex = 0
+        }
         sceneFboA = null; sceneFboB = null; prevFbo = null
         fboPool.clear()
         programs?.releaseAll()
@@ -497,6 +507,12 @@ internal class RenderThread(
             out.createFailures = 0
             noteEvent("EGL_WINDOW_CREATED id=${out.id}")
             val preserved = out.eglSurface?.swapBehaviorPreserved()
+            val swapMode = when (preserved) {
+                true -> "preserved"
+                false -> "undefined"
+                null -> "unknown"
+            }
+            noteLaunch("SWAP_MODE=$swapMode id=${out.id}")
             noteLaunch(
                 "EGL_WINDOW_CREATED dims=${out.width}x${out.height} id=${out.id} " +
                     "reason=${out.lastReinitReason} swapPreserved=$preserved",
@@ -583,7 +599,7 @@ internal class RenderThread(
     private fun doFrame(frameTimeNanos: Long) {
         applyPendingScene()
         frLayerDraws = 0; frCamReady = false; frVidReady = false
-        frSwapSkipped = false; frSwapMs = 0L
+        frSwapMs = 0L
         frRenderedAtStart = renderedFrameCount
 
         loopIterations++
@@ -643,30 +659,63 @@ internal class RenderThread(
                 "cam_frame_ready=$frCamReady vid_frame_ready=$frVidReady " +
                 "scene_fbo_written=${renderedFrameCount > frRenderedAtStart} " +
                 "present_swap_ms=$frSwapMs since_last_present_ms=$sinceLast " +
-                "st_hash=$stHash surface_id=$surfaceId" +
-                (if (frSwapSkipped) " swap_skipped=unchanged" else ""),
+                "st_hash=$stHash surface_id=$surfaceId",
         )
     }
 
+    // Round 25 TEST B (owner mandate): PRESENT_PROBE removed — glReadPixels
+    // on the default framebuffer is undefined under EGL and this Adreno
+    // returns black unconditionally. Replaced by an HONEST readback: blit
+    // the scene FBO into a dedicated 1x1 offscreen FBO and read THAT.
+    private var probeFbo = 0
+    private var probeTex = 0
+
+    private fun ensureProbeFbo() {
+        if (probeFbo != 0) return
+        val tex = intArrayOf(0)
+        GLES30.glGenTextures(1, tex, 0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, tex[0])
+        GLES30.glTexImage2D(
+            GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA8, 1, 1, 0,
+            GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, null,
+        )
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
+        val fb = intArrayOf(0)
+        GLES30.glGenFramebuffers(1, fb, 0)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fb[0])
+        GLES30.glFramebufferTexture2D(
+            GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_TEXTURE_2D, tex[0], 0,
+        )
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        probeFbo = fb[0]
+        probeTex = tex[0]
+    }
+
     /**
-     * Round 24 mandate 2: 1x1 center readback of the preview surface.
-     * PRE reads the completed back buffer RIGHT BEFORE the swap — that is
-     * the content about to be presented (ground truth). POST reads after
-     * eglSwapBuffers returns, exactly as mandated; on non-preserved swap
-     * behavior that buffer is the recycled back buffer (undefined content),
-     * which is why BOTH lines exist and swapBehaviorPreserved is logged at
-     * window creation.
+     * Blit scene FBO -> 1x1 probe FBO -> glReadPixels. This is "what did we
+     * just draw" at the moment of present, independent of window-surface
+     * readback semantics. If READBACK_FBO is non-black on flicker frames
+     * while the DISPLAY shows black, the present path is guilty; if it is
+     * black too, the scene never had content that frame (upstream).
      */
-    private fun presentProbe(out: Output, pre: Boolean) {
+    private fun presentReadbackProbe(scene: SceneDefinition, idx: Long) {
+        if (sceneFboA == null) return // no scene rendered yet
+        ensureProbeFbo()
+        GLES30.glBindFramebuffer(GLES30.GL_READ_FRAMEBUFFER, currentFbo().handle)
+        GLES30.glBindFramebuffer(GLES30.GL_DRAW_FRAMEBUFFER, probeFbo)
+        GLES30.glBlitFramebuffer(
+            0, 0, scene.width, scene.height, 0, 0, 1, 1,
+            GLES30.GL_COLOR_BUFFER_BIT, GLES30.GL_LINEAR,
+        )
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, probeFbo)
         val px = java.nio.ByteBuffer.allocateDirect(4)
-        GLES30.glReadPixels(out.width / 2, out.height / 2, 1, 1, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, px)
+        GLES30.glReadPixels(0, 0, 1, 1, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, px)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0) // back to the window surface
         val r = px.get(0).toInt() and 0xFF
         val g = px.get(1).toInt() and 0xFF
         val b = px.get(2).toInt() and 0xFF
-        probeRing.append(
-            (if (pre) "PRESENT_PROBE_PRE" else "PRESENT_PROBE") +
-                " idx=$loopIterations rgb=$r,$g,$b swapMs=$lastSwapDurationMs",
-        )
+        probeRing.append("READBACK_FBO idx=$idx rgb=$r,$g,$b render=$renderedFrameCount")
     }
 
     private fun stHashOf(m: FloatArray): String {
@@ -717,6 +766,13 @@ internal class RenderThread(
 
     private fun recreateSceneFbos(w: Int, h: Int) {
         sceneFboA?.release(); sceneFboB?.release(); prevFbo?.release()
+        if (probeFbo != 0) {
+            runCatching {
+                GLES30.glDeleteFramebuffers(1, intArrayOf(probeFbo), 0)
+                GLES30.glDeleteTextures(1, intArrayOf(probeTex), 0)
+            }
+            probeFbo = 0; probeTex = 0
+        }
         sceneFboA = Framebuffer(w, h)
         sceneFboB = Framebuffer(w, h)
         prevFbo = Framebuffer(w, h)
@@ -900,10 +956,15 @@ internal class RenderThread(
             // this output's last swap. (Regression note: gating on the scene
             // TEXTURE id was wrong — simple scenes reuse the same FBO texture
             // every frame, which froze presentation after the first swap.)
-            if (transFrac == null && out.lastPresentedRender == renderedFrameCount) {
-                frSwapSkipped = true // round 24: per-frame SWAP_SKIPPED field
-                continue
-            }
+            // Round 25 TEST A (owner mandate): the present-on-change skip is
+            // REMOVED. swapPreserved=false on this device means the back
+            // buffer is recycled between swaps; presenting every
+            // Choreographer tick (re-drawing the last scene FBO when nothing
+            // new rendered — a ~0.5ms fullscreen blit) removes the skipped-
+            // swap state entirely. If the flicker disappears with this
+            // alone, H1 is confirmed and the skip never comes back on this
+            // EGL configuration. (Revert shape: gate here on
+            // out.lastPresentedRender == renderedFrameCount.)
             if (!out.surface.isValid) {
                 // 0x300d class: producer surface already dead — force a fresh
                 // window surface instead of swapping at a corpse.
@@ -957,17 +1018,23 @@ internal class RenderThread(
             // this output's present path — a second increment here made
             // presentAttempts report ~2x presented in every dump.)
             val probeThisFrame = loopIterations % 5 == 0L && out.id == PREVIEW_OUTPUT_ID
-            if (probeThisFrame) presentProbe(out, pre = true)
+            if (probeThisFrame) presentReadbackProbe(scene, idx = loopIterations)
             es.setPresentationTime(frameTimeNanos)
             val swapStartNs = System.nanoTime()
             val swapOk = es.swap()
             lastSwapDurationMs = (System.nanoTime() - swapStartNs) / 1_000_000
             if (out.id == PREVIEW_OUTPUT_ID || frSwapMs == 0L) frSwapMs = lastSwapDurationMs
             if (lastSwapDurationMs > 100) noteEvent("SWAP_STALLED ms=$lastSwapDurationMs id=${out.id}")
+            // Round 25: rolling last-5 swaps with timestamps (dump axis).
+            synchronized(recentSwaps) {
+                recentSwaps.addLast(
+                    "t=${clock.nowMs()} idx=$loopIterations ms=$lastSwapDurationMs ok=$swapOk id=${out.id}",
+                )
+                while (recentSwaps.size > 5) recentSwaps.removeFirst()
+            }
             if (swapOk) {
                 anySwapOk = true
                 out.swapFailures = 0
-                if (probeThisFrame) presentProbe(out, pre = false)
                 // A GL error AFTER a successful swap must never abort the
                 // frame loop or fake a zero presented-count (round-4 bug).
                 runCatching { checkGlError("present(${out.id})") }

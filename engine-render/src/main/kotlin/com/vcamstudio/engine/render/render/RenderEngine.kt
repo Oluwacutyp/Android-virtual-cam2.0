@@ -225,6 +225,8 @@ class RenderEngine(
             thread.frameRingLines().forEach { appendLine("  $it") }
             appendLine("PROBE_RING")
             thread.probeRingLines().forEach { appendLine("  $it") }
+            appendLine("SWAP_RECENT")
+            thread.recentSwapLines().forEach { appendLine("  $it") }
             appendLine("health=${d.health}")
             appendLine("fps=${"%.1f".format(d.fps)}")
             appendLine("presented=${d.presentedFrames}")
