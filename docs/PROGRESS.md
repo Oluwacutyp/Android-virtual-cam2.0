@@ -968,3 +968,28 @@ toggle iteration. Three mandates, one build, no exceptions:
 
 Known cost (declared): the probe activity is a separate debug APK; CI root
 assembleDebug builds it alongside the studio app.
+
+## Increment 21 — probe verdict: WEDGE PRESENT in standalone APK; P1/P2/P3 variants
+
+Probe result (owner screenshot, Adreno 730): the standalone :probe-wedge APK
+— one shader, in-shader const vertices, no attributes, no camera, no FBO, no
+engine code — reproduces the EXACT studio wedge (same shape, same apex
+position). Conclusion accepted: the wedge is produced BELOW our code (Adreno
+730 strip rasterization under this EGL/window config); six rounds of engine
+work could not have fixed it.
+
+Round-21 mandate (probe-only, studio engine FROZEN):
+- BASE  original strip probe (re-confirm rung).
+- P1    GL_TRIANGLES, 6 explicit in-shader vertices.
+- P2    strip -> FBO (RGBA8, size==surface, explicit glViewport at draw)
+        -> blit to surface via plain textured strip quad.
+- P3    oversized triangle (-1,-1)(3,-1)(-1,3), FS discards outside 0..1 UV.
+- On-screen mode buttons; per-mode FIRST_PRESENT / GL_ERROR / LOOP_END lines.
+- Per-second GL_STATE line: glGetIntegerv(GL_VIEWPORT) + glGetIntegerv
+  (GL_SCISSOR_BOX).
+- EGL config attribs now logged (rgb/alpha/depth/stencil/samples/renderable/
+  surface).
+- Full log mirrored on screen + COPY LOG button (clipboard) so the owner can
+  post filesDir/probe-wedge-log.txt verbatim without adb.
+- Manifest: ZERO permissions declared (no camera, no storage).
+- versionName 0.2-r21-variants (fresh-install provability).

@@ -52,6 +52,15 @@ class ProbeLog(context: Context) {
         }
     }
 
+    /** Whole file — on-screen mirror + COPY LOG button (verbatim posting). */
+    fun all(): String = synchronized(lock) {
+        try {
+            file.readText()
+        } catch (t: Throwable) {
+            "<log read failed: ${t.message}>"
+        }
+    }
+
     companion object {
         private const val TAG = "probe-wedge"
     }
