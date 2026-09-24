@@ -128,11 +128,14 @@ uniform float uCornerPx;
      * DEV BISECT T1 (round 19): positions HARDCODED in-shader — no attribute
      * upload at all. isolates EGL/Adreno/Surface at the barest level.
      */
+    // Round 22: six explicit vertices (TL,TR,BR, TL,BR,BL) — no strip path.
     const val VS_BISECT_SOLID = """#version 300 es
 void main() {
-    vec4 verts[4] = vec4[4](
+    vec4 verts[6] = vec4[6](
         vec4(-1.0, 1.0, 0.0, 1.0),
         vec4(1.0, 1.0, 0.0, 1.0),
+        vec4(1.0, -1.0, 0.0, 1.0),
+        vec4(-1.0, 1.0, 0.0, 1.0),
         vec4(1.0, -1.0, 0.0, 1.0),
         vec4(-1.0, -1.0, 0.0, 1.0)
     );

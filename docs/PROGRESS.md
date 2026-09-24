@@ -993,3 +993,36 @@ Round-21 mandate (probe-only, studio engine FROZEN):
   post filesDir/probe-wedge-log.txt verbatim without adb.
 - Manifest: ZERO permissions declared (no camera, no storage).
 - versionName 0.2-r21-variants (fresh-install provability).
+
+## Increment 22 — STRIP MIGRATION: SceneRenderer draws GL_TRIANGLES only
+
+Probe verdict (owner): P1 TRIS CLEAN, P3 BIGTRI CLEAN, BASE STRIP wedged
+(10th reproduction). P2 ignored (probe blit bug: uniform set before
+useProgram — mine, acknowledged). Conclusion: driver-level strip
+rasterization defect on Adreno 730. Mandate: migrate the engine to
+GL_TRIANGLES, ONE change; rotation untouched.
+
+1. ALL quad draw sites migrated (grep-swept the whole module — 8 strip
+   sites, all in SceneRenderer): blendScratchOnto, drawColorLayer, copyFbo,
+   gaussianBlur, drawBisectSolid (attrib + in-shader paths), drawBisectOes,
+   drawQuadVbo strip branch, issueQuadDraw else branch. Every site now
+   issues glDrawArrays(GL_TRIANGLES, 0, 6).
+2. uploadVertexData expands the 4 staged corners (TL,TR,BR,BL) into SIX
+   vertices TL,TR,BR,TL,BR,BL via TRI_ORDER — same positions, same UVs,
+   same local coords, same winding as the strip. Buffers are 12 floats each
+   = exactly 6 verts x 2 floats (mandate 3: no resize; cap==need==144 now).
+3. Deleted the round-17 "DEV: TRIANGLES draw" toggle end-to-end:
+   SceneRenderer.trianglesOnly, RenderThread/RenderEngine setters, VM flow,
+   StudioScreen wiring, DiagnosticsSheet switch. drawQuadTriangles +
+   posBuf6 trio deleted (superseded by the upload expansion).
+4. DRAW_PATH=TRIANGLES: const marker, boot assert in initEngine
+   (check + noteLaunch "DRAW_PATH=TRIANGLES assert=ok"), DRAW_PATH line in
+   every dump, runtime stagedVerts guard — a non-6-vert stage is logged as
+   DRAW_PATH_REGRESSION and the draw SKIPPED (never reaches GL).
+5. Golden gate (DrawPathGoldenTest, JVM): software edge-function
+   rasterizer replicating the exact vertex contract — fullscreen quad must
+   cover 100% of pixels (no diagonal possible), every 8x8 tile fully
+   covered, rows contiguous, <=2 writes/pixel, cropped-window exact-rect,
+   UV corner mapping + monotonic ramp, single shared winding; PLUS source
+   gate: any GL_TRIANGLE_STRIP in engine code (comments stripped) fails CI.
+   Geometry validated by simulation before commit (0 uncovered/0 mismatch).

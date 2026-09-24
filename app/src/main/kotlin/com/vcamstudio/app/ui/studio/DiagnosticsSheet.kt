@@ -44,8 +44,6 @@ fun DiagnosticsSheet(
     onUvDebug: (Boolean) -> Unit,
     vboDrawPass: Boolean,
     onVboDraw: (Boolean) -> Unit,
-    trianglesOnly: Boolean,
-    onTrianglesOnly: (Boolean) -> Unit,
     directSurfacePass: Boolean,
     onDirectSurface: (Boolean) -> Unit,
     bisectLevel: Int,
@@ -109,21 +107,6 @@ fun DiagnosticsSheet(
                         androidx.compose.material3.Switch(
                             checked = vboDrawPass,
                             onCheckedChange = onVboDraw,
-                        )
-                    }
-                }
-                item {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            "DEV: TRIANGLES draw (round-17 test)",
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                        androidx.compose.material3.Switch(
-                            checked = trianglesOnly,
-                            onCheckedChange = onTrianglesOnly,
                         )
                     }
                 }

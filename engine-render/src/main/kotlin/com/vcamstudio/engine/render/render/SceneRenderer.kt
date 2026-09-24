@@ -176,7 +176,7 @@ internal class SceneRenderer(
         programs.blend.setInt("uMode", blendMode.glslId)
         programs.blend.setFloat("uOpacity", opacity)
         uploadFullScreenQuad(flipY = true)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        issueTriangles("blendScratchOnto")
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         checkGlError("blendScratchOnto")
     }
@@ -200,7 +200,7 @@ internal class SceneRenderer(
             LayerGeometry.cornerRadiusPx(transform.cornerRadius, drawW, drawH),
         )
         uploadQuad(quad, sceneW.toFloat(), sceneH.toFloat())
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        issueTriangles("drawColorLayer")
         checkGlError("drawColorLayer")
     }
 
@@ -214,7 +214,7 @@ internal class SceneRenderer(
         programs.copy.setInt("uTex", 0)
         programs.copy.setFloat("uAlpha", 1f)
         uploadFullScreenQuad(flipY = true)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        issueTriangles("copyFbo")
     }
 
     /** Samples a 2D FBO texture onto an arbitrary quad of the current target (present path). */
@@ -357,12 +357,10 @@ internal class SceneRenderer(
     @Volatile
     var uvDebugPass: Boolean = false
 
-    /**
-     * Round 17B (owner mandate): same quad, explicit GL_TRIANGLES pairs
-     * instead of TRIANGLE_STRIP — removes the strip rasterization path.
-     */
-    @Volatile
-    var trianglesOnly: Boolean = false
+    // Round 22: the round-17 TRIANGLES toggle is DELETED (owner mandate 4).
+    // TRIANGLES is the ONLY draw path in the engine: the probe-wedge verdict
+    // proved GL_TRIANGLE_STRIP wedges on Adreno 730 while GL_TRIANGLES does
+    // not — there is no strip path left to toggle back to.
 
     /**
      * Round 17C (owner mandate): render external layers straight to the EGL
@@ -396,13 +394,19 @@ internal class SceneRenderer(
             GLES30.glDisableVertexAttribArray(2)
         }
         captureDrawState(tag, program)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        issueTriangles(tag)
         for (i in 0..2) GLES30.glEnableVertexAttribArray(i)
         checkGlError("bisectSolid")
     }
 
-    private val bisectPosBuf = directFloatBuffer(8).apply {
-        put(-1f); put(1f); put(1f); put(1f); put(1f); put(-1f); put(-1f); put(-1f)
+    // Round 22: six explicit vertices (TL,TR,BR, TL,BR,BL) — no strip path.
+    private val bisectPosBuf = directFloatBuffer(12).apply {
+        put(-1f); put(1f)   // TL
+        put(1f); put(1f)    // TR
+        put(1f); put(-1f)   // BR
+        put(-1f); put(1f)   // TL
+        put(1f); put(-1f)   // BR
+        put(-1f); put(-1f)  // BL
         position(0)
     }
 
@@ -433,7 +437,7 @@ internal class SceneRenderer(
         programs.texOes.setVec2("uQuadSizePx", dw, dh)
         programs.texOes.setFloat("uCornerPx", 0f)
         captureDrawState("BISECT4", programs.texOes)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        issueTriangles("bisectOes")
         checkGlError("bisectOes")
     }
 
@@ -537,38 +541,27 @@ internal class SceneRenderer(
             GLES30.glBindVertexArray(0); vboCheck("unbindVao")
             noteVboCreated(testVbo, testVao)
         }
-        val needFloats = (if (trianglesOnly) TRI_ORDER.size else 4) * STRIDE_FLOATS
+        val needFloats = TRI_ORDER.size * STRIDE_FLOATS
         if (testInterleaved.remaining() < needFloats) {
             reportOverflow("drawQuadVbo", testInterleaved.capacity(), testInterleaved.position(), needFloats)
             uploadOk = false
             return
         }
         testInterleaved.clear() // fresh region EVERY draw
-        if (trianglesOnly) {
-            // Round 17B: same data, explicit triangle pairs TL,TR,BR / TL,BR,BL.
-            for (v in TRI_ORDER) {
-                val s = v * STRIDE_FLOATS
-                for (k in 0 until STRIDE_FLOATS) testInterleaved.put(staging[s + k])
-            }
-            testInterleaved.position(0)
-            GLES30.glBindBuffer(GLES20.GL_ARRAY_BUFFER, testVbo); vboCheck("bindBuffer")
-            GLES30.glBufferData(
-                GLES20.GL_ARRAY_BUFFER, TRI_ORDER.size * STRIDE_FLOATS * 4,
-                testInterleaved, GLES30.GL_STREAM_DRAW,
-            ); vboCheck("bufferData")
-            GLES30.glBindVertexArray(testVao); vboCheck("bindVao")
-            GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, TRI_ORDER.size); vboCheck("draw")
-        } else {
-            for (f in staging) testInterleaved.put(f)
-            testInterleaved.position(0)
-            GLES30.glBindBuffer(GLES20.GL_ARRAY_BUFFER, testVbo); vboCheck("bindBuffer")
-            GLES30.glBufferData(
-                GLES20.GL_ARRAY_BUFFER, STRIDE_FLOATS * 4 * 4,
-                testInterleaved, GLES30.GL_STREAM_DRAW,
-            ); vboCheck("bufferData")
-            GLES30.glBindVertexArray(testVao); vboCheck("bindVao")
-            GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4); vboCheck("draw")
+        // Round 22: explicit triangle pairs TL,TR,BR / TL,BR,BL — the ONLY
+        // VBO layout (the strip branch was deleted with the round-17 toggle).
+        for (v in TRI_ORDER) {
+            val s = v * STRIDE_FLOATS
+            for (k in 0 until STRIDE_FLOATS) testInterleaved.put(staging[s + k])
         }
+        testInterleaved.position(0)
+        GLES30.glBindBuffer(GLES20.GL_ARRAY_BUFFER, testVbo); vboCheck("bindBuffer")
+        GLES30.glBufferData(
+            GLES20.GL_ARRAY_BUFFER, TRI_ORDER.size * STRIDE_FLOATS * 4,
+            testInterleaved, GLES30.GL_STREAM_DRAW,
+        ); vboCheck("bufferData")
+        GLES30.glBindVertexArray(testVao); vboCheck("bindVao")
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, TRI_ORDER.size); vboCheck("draw")
         GLES30.glBindVertexArray(0); vboCheck("unbindVao")
         GLES30.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0); vboCheck("unbindBuffer")
         if (vboErrs.isNotEmpty()) {
@@ -577,42 +570,47 @@ internal class SceneRenderer(
         }
     }
 
-    /**
-     * Round 17B: identical quad, explicit triangle pairs (no strip
-     * rasterization path). Order TL,TR,BR, TL,BR,BL as mandated.
-     */
-    private val posBuf6 = directFloatBuffer(12)
-    private val uvBuf6 = directFloatBuffer(12)
-    private val localBuf6 = directFloatBuffer(12)
-
-    private fun drawQuadTriangles() {
-        if (posBuf6.remaining() < 12 || uvBuf6.remaining() < 12 || localBuf6.remaining() < 12) {
-            reportOverflow("drawQuadTriangles", posBuf6.capacity(), posBuf6.position(), 12)
-            uploadOk = false
-            return
-        }
-        posBuf6.clear(); uvBuf6.clear(); localBuf6.clear() // fresh region EVERY draw
-        for (v in TRI_ORDER) {
-            val s = v * STRIDE_FLOATS
-            posBuf6.put(staging[s]); posBuf6.put(staging[s + 1])
-            uvBuf6.put(staging[s + 2]); uvBuf6.put(staging[s + 3])
-            localBuf6.put(staging[s + 4]); localBuf6.put(staging[s + 5])
-        }
-        posBuf6.position(0); uvBuf6.position(0); localBuf6.position(0)
-        GLES30.glVertexAttribPointer(0, 2, GLES30.GL_FLOAT, false, 0, posBuf6)
-        GLES30.glVertexAttribPointer(1, 2, GLES30.GL_FLOAT, false, 0, uvBuf6)
-        GLES30.glVertexAttribPointer(2, 2, GLES30.GL_FLOAT, false, 0, localBuf6)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, TRI_ORDER.size)
-    }
-
-    /** Unified draw issuer: every quad draw goes through the active test path. */
+    /** Unified draw issuer: every quad draw goes through the active path. */
     private fun issueQuadDraw(captureTag: String?, program: GlProgram, capture: Boolean) {
         if (capture && captureTag != null) captureDrawState(captureTag, program)
         when {
             vboDrawPass -> drawQuadVbo()
-            trianglesOnly -> drawQuadTriangles()
-            else -> GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+            else -> issueTriangles(captureTag ?: "quad")
         }
+    }
+
+    // ---- round 22 mandate 5: DRAW_PATH regression guard ----
+    // EVERY quad draw in the engine issues through [issueTriangles]. Any
+    // future code that wants a different primitive must route around this
+    // deliberately — and the DrawPathGoldenTest fails CI the moment a
+    // GL_TRIANGLE_STRIP reappears in engine sources.
+
+    @Volatile
+    var drawPathViolation: String? = null
+        private set
+
+    /** Vertex count actually staged by [uploadVertexData] (guard input). */
+    @Volatile
+    private var stagedVerts: Int = TRI_ORDER.size
+
+    /**
+     * Draw the staged quad as GL_TRIANGLES. The staged-count guard is the
+     * runtime half of mandate 5: if any refactor ever stages fewer than the
+     * 6 explicit vertices (i.e. reintroduces a 4-vertex/strip-shaped draw),
+     * it is recorded as DRAW_PATH_REGRESSION (surfaced in every dump) while
+     * the draw is SKIPPED — a wrong-vertex-count quad never reaches GL.
+     * (GL errors are deliberately NOT consumed here — each call site's
+     * checkGlError keeps its error attribution.)
+     */
+    private fun issueTriangles(site: String) {
+        if (!uploadOk) return // STAGING_OVERFLOW: last-good frame keeps presenting
+        if (stagedVerts != TRI_ORDER.size) {
+            drawPathViolation =
+                "DRAW_PATH_REGRESSION site=$site stagedVerts=$stagedVerts expected=${TRI_ORDER.size}"
+            Log.w("vcam-render", drawPathViolation!!)
+            return
+        }
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, TRI_ORDER.size)
     }
 
     @Volatile
@@ -741,18 +739,17 @@ internal class SceneRenderer(
             append("DRAW_STATE[").append(tag).append("]")
             append(" prog=").append(program.handle)
             append(" curProg=").append(cur[0])
-            // Round 18/19: staging bytes of the buffers the ACTIVE mode uses.
-            val verts = if (vboDrawPass || trianglesOnly) TRI_ORDER.size.coerceAtLeast(4) else 4
+            // Round 22: staging bytes of the buffers the ACTIVE mode uses.
+            // Every mode stages 6 verts now; the posBuf trio is 12 floats
+            // each = 144 bytes total (the old cap=144/need=96 mismatch is
+            // gone with the strip path).
+            val verts = TRI_ORDER.size
             val capB: Int
             val posB: Int
             when {
                 vboDrawPass -> {
                     capB = testInterleaved.capacity() * 4
                     posB = testInterleaved.position() * 4
-                }
-                trianglesOnly -> {
-                    capB = (posBuf6.capacity() + uvBuf6.capacity() + localBuf6.capacity()) * 4
-                    posB = (posBuf6.position() + uvBuf6.position() + localBuf6.position()) * 4
                 }
                 else -> {
                     capB = (posBuf.capacity() + uvBuf.capacity() + localBuf.capacity()) * 4
@@ -768,7 +765,8 @@ internal class SceneRenderer(
             append(" vao=").append(vaoBinding[0])
             append(" arrayBuf=").append(arrayBuf[0])
             append(" elemBuf=").append(elemBuf[0])
-            append(" draw=").append(if (vboDrawPass) "VBO" else if (trianglesOnly) "TRIANGLES" else "glDrawArrays(TRIANGLE_STRIP,0,4)")
+            append(" draw=").append(if (vboDrawPass) "VBO:TRIANGLES" else "TRIANGLES")
+            drawPathViolation?.let { append(" ").append(it) }
             append(" cull=").append(if (cullOn) "on,mode=0x${Integer.toHexString(cullMode[0])}" else "off")
             append(" frontFace=0x").append(Integer.toHexString(frontFace[0]))
             append(" viewport=[").append(viewport.joinToString(",")).append("]")
@@ -918,7 +916,7 @@ internal class SceneRenderer(
                 programs.blur.setVec2("uDir", 0f, perIteration / sceneH)
             }
             uploadFullScreenQuad(flipY = true)
-            GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+            issueTriangles("gaussianBlur")
             val t = read; read = write; write = t
         }
         // Pass count is even, so the result always ends back in src.
@@ -993,25 +991,34 @@ internal class SceneRenderer(
         }
     }
 
-    private fun uploadVertexData(verts: Int = 4): Boolean {
-        val need = verts * 2
+    /**
+     * Round 22 MIGRATION (owner mandate 2): expands the four staged corners
+     * (TL,TR,BR,BL) into SIX vertices — TL,TR,BR, TL,BR,BL, same positions,
+     * same UVs, same local coords, same winding — and uploads them. The
+     * buffers are 12 floats each = exactly 6 verts x 2 floats (round-19
+     * sizing; mandate 3 confirmed: no resize needed). GL_TRIANGLE_STRIP is
+     * gone from this engine: the probe-wedge verdict proved it rasterizes
+     * wedged on Adreno 730 while GL_TRIANGLES does not.
+     */
+    private fun uploadVertexData(): Boolean {
+        val need = TRI_ORDER.size * 2
         if (posBuf.remaining() < need || uvBuf.remaining() < need || localBuf.remaining() < need) {
             reportOverflow("uploadVertexData", posBuf.capacity(), posBuf.position(), need)
             uploadOk = false
             return false
         }
         posBuf.clear(); uvBuf.clear(); localBuf.clear() // fresh region EVERY draw
-        var s = 0
-        for (i in 0 until verts) {
+        for (v in TRI_ORDER) {
+            val s = v * STRIDE_FLOATS
             posBuf.put(staging[s]); posBuf.put(staging[s + 1])
             uvBuf.put(staging[s + 2]); uvBuf.put(staging[s + 3])
             localBuf.put(staging[s + 4]); localBuf.put(staging[s + 5])
-            s += STRIDE_FLOATS
         }
         posBuf.position(0); uvBuf.position(0); localBuf.position(0)
         GLES30.glVertexAttribPointer(0, 2, GLES30.GL_FLOAT, false, 0, posBuf)
         GLES30.glVertexAttribPointer(1, 2, GLES30.GL_FLOAT, false, 0, uvBuf)
         GLES30.glVertexAttribPointer(2, 2, GLES30.GL_FLOAT, false, 0, localBuf)
+        stagedVerts = TRI_ORDER.size
         uploadOk = true
         return true
     }
@@ -1033,6 +1040,9 @@ internal class SceneRenderer(
         ByteBuffer.allocateDirect(size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
 
     companion object {
+        /** Round 22 mandate 5: permanent marker — asserted at boot, printed in every dump. */
+        const val DRAW_PATH = "TRIANGLES"
+
         private const val STRIDE_FLOATS = 6
         private val TRI_ORDER = intArrayOf(0, 1, 2, 0, 2, 3) // TL,TR,BR, TL,BR,BL
         private val LOCAL_CORNERS = arrayOf(

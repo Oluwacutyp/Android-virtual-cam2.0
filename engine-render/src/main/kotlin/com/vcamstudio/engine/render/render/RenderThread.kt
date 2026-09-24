@@ -90,6 +90,12 @@ internal class RenderThread(
     fun presentDebugLine(): String? = renderer?.presentDebug
 
     /** 1 Hz draw-state audits (round-16C): camera-layer + present pass. */
+    /** Round 22 mandate 5: DRAW_PATH marker line for the dump. */
+    fun drawPathLine(): String? =
+        renderer?.let {
+            "DRAW_PATH=${SceneRenderer.DRAW_PATH}" + (it.drawPathViolation?.let { v -> " $v" } ?: "")
+        }
+
     fun drawStateLine(): String? = renderer?.drawStateDebug
 
     fun presentDrawStateLine(): String? = renderer?.presentDrawStateDebug
@@ -105,9 +111,9 @@ internal class RenderThread(
     }
 
     /** DEV TEST (round 17B): explicit GL_TRIANGLES pairs instead of TRIANGLE_STRIP. */
-    fun setTrianglesOnly(enabled: Boolean) {
-        renderer?.trianglesOnly = enabled
-    }
+    // Round 22: setTrianglesOnly DELETED — the round-17 toggle is gone with
+    // the strip path; TRIANGLES is the only draw path (SceneRenderer.DRAW_PATH,
+    // asserted at boot in initEngine).
 
     /** DEV TEST (round 17C): render layers straight to the EGL surface, no scene FBO. */
     fun setDirectSurfacePass(enabled: Boolean) {
@@ -291,6 +297,11 @@ internal class RenderThread(
                 noteLaunch("SHADER_COMPILED prog=${p.handle} name=$name logs=${p.compileLog.ifEmpty { "-" }}")
             }
             renderer = SceneRenderer(programs!!).also { it.enableVertexArrays() }
+            // Round 22 mandate 5: permanent draw-path assert at boot.
+            check(SceneRenderer.DRAW_PATH == "TRIANGLES") {
+                "DRAW_PATH regression: expected TRIANGLES, got ${SceneRenderer.DRAW_PATH}"
+            }
+            noteLaunch("DRAW_PATH=TRIANGLES assert=ok")
             collector.glRenderer = core.glRenderer
             collector.glVersion = core.glVersion
             collector.eglApi = core.eglApiVersion

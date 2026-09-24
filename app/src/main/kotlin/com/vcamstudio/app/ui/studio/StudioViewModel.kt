@@ -679,13 +679,9 @@ class StudioViewModel @Inject constructor(
         engine.setVboDrawPass(enabled)
     }
 
-    /** DEV TEST (round 17B): explicit triangle pairs instead of a strip. */
-    val trianglesOnly = MutableStateFlow(false)
-
-    fun setTrianglesOnly(enabled: Boolean) {
-        trianglesOnly.value = enabled
-        engine.setTrianglesOnly(enabled)
-    }
+    // Round 22: the round-17 TRIANGLES toggle is deleted — TRIANGLES is the
+    // only draw path in the engine (probe-wedge verdict: strip wedges on
+    // Adreno 730, triangles do not).
 
     /** DEV TEST (round 17C): render layers straight to the EGL surface. */
     val directSurfacePass = MutableStateFlow(false)

@@ -192,9 +192,10 @@ class RenderEngine(
     }
 
     /** DEV TEST (round 17B): explicit GL_TRIANGLES pairs instead of TRIANGLE_STRIP. */
-    fun setTrianglesOnly(enabled: Boolean) {
-        thread.post { thread.setTrianglesOnly(enabled) }
-    }
+    // Round 22: setTrianglesOnly DELETED (mandate 4) — no strip path exists.
+
+    /** Round 22 mandate 5: the permanent draw-path marker for diagnostics. */
+    fun drawPath(): String = com.vcamstudio.engine.render.render.SceneRenderer.DRAW_PATH
 
     /** DEV TEST (round 17C): layers render straight to the EGL surface (no scene FBO). */
     fun setDirectSurfacePass(enabled: Boolean) {
@@ -245,6 +246,7 @@ class RenderEngine(
             thread.vboErrorsLine()?.let { appendLine(it) }
             thread.stagingOverflowLine()?.let { appendLine(it) }
             appendLine("bisect=${thread.bisectLevel()}")
+            thread.drawPathLine()?.let { appendLine(it) }
             // (E) the EXACT shader sources compiled and last used for the
             // camera draw — verbatim, no summaries.
             thread.oesShaderSources()?.let { (vs, fs) ->
