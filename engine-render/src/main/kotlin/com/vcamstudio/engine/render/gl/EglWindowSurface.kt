@@ -35,6 +35,20 @@ class EglWindowSurface(
             false
         }
 
+    /**
+     * Round 24: EGL_SWAP_BEHAVIOR of this window surface — TRUE if buffer
+     * content is preserved across swap. On non-preserved surfaces a
+     * post-swap glReadPixels reads the RECYCLED (undefined-content) back
+     * buffer, so PRESENT_PROBE interpretations must check this first.
+     */
+    fun swapBehaviorPreserved(): Boolean? =
+        if (!isValid) null else {
+            val v = IntArray(1)
+            if (EGL14.eglQuerySurface(egl.eglDisplay, eglSurface, EGL14.EGL_SWAP_BEHAVIOR, v, 0)) {
+                v[0] == EGL14.EGL_BUFFER_PRESERVED
+            } else null
+        }
+
     fun setPresentationTime(nanos: Long) {
         if (isValid) {
             EGLExt.eglPresentationTimeANDROID(egl.eglDisplay, eglSurface, nanos)

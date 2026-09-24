@@ -1063,3 +1063,41 @@ Fixes, in mandate order:
 Rotation untouched (next round's single change). No strip path anywhere
 (golden source gate green). All other dev toggles default OFF in this build:
 uvDebugPass=false, directSurfacePass=false, bisectLevel=0, vboDrawPass=false.
+
+## Increment 24 — FLICKER CAPTURE: per-frame ring + present probe + surface events
+
+Device evidence: preview flickers black 1-few frames at a time (sub-second,
+returns immediately), camera-only present, worse with camera+video, RAW path
+clean, both devices. All existing probes sample at 1 Hz — the bad frame
+(1 in ~30) was never captured. Round 24 is INSTRUMENT ONLY.
+
+1. Per-frame ring (300 = 10s @ 30fps), lock-free (AtomicLong write index,
+   single writer = render thread), flushed oldest->newest into every dump
+   as FRAME_RING:
+   FRAME idx=<n> t=<ms> layer_draws=<n> cam_frame_ready=<bool>
+   vid_frame_ready=<bool> scene_fbo_written=<bool> present_swap_ms=<n>
+   since_last_present_ms=<n> st_hash=<FNV-32 of the 16 ST floats>
+   surface_id=<output id> [swap_skipped=unchanged]
+   Readiness = ExternalTextureSource.update() per frame (cam id vs other);
+   scene_fbo_written = renderedFrameCount advanced this frame.
+2. PRESENT_PROBE every 5th frame on the preview output (6/s @ 30fps):
+   PRESENT_PROBE_PRE idx rgb=<r,g,b> — 1x1 center readback of the COMPLETED
+   back buffer right BEFORE the swap (the content about to be presented);
+   PRESENT_PROBE idx rgb — after eglSwapBuffers returns, exactly as
+   mandated. BOTH lines exist because on non-preserved swap behavior the
+   post-swap read is the recycled back buffer; EGL_WINDOW_CREATED now logs
+   swapPreserved=<bool> (EGL_SWAP_BEHAVIOR query) so interpretations are
+   unambiguous. FBO_PROBE t=<ms> render=<n> rgb=<r,g,b> at 1 Hz (every 30
+   renders) added alongside the existing 1 Hz DRAW_STATS probes.
+   Flicker signature per mandate: FBO non-black + PRESENT black on the
+   same/next idx => present/blit races the composite or stale swap; both
+   black => upstream (nothing drawn that frame).
+3. Surface/EGL events, every one (eventLog + LAUNCH LOG):
+   EGL_WINDOW_CREATED dims= id= reason=<attach|recovery:...|surface-invalid|
+   swap-failures=30> swapPreserved=; EGL_WINDOW_DESTROYED dims= reason=
+   <detach|replace-on-attach>; SURFACE_ATTACHED/RESIZED/DETACHED (r20);
+   SWAP_STALLED ms= when a swap blocks >100ms; SWAP_SKIPPED as a per-frame
+   ring field (per-frame lines would flood the text logs).
+Out of scope honored: rotation untouched; TRIANGLES path untouched; no fix
+claim. Watchdog stall chains from backgrounded app = expected (idle
+nativePollOnce), per owner.

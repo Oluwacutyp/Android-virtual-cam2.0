@@ -219,6 +219,12 @@ class RenderEngine(
             val launch = thread.launchLogLines()
             if (launch.isEmpty()) appendLine("  (empty — engine not yet initialized)")
             launch.forEach { appendLine("  $it") }
+            // Round 24 mandate 1: per-frame ring + probe timeline, flushed
+            // in order — the capture the owner taps Copy dump for LIVE.
+            appendLine("FRAME_RING")
+            thread.frameRingLines().forEach { appendLine("  $it") }
+            appendLine("PROBE_RING")
+            thread.probeRingLines().forEach { appendLine("  $it") }
             appendLine("health=${d.health}")
             appendLine("fps=${"%.1f".format(d.fps)}")
             appendLine("presented=${d.presentedFrames}")

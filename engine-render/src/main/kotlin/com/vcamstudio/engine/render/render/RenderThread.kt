@@ -155,6 +155,10 @@ internal class RenderThread(
         var gaveUp: Boolean = false
         /** Render counter at last successful swap (present-on-change gate). */
         var lastPresentedRender: Long = -1L
+
+        /** Round 24: WHY this output needs a new EGL window surface (the
+         *  reason= field on the next EGL_WINDOW_CREATED line). */
+        var lastReinitReason: String = "attach"
     }
 
     // ---- scene state (render thread only)
@@ -201,6 +205,23 @@ internal class RenderThread(
      *  report is decisive even without logcat. */
     private val eventLog = ArrayDeque<String>(48)
     private val eventLock = Any()
+
+    // ---- round 24 mandate 1: per-frame ring buffers (300 = 10s @ 30fps) ----
+    // Single writer = render thread (lock-free, write index only); the dump
+    // snapshots slots oldest->newest, torn/blank entries are skipped.
+    private val frameRing = FrameRing(300)
+    private val probeRing = FrameRing(300)
+
+    fun frameRingLines(): List<String> = frameRing.snapshot()
+    fun probeRingLines(): List<String> = probeRing.snapshot()
+
+    // per-frame accumulators (render thread only, reset at doFrame start)
+    private var frLayerDraws = 0
+    private var frCamReady = false
+    private var frVidReady = false
+    private var frSwapSkipped = false
+    private var frSwapMs = 0L
+    private var frRenderedAtStart = 0L
 
     fun noteEvent(line: String) {
         val stamped = "${clock.nowMs()} $line"
@@ -395,10 +416,15 @@ internal class RenderThread(
             return
         }
         outputs.remove(id)
-        old?.eglSurface?.release() // previous EGL window surface released BEFORE recreate
+        old?.let { o ->
+            o.eglSurface?.release() // previous EGL window surface released BEFORE recreate
+            noteEvent("EGL_WINDOW_DESTROYED dims=${o.width}x${o.height} reason=replace-on-attach id=$id")
+            noteLaunch("EGL_WINDOW_DESTROYED dims=${o.width}x${o.height} reason=replace-on-attach id=$id")
+        }
         val out = Output(id, surface, width, height, eglSurface = null, needsReinit = true)
         out.createFailures = 0
         out.gaveUp = false // a fresh attach re-opens the attempt latch
+        out.lastReinitReason = "attach"
         outputs[id] = out
         if (id == PREVIEW_OUTPUT_ID) collector.previewSize = Size(width, height)
         noteEvent("SURFACE_ATTACHED id=$id ${width}x$height valid=${surface.isValid}")
@@ -410,7 +436,9 @@ internal class RenderThread(
         out.eglSurface?.release()
         if (id == PREVIEW_OUTPUT_ID) collector.previewSize = null
         Log.i(TAG, "output detached id=$id (${outputs.size} remain)")
+        noteEvent("EGL_WINDOW_DESTROYED dims=${out.width}x${out.height} reason=detach id=$id")
         noteLaunch("SURFACE_DETACHED id=$id")
+        noteLaunch("EGL_WINDOW_DESTROYED dims=${out.width}x${out.height} reason=detach id=$id")
         if (outputs.isEmpty() && initialized) {
             egl?.makeCurrentPbuffer() // keep context usable for source updates
         }
@@ -437,7 +465,10 @@ internal class RenderThread(
     fun requestOutputRecovery(reason: String) {
         collector.addRecovery(RecoveryEvent(clock.nowMs(), reason))
         Log.w(TAG, "output recovery requested: $reason")
-        for (out in outputs.values) out.needsReinit = true
+        for (out in outputs.values) {
+            out.needsReinit = true
+            out.lastReinitReason = "recovery:$reason"
+        }
         // Present loop performs the actual re-init on the next frame.
     }
 
@@ -465,7 +496,11 @@ internal class RenderThread(
             out.swapFailures = 0
             out.createFailures = 0
             noteEvent("EGL_WINDOW_CREATED id=${out.id}")
-            noteLaunch("EGL_WINDOW_CREATED dims=${out.width}x${out.height} id=${out.id}")
+            val preserved = out.eglSurface?.swapBehaviorPreserved()
+            noteLaunch(
+                "EGL_WINDOW_CREATED dims=${out.width}x${out.height} id=${out.id} " +
+                    "reason=${out.lastReinitReason} swapPreserved=$preserved",
+            )
             true
         } catch (t: Throwable) {
             out.createFailures++
@@ -547,6 +582,9 @@ internal class RenderThread(
 
     private fun doFrame(frameTimeNanos: Long) {
         applyPendingScene()
+        frLayerDraws = 0; frCamReady = false; frVidReady = false
+        frSwapSkipped = false; frSwapMs = 0L
+        frRenderedAtStart = renderedFrameCount
 
         loopIterations++
         if (loopIterations % 60 == 0L) {
@@ -567,7 +605,13 @@ internal class RenderThread(
             val updated = runCatching { src.update() }
                 .onFailure { Log.w(TAG, "SOURCE_UPDATE_FAILED ${it.message}") }
                 .getOrDefault(false)
-            if (updated) dirty = true
+            if (updated) {
+                dirty = true
+                // Round 24 mandate 1: per-source frame readiness (camera vs video).
+                if (src is com.vcamstudio.engine.render.source.ExternalTextureSource) {
+                    if (src.sourceId.contains("cam", ignoreCase = true)) frCamReady = true else frVidReady = true
+                }
+            }
         }
 
         val scene = currentScene
@@ -582,6 +626,57 @@ internal class RenderThread(
         runCatching { presentAll(frameTimeNanos) }.onFailure { t ->
             noteEvent("PRESENT_CRASH ${t.javaClass.simpleName}: ${t.message} @ ${t.stackTrace.firstOrNull()}")
         }
+        appendFrameEntry()
+    }
+
+    /** Round 24 mandate 1: one lock-free ring line per frame. */
+    private fun appendFrameEntry() {
+        val nowMs = clock.nowMs()
+        val st = externalSources.values.firstOrNull {
+            it.sourceId.contains("cam", ignoreCase = true)
+        } ?: externalSources.values.firstOrNull()
+        val stHash = if (st == null) "none" else stHashOf(st.transformMatrix)
+        val surfaceId = (outputs[PREVIEW_OUTPUT_ID] ?: outputs.values.firstOrNull())?.id ?: "none"
+        val sinceLast = if (lastPresentClockMs > 0) nowMs - lastPresentClockMs else -1L
+        frameRing.append(
+            "FRAME idx=$loopIterations t=$nowMs layer_draws=$frLayerDraws " +
+                "cam_frame_ready=$frCamReady vid_frame_ready=$frVidReady " +
+                "scene_fbo_written=${renderedFrameCount > frRenderedAtStart} " +
+                "present_swap_ms=$frSwapMs since_last_present_ms=$sinceLast " +
+                "st_hash=$stHash surface_id=$surfaceId" +
+                (if (frSwapSkipped) " swap_skipped=unchanged" else ""),
+        )
+    }
+
+    /**
+     * Round 24 mandate 2: 1x1 center readback of the preview surface.
+     * PRE reads the completed back buffer RIGHT BEFORE the swap — that is
+     * the content about to be presented (ground truth). POST reads after
+     * eglSwapBuffers returns, exactly as mandated; on non-preserved swap
+     * behavior that buffer is the recycled back buffer (undefined content),
+     * which is why BOTH lines exist and swapBehaviorPreserved is logged at
+     * window creation.
+     */
+    private fun presentProbe(out: Output, pre: Boolean) {
+        val px = java.nio.ByteBuffer.allocateDirect(4)
+        GLES30.glReadPixels(out.width / 2, out.height / 2, 1, 1, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, px)
+        val r = px.get(0).toInt() and 0xFF
+        val g = px.get(1).toInt() and 0xFF
+        val b = px.get(2).toInt() and 0xFF
+        probeRing.append(
+            (if (pre) "PRESENT_PROBE_PRE" else "PRESENT_PROBE") +
+                " idx=$loopIterations rgb=$r,$g,$b swapMs=$lastSwapDurationMs",
+        )
+    }
+
+    private fun stHashOf(m: FloatArray): String {
+        var h = 0x811C9DC5L
+        for (f in m) {
+            h = h xor (java.lang.Float.floatToIntBits(f).toLong() and 0xFFFFFFFFL)
+            h *= 0x01000193L
+            h = h and 0xFFFFFFFFL
+        }
+        return String.format("%08X", h)
     }
 
     private fun allSources(): Collection<TextureSource> {
@@ -684,6 +779,18 @@ internal class RenderThread(
         lastRenderMonotonicMs = clock.nowMs()
         if (renderedFrameCount == 1L) {
             noteEvent("FIRST_SCENE_RENDER ${scene.width}x${scene.height}")
+        }
+        frLayerDraws = drawn
+        // Round 24 mandate 2: FBO center probe at 1 Hz (30 frames @ 30fps).
+        if (renderedFrameCount % 30L == 0L) {
+            val px = java.nio.ByteBuffer.allocateDirect(4)
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, currentFbo().handle)
+            GLES30.glReadPixels(scene.width / 2, scene.height / 2, 1, 1, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, px)
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+            probeRing.append(
+                "FBO_PROBE t=${clock.nowMs()} render=$renderedFrameCount " +
+                    "rgb=${px.get(0).toInt() and 0xFF},${px.get(1).toInt() and 0xFF},${px.get(2).toInt() and 0xFF}",
+            )
         }
         fun hx(b: Int): String = String.format("%02X", b and 0xFF)
         // Every ~300 renders: prove whether the scene FBO actually contains
@@ -793,11 +900,15 @@ internal class RenderThread(
             // this output's last swap. (Regression note: gating on the scene
             // TEXTURE id was wrong — simple scenes reuse the same FBO texture
             // every frame, which froze presentation after the first swap.)
-            if (transFrac == null && out.lastPresentedRender == renderedFrameCount) continue
+            if (transFrac == null && out.lastPresentedRender == renderedFrameCount) {
+                frSwapSkipped = true // round 24: per-frame SWAP_SKIPPED field
+                continue
+            }
             if (!out.surface.isValid) {
                 // 0x300d class: producer surface already dead — force a fresh
                 // window surface instead of swapping at a corpse.
                 out.needsReinit = true
+                out.lastReinitReason = "surface-invalid"
                 if (!reinitOutput(out)) continue
             }
             presentAttemptCount++ // reached the present path for this output
@@ -845,13 +956,18 @@ internal class RenderThread(
             // (Counting note: the attempt was already counted at the top of
             // this output's present path — a second increment here made
             // presentAttempts report ~2x presented in every dump.)
+            val probeThisFrame = loopIterations % 5 == 0L && out.id == PREVIEW_OUTPUT_ID
+            if (probeThisFrame) presentProbe(out, pre = true)
             es.setPresentationTime(frameTimeNanos)
             val swapStartNs = System.nanoTime()
             val swapOk = es.swap()
             lastSwapDurationMs = (System.nanoTime() - swapStartNs) / 1_000_000
+            if (out.id == PREVIEW_OUTPUT_ID || frSwapMs == 0L) frSwapMs = lastSwapDurationMs
+            if (lastSwapDurationMs > 100) noteEvent("SWAP_STALLED ms=$lastSwapDurationMs id=${out.id}")
             if (swapOk) {
                 anySwapOk = true
                 out.swapFailures = 0
+                if (probeThisFrame) presentProbe(out, pre = false)
                 // A GL error AFTER a successful swap must never abort the
                 // frame loop or fake a zero presented-count (round-4 bug).
                 runCatching { checkGlError("present(${out.id})") }
@@ -875,6 +991,7 @@ internal class RenderThread(
                 if (!out.surface.isValid) out.needsReinit = true
                 if (f >= 30) {
                     out.needsReinit = true
+                    out.lastReinitReason = "swap-failures=$f"
                     out.swapFailures = 0
                     Log.w(TAG, "OUTPUT_RECYCLE id=${out.id} after 30 swap failures")
                 }
@@ -1080,5 +1197,33 @@ internal class RenderThread(
         const val RECORDING_OUTPUT_ID = "recording"
         const val DEFAULT_SOURCE_W = 1280
         const val DEFAULT_SOURCE_H = 720
+    }
+}
+
+
+/**
+ * Round 24 mandate 1: fixed-capacity ring for per-frame diagnostic lines.
+ * Single writer (render thread) — lock-free, write index only. The dump
+ * snapshots slots in emission order; a slot the writer is mid-write is
+ * skipped (tears are acceptable: the next frame carries the signal).
+ */
+private class FrameRing(private val capacity: Int) {
+    private val slots = arrayOfNulls<String>(capacity)
+    private val writeIndex = java.util.concurrent.atomic.AtomicLong(0)
+
+    fun append(line: String) {
+        val idx = writeIndex.getAndIncrement()
+        slots[(idx % capacity).toInt()] = line
+    }
+
+    /** Last <=capacity entries oldest -> newest. */
+    fun snapshot(): List<String> {
+        val total = writeIndex.get()
+        val start = (total - capacity).coerceAtLeast(0)
+        val out = ArrayList<String>(capacity.toInt())
+        for (i in start until total) {
+            slots[(i % capacity).toInt()]?.let { out.add(it) }
+        }
+        return out
     }
 }
