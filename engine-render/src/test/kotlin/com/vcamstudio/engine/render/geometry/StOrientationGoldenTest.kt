@@ -298,6 +298,7 @@ class StOrientationGoldenTest {
                 val folded = mulSt(foldLin(sensor), canonicalSt(key.first, key.second))
                 val cls = StOrientation.classify(folded)
                 assertNotNull("folded ST $key sensor=$sensor must classify", cls)
+                val known = cls!!
                 for (isFront in booleanArrayOf(false, true)) {
                     for (display in displays) {
                         // The FULL mandated path: folded MATRIX in, transform out.
@@ -305,7 +306,7 @@ class StOrientationGoldenTest {
                         // Compose the exact engine chain net: Rot . Mirror . ST.
                         val net = mmul(
                             mrot(comp.uvRotDeg.toInt()),
-                            mmul(if (comp.mirrorX) MH else I, classLin(cls.rotCwDeg, cls.mirror)),
+                            mmul(if (comp.mirrorX) MH else I, classLin(known.rotCwDeg, known.mirror)),
                         )
                         assertMandateNet(
                             net, isFront, display,
