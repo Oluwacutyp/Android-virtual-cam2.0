@@ -84,12 +84,21 @@ class StOrientationGoldenTest {
         return floatArrayOf(du.first.toFloat(), dv.first.toFloat(), du.second.toFloat(), dv.second.toFloat())
     }
 
-    /** Sensor/display fold linear part: (u,v) -> (c*u + s*v, -s*u + c*v). */
+    /**
+     * Sensor/display fold as a FULL 4x4 column-major affine (square-to-square
+     * about the center): (u,v) -> (c*u + s*v + t1, -s*u + c*v + t2) with
+     * t1 = 0.5 - 0.5(c+s), t2 = 0.5 + 0.5s - 0.5c.
+     */
     private fun foldLin(cwDeg: Int): FloatArray {
         val rad = Math.toRadians(cwDeg.toDouble())
         val c = Math.cos(rad).toFloat()
         val s = Math.sin(rad).toFloat()
-        return floatArrayOf(c, s, -s, c)
+        return floatArrayOf(
+            c, -s, 0f, 0f,
+            s, c, 0f, 0f,
+            0f, 0f, 1f, 0f,
+            0.5f - 0.5f * c - 0.5f * s, 0.5f + 0.5f * s - 0.5f * c, 0f, 1f,
+        )
     }
 
     /** D4 label of a matrix, or null if not axis-aligned (must never happen here). */
@@ -210,8 +219,12 @@ class StOrientationGoldenTest {
             0f, 1f, 0f, 1f,
         )
         val frontNet = mmul(mrot(front.uvRotDeg.toInt()), mmul(if (front.mirrorX) MH else I, classLin(90, StMirror.NONE)))
-        // Canonical net for the mandated front comp: MH (upright + mirrored).
-        assertEquals("MH", d4Label(frontNet))
+        // Canonical net for the mandated front comp: MV. The device display
+        // frame reads canonical MV as upright+mirrored (round-27 screenshot
+        // calibration: r28's canonical-MH front displayed upside-down, i.e.
+        // the device frame conjugates by R90 — the mandate's 90/true target
+        // is exactly the MV net).
+        assertEquals("MV", d4Label(frontNet))
         assertEquals(StClass(90, StMirror.NONE), StOrientation.classify(devSt))
 
         // Back net through the chain MUST be canonical identity (R0).
