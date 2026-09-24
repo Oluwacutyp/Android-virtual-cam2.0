@@ -1359,3 +1359,47 @@ Expected ORIENT_APPLY per send-back state (display 0):
 NO "fixed" claim — device send-back (a)-(e) pending. If any state is still wrong, the
 owner names the next value from the observed residual (ladder: 0 is the only untried
 constant); we change the bias, nothing else.
+
+## Increment 32 — Round-27: DIAGNOSE (classifier pin + rigid-net proof), no constant
+
+**Head `673ab66`, CI run 36032477113 SUCCESS** — first try. 3 files, compensate() byte-identical
+to r26 (the r26 constant stands; ladder value 0 remains untried and owner-named only).
+
+### Code-level findings (from the r26 dump + source, before any device run)
+
+1. **The "shear" was a decoder gap, not a math bug.** `SourceUvMath.classifyNet` named only 6 of
+   the 8 D4 transforms — the two diagonal reflections fell through to OTHER[...]. The r26 dump's
+   `OTHER[u=(0,1) v=(1,0)]` IS the transpose — a valid rigid transform (harness label MH_R90;
+   production now names it DIAG_MIRROR). And the harness's closed-form prediction for the r26
+   front comp (R180·MH·R90classLin) IS the transpose: production measured EXACTLY what the model
+   predicts. The composition {ST}+{comp} is rigid on the device.
+2. **finalUV is not degenerate.** (a) v0==v3 duplication is the 6-vertex TL,TR,BR/TL,BR,BL layout
+   (TRI_ORDER scatter of 4 unique corners — shared diagonal, by design). (b) The v-band
+   0.342..0.658 is the LayerGeometry base fit/crop window mapped through the rigid 180° — a crop,
+   not a distortion.
+3. **The two conflicting ST_CLASS lines are two different classify paths on two different source
+   ids** (cam-3e895ee9 vs cam-119fb6f7): the bind-time ST_CLASS event (RenderThread, per frame
+   change) vs the dump-time re-classify inside OES_ORIENT (SceneRenderer:908). Different ids
+   points at owner hypothesis (b): a rebind minted a second source id while the old one still
+   updates/logs. The classifier itself is a pure corner-probe — nondeterminism can only enter
+   through the matrix content.
+
+### Shipped
+
+- **Step 1 — classifier pin** (RenderThread): literal double-read of the ST (both copies
+  classified; mismatch => ST_CLASS_FLIP scope=in-read, comp HELD) + a 2-consecutive-event
+  stability window for any candidate change (first sighting => ST_CLASS_FLIP scope=cross-event +
+  hold; second => promote). FLIP lines rate-limited to 1/s/source. Pending state cleaned up on
+  source close/sync.
+- **Step 2 — rigid check** (SourceUvMath): classifyNet names ALL 8 D4 (adds DIAG_MIRROR,
+  ANTI_DIAG_MIRROR), adds det/orthogonality check => NOT_RIGID[u,v,det] for true shear (report-
+  only). Golden harness: assertRigid(net) = explicit 8-set membership on all 256 cases + the three
+  anchor nets; new bridge test pins classifyNet's name for each of the 8 + shear=>NOT_RIGID
+  (0.6 shear — 0.3 stays inside the legacy near-tolerance).
+
+### Owner device protocol (30 s, single front camera layer, no video)
+
+grep ST_CLASS_FLIP / ST_CLASS / OES_ORIENT ... NET= / ORIENT_APPLY. Stable run = zero FLIP lines
++ one constant ST_CLASS; any FLIP = root cause named (scope=in-read => unstable HAL matrix;
+scope=cross-event => source/id alternation => hypothesis (b) confirmed). NET= now decodes all 8;
+NOT_RIGID in a dump would mean a real composition bug (not seen in 256/256).
