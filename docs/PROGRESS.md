@@ -1131,3 +1131,33 @@ section = rolling last-5 swaps (t/idx/ms/ok/id), synchronized writes.
 Out of scope honored: rotation untouched (NET=MIRROR_V parked); TRIANGLES
 path untouched (dump shows staging=[cap=144,pos=144,need=144], draw=
 TRIANGLES, 6-entry UVs — the r23 write-path fix is confirmed on device).
+
+## Increment 26 — H1 CONFIRMED: skip-swap is the flicker; Option A locked in
+
+Device confirmation (r24 build, direct-to-surface toggle as the A/B): FBO
+path flickers with 2/33ms alternation + ~8% skipped callbacks; direct path
+(no skip) clean, ~1%. swapPreserved=false means a skipped swap presents
+undefined back-buffer content = the blink. H2 also confirmed (PRESENT_PROBE
+UB on default FB, dropped r25).
+
+State of the engine (shipped r25, this increment locks it):
+- Option A IS the engine: present-on-change skip DELETED (no toggle,
+  "do not keep both" honored). Every present-path tick re-draws the last
+  scene FBO (drawTextureQuad blit) and calls eglSwapBuffers.
+- swap_skipped: zero occurrences in code (field + line deleted r25).
+- PRESENT_PROBE: removed entirely (r25); READBACK_FBO (1x1 offscreen blit)
+  is the present-time readback; FBO_PROBE + FRAME_RING + SWAP_RECENT kept.
+- r17 direct-to-surface DEV toggle: available, default OFF (not the fix —
+  it bypasses the scene FBO composition chain).
+NEW this increment (mandate ALSO-4): SKIP_SWAP_ENABLED=false policy const +
+boot assertion in reinitOutput — on any surface reporting swapBehavior=
+non-preserved, SKIP_SWAP_ENABLED=true is a hard check() failure at window
+creation ("SKIP-SWAP FORBIDDEN ... the confirmed flicker root cause").
+LAUNCH LOG line now: SWAP_MODE=<preserved|undefined|unknown> id=...
+skipSwapAllowed=<bool>.
+
+Pending owner verification (send-backs): 60s watch on the FBO path (all
+toggles OFF) => gone/reduced/same; ring dump with zero swap_skipped lines
+(impossible by construction) and since_last_present_ms STABLE — expect
+~8ms on a 120Hz panel or ~16ms at 60Hz (stable is the criterion, not
+single-digit). No fixed claim until (a) screenshot no-flicker + (b) ring.

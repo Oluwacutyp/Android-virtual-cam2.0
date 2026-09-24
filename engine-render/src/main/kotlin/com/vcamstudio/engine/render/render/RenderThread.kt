@@ -507,12 +507,24 @@ internal class RenderThread(
             out.createFailures = 0
             noteEvent("EGL_WINDOW_CREATED id=${out.id}")
             val preserved = out.eglSurface?.swapBehaviorPreserved()
+            // Round 26 mandate 4 (owner's plain terms): if the surface does
+            // NOT preserve the back buffer, skip-swap is FORBIDDEN. This
+            // engine never skips (present-on-change deleted); the assertion
+            // makes any future reintroduction a boot-time failure.
+            if (preserved == false) {
+                check(!SKIP_SWAP_ENABLED) {
+                    "SKIP-SWAP FORBIDDEN: EGL_SWAP_BEHAVIOR is not EGL_BUFFER_PRESERVED on " +
+                        "${out.id} (${out.width}x${out.height}); skipping eglSwapBuffers presents " +
+                        "undefined back-buffer content — the confirmed flicker root cause (H1). " +
+                        "Present every frame."
+                }
+            }
             val swapMode = when (preserved) {
                 true -> "preserved"
                 false -> "undefined"
                 null -> "unknown"
             }
-            noteLaunch("SWAP_MODE=$swapMode id=${out.id}")
+            noteLaunch("SWAP_MODE=$swapMode id=${out.id} skipSwapAllowed=${preserved != false || !SKIP_SWAP_ENABLED}")
             noteLaunch(
                 "EGL_WINDOW_CREATED dims=${out.width}x${out.height} id=${out.id} " +
                     "reason=${out.lastReinitReason} swapPreserved=$preserved",
@@ -1260,6 +1272,17 @@ internal class RenderThread(
 
     companion object {
         private const val TAG = "vcam-render"
+
+        /**
+         * Round 26 mandate 4: policy switch for the FLICKER class. The
+         * present-on-change skip was removed (round 25) after device
+         * confirmation of H1: on swapPreserved=false surfaces a skipped
+         * eglSwapBuffers presents undefined back-buffer content — visible
+         * black blinks. If this is ever set true, boot FAILS on any
+         * non-buffer-preserving surface (see reinitOutput) — a loud
+         * assertion, not a silent flicker.
+         */
+        private const val SKIP_SWAP_ENABLED = false
         const val PREVIEW_OUTPUT_ID = "preview"
         const val RECORDING_OUTPUT_ID = "recording"
         const val DEFAULT_SOURCE_W = 1280
