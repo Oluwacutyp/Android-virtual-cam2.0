@@ -101,16 +101,25 @@ class StOrientationGoldenTest {
         )
     }
 
+    /**
+     * Zero-sign/epsilon-insensitive float equality. FloatArray.contentEquals
+     * is Arrays.equals(float[]), i.e. Float.equals semantics: -0.0f != 0.0f.
+     * mmul products routinely produce -0f (e.g. 0f*(-1f) + (-1f)*0f), which
+     * made every mirrored net compare unequal to its D4 constant ("OTHER").
+     */
+    private fun feq(a: FloatArray, b: FloatArray): Boolean =
+        a.size == b.size && a.indices.all { Math.abs(a[it] - b[it]) < 1e-4f }
+
     /** D4 label of a matrix, or null if not axis-aligned (must never happen here). */
     private fun d4Label(m: FloatArray): String = when {
-        m.contentEquals(I) -> "R0"
-        m.contentEquals(R90) -> "R90"
-        m.contentEquals(R180) -> "R180"
-        m.contentEquals(R270) -> "R270"
-        m.contentEquals(MH) -> "MH"
-        m.contentEquals(MV) -> "MV"
-        m.contentEquals(mmul(MH, R90)) -> "MH_R90"
-        m.contentEquals(mmul(MH, R270)) -> "MH_R270"
+        feq(m, I) -> "R0"
+        feq(m, R90) -> "R90"
+        feq(m, R180) -> "R180"
+        feq(m, R270) -> "R270"
+        feq(m, MH) -> "MH"
+        feq(m, MV) -> "MV"
+        feq(m, mmul(MH, R90)) -> "MH_R90"
+        feq(m, mmul(MH, R270)) -> "MH_R270"
         else -> "OTHER"
     }
 
