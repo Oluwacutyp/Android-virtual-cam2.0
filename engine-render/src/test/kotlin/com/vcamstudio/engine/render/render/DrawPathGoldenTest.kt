@@ -63,7 +63,7 @@ class DrawPathGoldenTest {
         // shared diagonal's zero-edge pixels are resolved by the top-left
         // rule (exactly one triangle covers each — no gap, no hole).
         fun toPx(x: Float, y: Float): Pair<Float, Float> =
-            (((x + 1f) / 2f) * w - 0.5f, ((1f - y) / 2f) * h - 0.5f)
+            Pair(((x + 1f) / 2f) * w - 0.5f, ((1f - y) / 2f) * h - 0.5f)
 
         for (t in 0 until verts.size / 3) {
             val a = verts[t * 3]
