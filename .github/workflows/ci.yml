@@ -53,6 +53,15 @@ jobs:
               grep -aE "^[e]: |error:|Error:|FAILURE|What went wrong|Caused by:|Task .* FAILED|Unresolved reference|Could not (resolve|find|get)|Execution failed|Lint found|> .* FAILED" "$f" >> /tmp/errors.txt || true
             fi
           done
+          # JUnit XML failure messages + first stack frames (assertion text).
+          {
+            find . -path "*/test-results/*" -name "*.xml" 2>/dev/null | while read -r x; do
+              echo "=== $x ==="
+              grep -aoE '<testcase name="[^"]*"[^>]*>' "$x" | head -20
+              grep -aoE '<failure message="[^"]*"' "$x" | head -20
+              grep -aoE 'at com\.vcamstudio\.[^<"]*' "$x" | head -10
+            done
+          } >> /tmp/errors.txt
           {
             echo "CI failure report for run ${{ github.run_id }} (${GITHUB_WORKFLOW})"
             echo ""
