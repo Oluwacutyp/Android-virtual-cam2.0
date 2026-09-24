@@ -610,7 +610,7 @@ internal class SceneRenderer(
             Log.w("vcam-render", drawPathViolation!!)
             return
         }
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, TRI_ORDER.size)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, TRI_ORDER.size)
     }
 
     @Volatile
