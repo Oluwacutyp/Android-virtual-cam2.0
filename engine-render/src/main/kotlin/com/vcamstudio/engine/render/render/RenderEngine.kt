@@ -203,6 +203,11 @@ class RenderEngine(
     }
 
     /** DEV BISECT (round 19): T1..T5 minimal rungs; 0 = full pipeline (T6). */
+    /** Round 27 mandate 2: DEV static-FBO content test. */
+    fun setStaticFboContent(enabled: Boolean) {
+        thread.post { thread.setStaticFboContent(enabled) }
+    }
+
     fun setBisectLevel(level: Int) {
         thread.post { thread.setBisectLevel(level) }
     }

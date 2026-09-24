@@ -1161,3 +1161,40 @@ toggles OFF) => gone/reduced/same; ring dump with zero swap_skipped lines
 (impossible by construction) and since_last_present_ms STABLE — expect
 ~8ms on a 120Hz panel or ~16ms at 60Hz (stable is the criterion, not
 single-digit). No fixed claim until (a) screenshot no-flicker + (b) ring.
+
+## Increment 27 — skip-line semantics fixed + static-FBO blit isolation + explicit present state
+
+Owner round-23 report: direct path (no scene FBO) = camera stable but video
+never lands (bypasses composition — stays DEV-only OFF); FBO path composites
+correctly but flickers. Flicker site narrowed to the FBO->surface present
+step or scene-FBO state at blit time. Correction of record: the skip
+BRANCH has been gone since r25 — what the owner caught was the r26
+skipSwapAllowed log expression evaluating TRUE on a non-preserving surface
+(preserved!=false || !SKIP_SWAP_ENABLED == true). A log bug that read like
+a live skip path. Fixed.
+
+1. Mandate 1 (remove skip path): nothing to delete — verified no branch
+   reads skipSwapAllowed; every valid-surface pass re-blits the scene FBO
+   and swaps (since r25). skipSwapAllowed line now prints the REAL policy
+   (SKIP_SWAP_ENABLED && preserved==true) => false on device. Boot check
+   retained: policy ON + non-preserving surface = hard startup failure.
+2. Mandate 2 (isolate the blit): NEW DEV toggle "static FBO content
+   (round-23 test)" — ON paints a solid quad into the scene FBO ONCE
+   (drawBisectSolid green), then every frame is blit-and-swap only: no
+   scene redraw, no camera/video frame pulls (sources not updated in this
+   mode). Chain: RenderThread.staticFboContent + paintStaticFboOnce ->
+   RenderEngine passthrough -> VM flow -> Screen -> DiagnosticsSheet
+   switch. Expected split: clean blit => scene-FBO UPDATE path; flickering
+   static blit => the blit/viewport/format/surface-reconfig itself.
+   READBACK_FBO in this mode reads ~41,191,89 (the static green) — a
+   positive control that the probe works.
+3. Mandate 3 (explicit surface state on every blit): at the top of the
+   present blit, unconditionally: glBindFramebuffer(0), glViewport(0,0,
+   surface_w,surface_h), glDisable(SCISSOR_TEST), blend set explicitly
+   (enabled only in the transition branch, disabled otherwise),
+   glColorMask(all true), glUseProgram(copy) via new
+   SceneRenderer.usePresentProgram(); kept the black clear (full
+   overwrite). DRAW_STATE now logs fbo=, blend=on|off, colorMask=[...] on
+   every capture.
+Out of scope honored: rotation parked; TRIANGLES closed; r17 direct toggle
+stays DEV-only default-OFF.

@@ -121,6 +121,33 @@ internal class RenderThread(
     }
 
     /** DEV BISECT (round 19): T1..T5 minimal-rung renderer; 0 = normal pipeline. */
+    /** Round 27 mandate 2: DEV static-FBO test — paint a solid quad into the
+     *  scene FBO ONCE, then every frame is FBO->surface blit + swap ONLY. */
+    @Volatile
+    var staticFboContent: Boolean = false
+
+    private var staticFboPainted = false
+
+    fun setStaticFboContent(enabled: Boolean) {
+        staticFboContent = enabled
+        staticFboPainted = false // re-ON repaints
+        noteEvent("STATIC_FBO mode=$enabled")
+    }
+
+    private fun paintStaticFboOnce() {
+        if (staticFboPainted) return
+        val r = renderer ?: return
+        if (sceneFboA == null || currentScene == null) return
+        val fbo = currentFbo()
+        fbo.bindViewport()
+        GLES30.glClearColor(0f, 0f, 0f, 1f)
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+        r.drawBisectSolid(fromAttrib = false, tag = "STATIC_FBO")
+        presentedSceneTex = fbo.texture.id
+        staticFboPainted = true
+        noteEvent("STATIC_FBO_PAINTED fbo=${fbo.handle} tex=${fbo.texture.id}")
+    }
+
     fun setBisectLevel(level: Int) {
         renderer?.bisectLevel = level
     }
@@ -524,7 +551,11 @@ internal class RenderThread(
                 false -> "undefined"
                 null -> "unknown"
             }
-            noteLaunch("SWAP_MODE=$swapMode id=${out.id} skipSwapAllowed=${preserved != false || !SKIP_SWAP_ENABLED}")
+            // Round 27: the line now states the REAL policy — skipping would
+            // be permitted only if the switch were ON AND the surface
+            // preserves. On this device (undefined): false.
+            val skipSwapAllowed = SKIP_SWAP_ENABLED && preserved == true
+            noteLaunch("SWAP_MODE=$swapMode id=${out.id} skipSwapAllowed=$skipSwapAllowed")
             noteLaunch(
                 "EGL_WINDOW_CREATED dims=${out.width}x${out.height} id=${out.id} " +
                     "reason=${out.lastReinitReason} swapPreserved=$preserved",
@@ -626,29 +657,36 @@ internal class RenderThread(
             )
         }
 
-        var dirty = false
-        // One misbehaving source (abandoned surface, producer crash) must
-        // never kill the whole frame — isolate it.
-        for (src in allSources()) {
-            val updated = runCatching { src.update() }
-                .onFailure { Log.w(TAG, "SOURCE_UPDATE_FAILED ${it.message}") }
-                .getOrDefault(false)
-            if (updated) {
-                dirty = true
-                // Round 24 mandate 1: per-source frame readiness (camera vs video).
-                if (src is com.vcamstudio.engine.render.source.ExternalTextureSource) {
-                    if (src.sourceId.contains("cam", ignoreCase = true)) frCamReady = true else frVidReady = true
+        if (staticFboContent && initialized) {
+            // Round 27 mandate 2: blit-and-swap ONLY — no scene redraw, no
+            // camera/video frame pulls. presentedSceneTex stays the static
+            // painted FBO; presentAll re-blits it every tick.
+            paintStaticFboOnce()
+        } else {
+            var dirty = false
+            // One misbehaving source (abandoned surface, producer crash) must
+            // never kill the whole frame — isolate it.
+            for (src in allSources()) {
+                val updated = runCatching { src.update() }
+                    .onFailure { Log.w(TAG, "SOURCE_UPDATE_FAILED ${it.message}") }
+                    .getOrDefault(false)
+                if (updated) {
+                    dirty = true
+                    // Round 24 mandate 1: per-source frame readiness (camera vs video).
+                    if (src is com.vcamstudio.engine.render.source.ExternalTextureSource) {
+                        if (src.sourceId.contains("cam", ignoreCase = true)) frCamReady = true else frVidReady = true
+                    }
                 }
             }
-        }
 
-        val scene = currentScene
-        if (scene != null && (dirty || sceneNeedsRender || pendingTransitionCapture || transitionActive())) {
-            runCatching { renderScene(scene) }
-                .onFailure {
-                    noteEvent("RENDER_CRASH ${it.javaClass.simpleName}: ${it.message} @ ${it.stackTrace.firstOrNull()}")
-                }
-            sceneNeedsRender = false
+            val scene = currentScene
+            if (scene != null && (dirty || sceneNeedsRender || pendingTransitionCapture || transitionActive())) {
+                runCatching { renderScene(scene) }
+                    .onFailure {
+                        noteEvent("RENDER_CRASH ${it.javaClass.simpleName}: ${it.message} @ ${it.stackTrace.firstOrNull()}")
+                    }
+                sceneNeedsRender = false
+            }
         }
 
         runCatching { presentAll(frameTimeNanos) }.onFailure { t ->
@@ -1006,7 +1044,15 @@ internal class RenderThread(
             }
             out.makeCurrentFailures = 0
 
+            // Round 27 mandate 3: EXPLICIT surface state on EVERY present
+            // blit — the draw must never inherit state from the scene pass.
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
             GLES30.glViewport(0, 0, out.width, out.height)
+            GLES30.glDisable(GLES30.GL_SCISSOR_TEST)
+            val blending = transFrac != null && prevFbo != null
+            if (blending) GLES30.glEnable(GLES30.GL_BLEND) else GLES30.glDisable(GLES30.GL_BLEND)
+            GLES30.glColorMask(true, true, true, true)
+            r.usePresentProgram()
             GLES30.glClearColor(0f, 0f, 0f, 1f)
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
 
@@ -1014,7 +1060,6 @@ internal class RenderThread(
             lastPresentQuad = quad.cornersPx.copyOf()
             val t = transFrac
             if (t != null && prevFbo != null) {
-                GLES30.glEnable(GLES30.GL_BLEND)
                 GLES30.glBlendFuncSeparate(
                     GLES30.GL_ONE, GLES30.GL_ONE_MINUS_SRC_ALPHA,
                     GLES30.GL_ONE, GLES30.GL_ONE_MINUS_SRC_ALPHA,

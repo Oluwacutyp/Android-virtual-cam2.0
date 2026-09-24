@@ -683,6 +683,14 @@ class StudioViewModel @Inject constructor(
     // only draw path in the engine (probe-wedge verdict: strip wedges on
     // Adreno 730, triangles do not).
 
+    /** DEV TEST (round 27): static scene-FBO content — blit-and-swap only. */
+    val staticFboContent = MutableStateFlow(false)
+
+    fun setStaticFboContent(enabled: Boolean) {
+        staticFboContent.value = enabled
+        engine.setStaticFboContent(enabled)
+    }
+
     /** DEV TEST (round 17C): render layers straight to the EGL surface. */
     val directSurfacePass = MutableStateFlow(false)
 

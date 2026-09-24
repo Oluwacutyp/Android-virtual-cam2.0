@@ -224,6 +224,8 @@ fun StudioScreen(
             onVboDraw = vm::setVboDrawPass,
             directSurfacePass = vm.directSurfacePass.collectAsStateWithLifecycle().value,
             onDirectSurface = vm::setDirectSurfacePass,
+            staticFboContent = vm.staticFboContent.collectAsStateWithLifecycle().value,
+            onStaticFboContent = vm::setStaticFboContent,
             bisectLevel = vm.bisectLevel.collectAsStateWithLifecycle().value,
             onBisect = vm::setBisectLevel,
             onDismiss = { vm.setSheet(StudioViewModel.Sheet.NONE) },

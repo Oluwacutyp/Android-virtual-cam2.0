@@ -217,6 +217,12 @@ internal class SceneRenderer(
         issueTriangles("copyFbo")
     }
 
+    /** Round 27 mandate 3: bind the present program EXPLICITLY at the top
+     *  of the surface blit (the draw then re-uses it — same program). */
+    fun usePresentProgram() {
+        programs.copy.use()
+    }
+
     /** Samples a 2D FBO texture onto an arbitrary quad of the current target (present path). */
     fun drawTextureQuad(
         textureId: Int,
@@ -723,6 +729,12 @@ internal class SceneRenderer(
         audited(errs, "viewport") { GLES30.glGetIntegerv(GLES30.GL_VIEWPORT, viewport, 0) }
         audited(errs, "scissorBox") { GLES30.glGetIntegerv(GLES30.GL_SCISSOR_BOX, scissorBox, 0) }
         val scissorTest = auditedOn(errs, "scissorTest") { GLES30.glIsEnabled(GLES30.GL_SCISSOR_TEST) }
+        // Round 27 mandate 3: surface state as the blit sees it.
+        val drawFbo = IntArray(1)
+        audited(errs, "drawFbo") { GLES30.glGetIntegerv(GLES30.GL_DRAW_FRAMEBUFFER_BINDING, drawFbo, 0) }
+        val blendOn = auditedOn(errs, "blendTest") { GLES30.glIsEnabled(GLES30.GL_BLEND) }
+        val colorMask = IntArray(4)
+        audited(errs, "colorMask") { GLES30.glGetIntegerv(GLES30.GL_COLOR_WRITEMASK, colorMask, 0) }
         // Raw bytes the draw consumes (mandate 16D-2). Client arrays: the CPU
         // staging IS the source (nothing to map) — log its 96 bytes as
         // float-bit hex. VBO test path: map the bound buffer and log ITS bytes.
@@ -792,6 +804,9 @@ internal class SceneRenderer(
             append(" frontFace=0x").append(Integer.toHexString(frontFace[0]))
             append(" viewport=[").append(viewport.joinToString(",")).append("]")
             append(" scissorBox=[").append(scissorBox.joinToString(",")).append("]")
+            append(" fbo=").append(drawFbo[0])
+            append(" blend=").append(if (blendOn) "on" else "off")
+            append(" colorMask=[").append(colorMask.joinToString(",") { if (it != 0) "1" else "0" }).append("]")
             append(" scissorTest=").append(if (scissorTest) "on" else "off")
             append(" CLIP=").append((0 until 4).joinToString(";", "[", "]") { i ->
                 String.format(Locale.US, "%.3f,%.3f", posBuf.get(i * 2), posBuf.get(i * 2 + 1))

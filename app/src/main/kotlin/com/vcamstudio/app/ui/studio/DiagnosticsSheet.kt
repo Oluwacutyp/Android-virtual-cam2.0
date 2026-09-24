@@ -46,6 +46,9 @@ fun DiagnosticsSheet(
     onVboDraw: (Boolean) -> Unit,
     directSurfacePass: Boolean,
     onDirectSurface: (Boolean) -> Unit,
+    staticFboContent: Boolean,
+    onStaticFboContent: (Boolean) -> Unit,
+
     bisectLevel: Int,
     onBisect: (Int) -> Unit,
     onDismiss: () -> Unit,
@@ -107,6 +110,21 @@ fun DiagnosticsSheet(
                         androidx.compose.material3.Switch(
                             checked = vboDrawPass,
                             onCheckedChange = onVboDraw,
+                        )
+                    }
+                }
+                item {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "DEV: static FBO content (round-23 test)",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        androidx.compose.material3.Switch(
+                            checked = staticFboContent,
+                            onCheckedChange = onStaticFboContent,
                         )
                     }
                 }
