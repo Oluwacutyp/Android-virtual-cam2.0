@@ -15,13 +15,14 @@ package com.vcamstudio.engine.render.geometry
  * through the ST and match the resulting (TL, du, dv) signature. NEVER a
  * hardcoded sensor/table guess — the ST is read fresh every time.
  *
- * [compensate] is the pure mandate formula (round-25 sign, device
- * calibrated): given the ST class, the desired mirror (front selfie only)
- * and the display rotation, derive the layer UV rotation and mirror:
+ * [compensate] is the pure mandate formula (round-25 sign, round-26
+ * device-calibrated bias): given the ST class, the desired mirror (front
+ * selfie only) and the display rotation, derive the layer UV rotation and
+ * mirror:
  *
  *     mx    = (mirror != NONE) XOR desiredMirrorH
- *     uvRot = mx ? (rotCw - display) : (display - rotCw)   (mod 360)
- *     uvRot = (uvRot + (mirror == V ? 180 : 0)) mod 360
+ *     uvRot = (rotCw - display + (rotCw == 90 ? 90 : 0)
+ *              + (mirror == V ? 180 : 0)) mod 360
  *
  * Verified by StOrientationGoldenTest: 8 classes x {mirror, clean} x
  * sensor fold {0, 90, 180, 270} x display {0, 90, 180, 270} = 256 cases.
@@ -68,20 +69,28 @@ object StOrientation {
     }
 
     /**
-     * Round-25 mandate (owner "ROUND 25 — ROTATION. SIGN FLIP + VIDEO
-     * ROUTING") — supersedes the r28 sign. The rot cancel is the mandate's
-     * literal swapped order, ONE branch for ALL sources (cameras AND video):
+     * Round-26 mandate (owner "ROUND 26 — ROTATION. ONE CONSTANT. ONE
+     * CHANGE") — supersedes the r25 constant for the rot=90 family. The
+     * rot cancel stays the r25 swapped order, ONE branch for ALL sources
+     * (cameras AND video), ONE device-calibration bias:
      *
      *     mx    = (st mirror != NONE) XOR desiredMirrorH
-     *     uvRot = (rotCw - displayDeg + (mirror == V ? 180 : 0) + 360) % 360
+     *     uvRot = (rotCw - displayDeg + ROT90_FAMILY_BIAS
+     *              + (mirror == V ? 180 : 0) + 360) % 360
      *
-     * Device-calibrated (round-25 report, dump ST class rot=90/none):
-     * front -> uvRot=90/mirrorX=true (was 270/true in r28 — the whole flip);
-     * back and video net to CANONICAL IDENTITY (composed net = R(-display):
-     * upright in any display frame, the strongest anchor there is). A
-     * V-mirrored ST class needs the extra 180 (V == H + 180 in this
-     * decomposition); a V class at display 0 with clean desired nets
-     * identity only with that shift (machine-checked over 256 cases).
+     *     ROT90_FAMILY_BIAS = 90 if rotCw == 90 else 0
+     *
+     * Device evidence (r25 build, owner report): front (class 90/none,
+     * uvRot=90) showed up-at-RIGHT (90 CCW off); back (same class,
+     * uvRot=90) showed up-at-LEFT (90 CW off); video (class 90/h, same
+     * function) showed up-at-LEFT. Same 90 pre-mirror residual on every
+     * rot=90 chain — the mirror flips its display direction. Owner ladder:
+     * r24 uvRot=270 -> 180 off; r25 uvRot=90 -> 90 off; r26 uvRot=180
+     * (bias 90->uvRot lands 180 at display 0 for the whole rot=90 family:
+     * front 180/true, back 180/false, video 180/true). Classes with
+     * rotCw != 90 are UNCHANGED from r25 (machine-checked byte-identical
+     * over the non-90 cases). A V-mirrored ST class still needs its extra
+     * 180 (V == H + 180 in this decomposition).
      *
      * desiredMirrorH: front selfie = true (upright + horizontally mirrored);
      * back camera and video = false (upright, not mirrored). displayRotDeg =
@@ -92,7 +101,8 @@ object StOrientation {
         val mx = (cls.mirror != StMirror.NONE) != desiredMirrorH
         val display = ((displayRotDeg % 360) + 360) % 360
         val vShift = if (cls.mirror == StMirror.V) 180 else 0
-        val uvRot = ((cls.rotCwDeg - display + vShift) % 360 + 360) % 360
+        val r90Bias = if (cls.rotCwDeg == 90) 90 else 0
+        val uvRot = ((cls.rotCwDeg - display + r90Bias + vShift) % 360 + 360) % 360
         return StCompensation(uvRot.toFloat(), mx)
     }
 

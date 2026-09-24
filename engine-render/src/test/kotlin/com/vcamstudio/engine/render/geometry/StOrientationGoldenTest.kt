@@ -21,15 +21,19 @@ import org.junit.Test
  * (Rot(uvRot) . Mirror(mirrorX) . ST) as 2x2 matrices and assert it against
  * an INDEPENDENT closed form:
  *
- *     clean desired  -> net == R(360 - display)  (canonical upright, exactly)
+ *     clean desired  -> net == R(360 - display)   (rot != 90 classes)
+ *                       net == R(450 - display)   (rot=90 family: the r26
+ *                       device-calibrated bias — canonical nets read 90-off
+ *                       on the device, mirrored chains in the opposite
+ *                       direction from clean ones)
  *     mirror desired -> net improper AND the mandated mirror/rot form
  *
- * Canonical-identity displays upright in ANY frame convention, so the clean
- * assertion pins "upright in the display frame" up to the single calibrated
- * device fact (round-25 dump: canonical nets read through the compositor
- * with an R90-conjugated frame). Anchors pin the device-calibrated values:
- * front class rot=90/none at display 0 -> uvRot=90/mirrorX=true (the r28
- * 270/true value is the flipped one and MUST NOT reappear).
+ * Anchors pin the device-calibrated values (r26 owner ladder: r24 uvRot=270
+ * -> 180 off; r25 uvRot=90 -> 90 off; r26 uvRot=180 = the remaining
+ * constant): front class rot=90/none at display 0 -> uvRot=180/mirrorX=true,
+ * back same class -> uvRot=180/mirrorX=false, video (rot=90/h, same
+ * function) -> uvRot=180/mirrorX=true. The r28 270/true value MUST NOT
+ * reappear; the r25 90/90 pair read 90-off in opposite directions.
  */
 class StOrientationGoldenTest {
 
@@ -126,15 +130,15 @@ class StOrientationGoldenTest {
     /**
      * Frame-free geometric laws the mandate's algebra MUST satisfy, asserted
      * per case on the composed net (canonical frame):
-     *   clean desired  -> net == R(360 - display) EXACTLY (canonical upright
-     *                     carrying the display compensation — identity at
-     *                     display 0, upright in ANY frame convention);
-     *   mirror desired -> net improper (a displayed mirror state), and the
-     *                     anchor test pins the axis/rotation on the device
-     *                     dump ST (front -> MH: upright + mirrored).
+     *   clean desired  -> net == R(360 - display) EXACTLY for rot != 90
+     *                     classes; for the rot=90 family the r26 device
+     *                     calibration post-applies R90: R(450 - display);
+     *   mirror desired -> net improper (a displayed mirror state), axis
+     *                     pinned by the anchor test on the device dump ST.
      */
     private fun assertMandateNet(
         net: FloatArray,
+        rotCwDeg: Int,
         desiredMirrorH: Boolean,
         display: Int,
         case: String,
@@ -144,7 +148,12 @@ class StOrientationGoldenTest {
         val improper = label.startsWith("MH") || label == "MV"
         assertEquals("$case: displayed-mirror state", desiredMirrorH, improper)
         if (!desiredMirrorH) {
-            assertEquals("$case: clean net must be exactly R(360-display)", "R${(360 - display) % 360}", label)
+            val r90Bias = if (rotCwDeg == 90) 90 else 0
+            assertEquals(
+                "$case: clean net must be exactly R(360-display+r90Bias)",
+                "R${((360 - display) + r90Bias) % 360}",
+                label,
+            )
         }
     }
 
@@ -212,14 +221,17 @@ class StOrientationGoldenTest {
     }
 
     @Test
-    fun `round-25 device anchors - class rot90 none display 0`() {
-        // Front selfie: upright + mirrored. THE r25 flip: uvRot=90 (r28 ran 270).
+    fun `round-26 device anchors - class rot90 none display 0`() {
+        // THE r26 constant (owner ladder: r24 270->180 off, r25 90->90 off,
+        // r26 180 = the remaining value): front selfie uvRot=180/mirrorX=true,
+        // back uvRot=180/mirrorX=false — same class, same uvRot, mirror-only
+        // difference (the r25 90/90 pair was 90-off in opposite directions).
         val front = StOrientation.compensate(StClass(90, StMirror.NONE), desiredMirrorH = true, displayRotDeg = 0)
-        assertEquals(90f, front.uvRotDeg, 0.01f)
+        assertEquals(180f, front.uvRotDeg, 0.01f)
         assertTrue(front.mirrorX)
-        // Back camera: canonical-identity net (upright in any display frame).
+        // Back camera: same 180, no mirror.
         val back = StOrientation.compensate(StClass(90, StMirror.NONE), desiredMirrorH = false, displayRotDeg = 0)
-        assertEquals(90f, back.uvRotDeg, 0.01f)
+        assertEquals(180f, back.uvRotDeg, 0.01f)
         assertTrue(!back.mirrorX)
         val devSt = floatArrayOf(
             0f, -1f, 0f, 0f,
@@ -228,24 +240,25 @@ class StOrientationGoldenTest {
             0f, 1f, 0f, 1f,
         )
         val frontNet = mmul(mrot(front.uvRotDeg.toInt()), mmul(if (front.mirrorX) MH else I, classLin(90, StMirror.NONE)))
-        // Canonical net for the mandated front comp: MV. The device display
-        // frame reads canonical MV as upright+mirrored (round-27 screenshot
-        // calibration: r28's canonical-MH front displayed upside-down, i.e.
-        // the device frame conjugates by R90 — the mandate's 90/true target
-        // is exactly the MV net).
-        assertEquals("MV", d4Label(frontNet))
+        // Device-calibrated front net (r26): canonical MV read 90-off on the
+        // r25 build (up at RIGHT), so the correct net is R90 pre-multiplied:
+        // R180 . MH . R90classLin = MH_R90. Back: R180 . R90classLin = R90
+        // (r25's canonical R0 read up-at-LEFT — 90 CW off).
+        assertEquals("MH_R90", d4Label(frontNet))
         assertEquals(StClass(90, StMirror.NONE), StOrientation.classify(devSt))
 
-        // Back net through the chain MUST be canonical identity (R0).
+        // Back net through the chain MUST be R90 (the r26 device constant).
         val backNet = mmul(mrot(back.uvRotDeg.toInt()), mmul(if (back.mirrorX) MH else I, classLin(90, StMirror.NONE)))
-        assertEquals("R0", d4Label(backNet))
+        assertEquals("R90", d4Label(backNet))
 
-        // Video (dump: class rot=90 mirror=h), clean desired -> identity net.
+        // Video (dump: class rot=90 mirror=h) — SAME function, no own formula:
+        // uvRot=180/mirrorX=true at display 0, net R90 (was canonical R0 in
+        // r25 and read up-at-LEFT, same as back).
         val video = StOrientation.compensate(StClass(90, StMirror.H), desiredMirrorH = false, displayRotDeg = 0)
-        assertEquals(90f, video.uvRotDeg, 0.01f)
+        assertEquals(180f, video.uvRotDeg, 0.01f)
         assertTrue(video.mirrorX)
         val videoNet = mmul(mrot(video.uvRotDeg.toInt()), mmul(if (video.mirrorX) MH else I, classLin(90, StMirror.H)))
-        assertEquals("R0", d4Label(videoNet))
+        assertEquals("R90", d4Label(videoNet))
     }
 
     @Test
@@ -275,7 +288,7 @@ class StOrientationGoldenTest {
                             mmul(if (comp.mirrorX) MH else I, classLin(cls.rotCwDeg, cls.mirror)),
                         )
                         assertMandateNet(
-                            net, desiredMirrorH, display,
+                            net, cls.rotCwDeg, desiredMirrorH, display,
                             "base=$key sensor=$sensor dm=$desiredMirrorH display=$display " +
                                 "comp=(${comp.uvRotDeg},${comp.mirrorX})",
                         )
