@@ -10,8 +10,15 @@ import android.opengl.GLES32
  */
 class GlProgram(val vertexSource: String, val fragmentSource: String) {
 
+    // Captured during createProgram (declared BEFORE handle so init order is right).
+    private val compileLogBuffer = StringBuilder()
+
     val handle: Int = createProgram(vertexSource, fragmentSource)
     private val uniformCache = HashMap<String, Int>()
+
+    /** Driver info logs captured at compile/link time (round-20 MANDATE 2:
+     *  LAUNCH LOG carries SHADER_COMPILED ... logs=<infoLog> even on success). */
+    val compileLog: String = compileLogBuffer.toString().trim()
 
     fun use() = GLES30.glUseProgram(handle)
 
@@ -44,6 +51,8 @@ class GlProgram(val vertexSource: String, val fragmentSource: String) {
             GLES30.glDeleteProgram(program)
             throw GlException("Program link failed: $log")
         }
+        val linkLog = GLES30.glGetProgramInfoLog(program)
+        if (linkLog.isNotBlank()) compileLogBuffer.append("link='").append(linkLog.trim()).append("' ")
         // Shaders can be flagged for deletion once linked.
         GLES30.glDeleteShader(v)
         GLES30.glDeleteShader(f)
@@ -62,6 +71,12 @@ class GlProgram(val vertexSource: String, val fragmentSource: String) {
             throw GlException(
                 "Shader compile failed (${if (type == GLES30.GL_VERTEX_SHADER) "vertex" else "fragment"}): $log",
             )
+        }
+        val log = GLES30.glGetShaderInfoLog(shader)
+        if (log.isNotBlank()) {
+            compileLogBuffer
+                .append(if (type == GLES30.GL_VERTEX_SHADER) "vs=" else "fs=")
+                .append("'").append(log.trim()).append("' ")
         }
         return shader
     }

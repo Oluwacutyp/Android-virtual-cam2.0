@@ -38,7 +38,12 @@ class RenderEngine(
     private val watchdog = Watchdog(
         clock,
         check = { thread.watchdogStatus() },
-        onRecover = { reason -> thread.post { thread.requestOutputRecovery(reason) } },
+        // Round-20 MANDATE 3: enrich every stall entry with thread + blocking
+        // call (render-thread stack) + last render-loop activity + swap time.
+        onRecover = { reason ->
+            val detail = thread.stallDiagnostics(reason)
+            thread.post { thread.requestOutputRecovery(detail) }
+        },
     )
 
     private val _diagnostics = MutableStateFlow(DiagnosticsSnapshot())
@@ -206,6 +211,13 @@ class RenderEngine(
         val d = _diagnostics.value
         return buildString {
             appendLine("VCAM-DIAG v1")
+            // Round-20 MANDATE 2: the boot/launch record precedes everything
+            // else in every dump — EGL context, shader compiles, surface
+            // attach/resize/detach, first present, GL errors, in order.
+            appendLine("LAUNCH LOG")
+            val launch = thread.launchLogLines()
+            if (launch.isEmpty()) appendLine("  (empty — engine not yet initialized)")
+            launch.forEach { appendLine("  $it") }
             appendLine("health=${d.health}")
             appendLine("fps=${"%.1f".format(d.fps)}")
             appendLine("presented=${d.presentedFrames}")

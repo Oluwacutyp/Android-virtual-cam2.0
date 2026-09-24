@@ -928,3 +928,43 @@ faults; ignore recoveries= during T1-T4 (T5/T6 run the full render path and
 are meaningful).
 
 No fix claims. Standing rule intact.
+
+## Increment 20 — round-20 mandates: probe-wedge module + LAUNCH LOG + stall cause
+
+Owner verdict on round 19: BISECTION IS VOID. The T1–T5 toggles swapped only
+the present pass while the full camera pipeline kept rendering underneath
+(owner visually confirmed the Camera layer stayed live in the LAYERS rail;
+dumps show DRAW_STATE[OES:cam-…] L0=Camera at every bisect level), so every
+"rung" screenshot still contained the wedge. Rule accepted: no more in-engine
+toggle iteration. Three mandates, one build, no exceptions:
+
+1. :probe-wedge (NEW Gradle module, SEPARATE APK, applicationId
+   com.vcamstudio.probe, ZERO dependency on any engine module):
+   - One Activity (plain Views, no Compose), one SurfaceView, one EGL context
+     on one HandlerThread render loop.
+   - VS: `const vec2 POS[4]=vec2[4](...)` positions indexed by gl_VertexID,
+     `gl_Position=vec4(POS[gl_VertexID],0,1)`; NO attribute upload at all.
+     FS: solid green vec4(0.2,0.7,0.3,1.0). GL_TRIANGLE_STRIP 0..4, present,
+     repeat. No camera / layers / FBO / diag / toggles.
+   - Logs EGL vendor/renderer/version + EGL surface dims + shader logs +
+     glGetError per frame + swap failures to filesDir/probe-wedge-log.txt,
+     mirrored on screen (log tail). File is the deliverable alongside the
+     screenshot, from a FRESH INSTALL.
+   - Verdict protocol: green + no wedge ⇒ wedge is in the studio engine
+     (T1-minimal in-engine becomes the only valid isolation); wedge present
+     ⇒ bug is below our code (Adreno driver / EGL window composition) — stop
+     engine work, go to SurfaceView/EGL configuration.
+2. LAUNCH LOG prepended to every dump (RenderThread.noteLaunch ring, 96):
+   EGL_CTX vendor/renderer/version/egl, SHADER_COMPILED prog/name/logs=
+   (GlProgram now retains vs/fs/link info logs even on success),
+   EGL_WINDOW_CREATED dims=, SURFACE_ATTACHED dims=, SURFACE_RESIZED
+   from= to=, SURFACE_DETACHED, FIRST_PRESENT dims=, GL_ERROR code= at
+   scene-draw/present/frame-loop. All lines stamped [t=<ms>].
+3. STALL CAUSE per watchdog entry: RenderThread.stallDiagnostics() enriches
+   the recovery reason with thread=vcam-render, the render thread's DEEPEST
+   8 stack frames (shows eglSwapBuffers / lock / queue wait verbatim),
+   lastSwapDurationMs (swap calls now instrumented in both present paths),
+   and the last 3 eventLog lines (render-loop activity in the 500ms before).
+
+Known cost (declared): the probe activity is a separate debug APK; CI root
+assembleDebug builds it alongside the studio app.

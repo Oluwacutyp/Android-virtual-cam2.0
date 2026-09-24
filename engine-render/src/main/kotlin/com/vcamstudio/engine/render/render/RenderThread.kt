@@ -207,6 +207,46 @@ internal class RenderThread(
 
     fun recentEvents(): List<String> = synchronized(eventLog) { eventLog.toList() }
 
+    /** Round-20 MANDATE 2: append-only boot/launch record (never trimmed by
+     *  steady-state events) — EGL_CTX, EGL_WINDOW_CREATED, SURFACE_ATTACHED,
+     *  SURFACE_RESIZED, SURFACE_DETACHED, FIRST_PRESENT, SHADER_COMPILED,
+     *  GL_ERROR. Prepended to every dump as the LAUNCH LOG block. */
+    private val launchLog = ArrayDeque<String>(96)
+    private val launchLock = Any()
+
+    fun noteLaunch(line: String) {
+        val stamped = "[t=${clock.nowMs()}] $line"
+        synchronized(launchLock) {
+            if (launchLog.size >= 96) launchLog.removeFirst()
+            launchLog.addLast(stamped)
+        }
+        Log.i(TAG, "LAUNCH $line")
+    }
+
+    fun launchLogLines(): List<String> = synchronized(launchLock) { launchLog.toList() }
+
+    /** Last swap duration in ms — MANDATE 3 stall attribution input. */
+    @Volatile
+    var lastSwapDurationMs: Long = 0
+        private set
+
+    /**
+     * Round-20 MANDATE 3: every watchdog stall entry must record WHICH thread
+     * stalled, WHAT call it was blocked in, and what the render loop did in
+     * the moments before. Runs on the watchdog thread — it only READS state,
+     * and captures the render thread's stack (deepest frames first) so a
+     * native block (eglSwapBuffers, lock, queue wait) is visible verbatim.
+     */
+    fun stallDiagnostics(reason: String): String {
+        val frames = Thread.getAllStackTraces()[this]
+            ?.take(8)
+            ?.map { "${it.className.substringAfterLast('.')}.${it.methodName}" }
+            ?.joinToString(" <- ")
+            ?: "no-stack"
+        val prior = synchronized(eventLog) { eventLog.takeLast(3).joinToString(" ; ") }
+        return "$reason thread=${name} swapMs=$lastSwapDurationMs renderStack=[$frames] prior=[$prior]"
+    }
+
     fun outputStatus(): String =
         outputs.entries.joinToString(";") { (id, o) ->
             "$id:egl=${o.eglSurface != null},mcFail=${o.makeCurrentFailures}," +
@@ -234,7 +274,22 @@ internal class RenderThread(
         try {
             val core = EglCore()
             egl = core
+            noteLaunch(
+                "EGL_CTX vendor=${GLES30.glGetString(GLES30.GL_VENDOR)} " +
+                    "renderer=${core.glRenderer} version=${core.glVersion} egl=${core.eglApiVersion}",
+            )
             programs = Shaders.buildPrograms() // throws GlException on shader bugs (fail fast)
+            // MANDATE 2: exact SHADER_COMPILED lines (handle + driver info log) at boot.
+            listOf(
+                "tex2d" to programs!!.tex2d, "texOes" to programs!!.texOes,
+                "tex2dLut" to programs!!.tex2dLut, "texOesLut" to programs!!.texOesLut,
+                "fill" to programs!!.fill, "blur" to programs!!.blur,
+                "blend" to programs!!.blend, "copy" to programs!!.copy,
+                "uvDebug" to programs!!.uvDebug,
+                "bisectSolid" to programs!!.bisectSolid, "bisectSolidAttr" to programs!!.bisectSolidAttr,
+            ).forEach { (name, p) ->
+                noteLaunch("SHADER_COMPILED prog=${p.handle} name=$name logs=${p.compileLog.ifEmpty { "-" }}")
+            }
             renderer = SceneRenderer(programs!!).also { it.enableVertexArrays() }
             collector.glRenderer = core.glRenderer
             collector.glVersion = core.glVersion
@@ -319,10 +374,13 @@ internal class RenderThread(
         if (old != null && old.surface === surface && surface.isValid && old.eglSurface != null) {
             // Same live surface re-attached (view resize): keep the EGL window
             // surface — only the size changed. No destroy/recreate churn.
+            val fromW = old.width
+            val fromH = old.height
             old.width = width
             old.height = height
             if (id == PREVIEW_OUTPUT_ID) collector.previewSize = Size(width, height)
             noteEvent("SURFACE_RESIZED id=$id ${width}x$height (egl surface kept)")
+            noteLaunch("SURFACE_RESIZED from=${fromW}x$fromH to=${width}x$height id=$id")
             return
         }
         outputs.remove(id)
@@ -333,6 +391,7 @@ internal class RenderThread(
         outputs[id] = out
         if (id == PREVIEW_OUTPUT_ID) collector.previewSize = Size(width, height)
         noteEvent("SURFACE_ATTACHED id=$id ${width}x$height valid=${surface.isValid}")
+        noteLaunch("SURFACE_ATTACHED dims=${width}x$height id=$id")
     }
 
     fun detachOutput(id: String) {
@@ -340,6 +399,7 @@ internal class RenderThread(
         out.eglSurface?.release()
         if (id == PREVIEW_OUTPUT_ID) collector.previewSize = null
         Log.i(TAG, "output detached id=$id (${outputs.size} remain)")
+        noteLaunch("SURFACE_DETACHED id=$id")
         if (outputs.isEmpty() && initialized) {
             egl?.makeCurrentPbuffer() // keep context usable for source updates
         }
@@ -394,6 +454,7 @@ internal class RenderThread(
             out.swapFailures = 0
             out.createFailures = 0
             noteEvent("EGL_WINDOW_CREATED id=${out.id}")
+            noteLaunch("EGL_WINDOW_CREATED dims=${out.width}x${out.height} id=${out.id}")
             true
         } catch (t: Throwable) {
             out.createFailures++
@@ -470,6 +531,7 @@ internal class RenderThread(
     private fun noteGlFailure(t: GlException) {
         consecutiveFailedRecoveries++
         collector.addRecovery(RecoveryEvent(clock.nowMs(), "gl failure: ${t.message}"))
+        noteLaunch("GL_ERROR code=${t.message} at frame-loop")
     }
 
     private fun doFrame(frameTimeNanos: Long) {
@@ -648,6 +710,7 @@ internal class RenderThread(
                     "SCENE_PIXELS=[" + probeVals.take(4).joinToString(",") { p -> "[" + p.joinToString(",") { hx(it) } + "]" } +
                     "] glErr=0x${Integer.toHexString(err)}",
             )
+            if (err != 0) noteLaunch("GL_ERROR code=0x${Integer.toHexString(err)} at scene-draw frame=$renderedFrameCount")
         }
     }
 
@@ -772,7 +835,10 @@ internal class RenderThread(
             // this output's present path — a second increment here made
             // presentAttempts report ~2x presented in every dump.)
             es.setPresentationTime(frameTimeNanos)
-            if (es.swap()) {
+            val swapStartNs = System.nanoTime()
+            val swapOk = es.swap()
+            lastSwapDurationMs = (System.nanoTime() - swapStartNs) / 1_000_000
+            if (swapOk) {
                 anySwapOk = true
                 out.swapFailures = 0
                 // A GL error AFTER a successful swap must never abort the
@@ -780,11 +846,13 @@ internal class RenderThread(
                 runCatching { checkGlError("present(${out.id})") }
                     .onFailure {
                         Log.w(TAG, "POST_SWAP_GL_ERROR id=${out.id}: ${it.message} (swap OK, frame counted)")
+                        noteLaunch("GL_ERROR code=${it.message} at present(${out.id}) post-swap")
                     }
                 out.lastPresentedRender = renderedFrameCount
                 if (!out.firstPresentLogged) {
                     out.firstPresentLogged = true
                     noteEvent("FIRST_PRESENT ${out.id} ${out.width}x${out.height}")
+                    noteLaunch("FIRST_PRESENT dims=${out.width}x${out.height} id=${out.id}")
                 }
             } else {
                 out.swapFailures++
@@ -792,6 +860,7 @@ internal class RenderThread(
                 noteEvent(
                     "SWAP_FAILED id=${out.id} n=$f err=0x${Integer.toHexString(EGL14.eglGetError())} surfaceValid=${out.surface.isValid}",
                 )
+                noteLaunch("SWAP_FAILED id=${out.id} n=$f")
                 if (!out.surface.isValid) out.needsReinit = true
                 if (f >= 30) {
                     out.needsReinit = true
@@ -951,11 +1020,15 @@ internal class RenderThread(
             GLES30.glClearColor(0f, 0f, 0f, 1f)
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
             es.setPresentationTime(frameTimeNanos)
-            if (es.swap()) {
+            val blankStartNs = System.nanoTime()
+            val blankOk = es.swap()
+            lastSwapDurationMs = (System.nanoTime() - blankStartNs) / 1_000_000
+            if (blankOk) {
                 anySwapOk = true
                 if (!out.firstPresentLogged) {
                     out.firstPresentLogged = true
                     Log.i(TAG, "FIRST_PRESENT ${out.id} ${out.width}x${out.height} (blank)")
+                    noteLaunch("FIRST_PRESENT dims=${out.width}x${out.height} id=${out.id} blank")
                 }
             } else {
                 out.needsReinit = true

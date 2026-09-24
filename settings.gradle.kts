@@ -37,3 +37,6 @@ include(":engine-media")
 include(":engine-audio")
 include(":engine-output")
 include(":app")
+// Round-20 mandate 1: standalone minimal wedge probe. Separate APK, ZERO
+// dependency on any studio engine module — decisive isolation either way.
+include(":probe-wedge")
