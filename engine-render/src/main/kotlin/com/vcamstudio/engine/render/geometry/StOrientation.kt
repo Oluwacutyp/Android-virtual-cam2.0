@@ -57,12 +57,16 @@ object StOrientation {
      */
     fun classify(st: FloatArray): StClass? {
         if (st.size < 16) return null
-        val tl = pair(st[12], st[13])
+        val tlx = Math.round(st[12])
+        val tly = Math.round(st[13])
         val tr = mapPoint(st, 1f, 0f)
         val bl = mapPoint(st, 0f, 1f)
-        val du = pair(round1(tr.first - tl.first), round1(tr.second - tl.second))
-        val dv = pair(round1(bl.first - tl.first), round1(bl.second - tl.second))
-        return SIGNATURES[Triple(roundPair(tl), du, dv)]
+        val key = Triple(
+            Pair(tlx, tly),
+            Pair(Math.round(tr.first - st[12]), Math.round(tr.second - st[13])),
+            Pair(Math.round(bl.first - st[12]), Math.round(bl.second - st[13])),
+        )
+        return SIGNATURES[key]
     }
 
     /**
@@ -89,12 +93,6 @@ object StOrientation {
 
     private fun mapPoint(st: FloatArray, u: Float, v: Float): Pair<Float, Float> =
         Pair(st[0] * u + st[4] * v + st[12], st[1] * u + st[5] * v + st[13])
-
-    private fun round1(x: Float): Int = Math.round(x)
-
-    private fun pair(x: Float, y: Float): Pair<Float, Float> = Pair(x, y)
-
-    private fun roundPair(p: Pair<Float, Float>): Pair<Int, Int> = Pair(round1(p.first), round1(p.second))
 
     // Canonical corner signatures: (TL, du = TL->TR, dv = TL->BL) -> class.
     // Mirror is applied in texture space first, then the CW rotation; every
