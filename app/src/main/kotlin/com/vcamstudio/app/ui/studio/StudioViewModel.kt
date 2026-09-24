@@ -18,6 +18,10 @@ import com.vcamstudio.engine.media.ImageLoader
 import com.vcamstudio.engine.media.MixerAudioTap
 import com.vcamstudio.engine.media.VideoLayerController
 import com.vcamstudio.engine.output.RecordingController
+import com.vcamstudio.engine.render.geometry.StClass
+import com.vcamstudio.engine.render.geometry.StMirror
+import com.vcamstudio.engine.render.geometry.StOrientation
+import com.vcamstudio.engine.render.geometry.StCompensation
 import com.vcamstudio.engine.render.lut.CubeLutParser
 import com.vcamstudio.engine.render.model.BlendMode
 import com.vcamstudio.engine.render.model.ColorGrade
@@ -124,6 +128,13 @@ class StudioViewModel @Inject constructor(
     /** Engine-owned surfaces per camera layer id, kept for fast rebinds. */
     private val cameraSurfaces = LinkedHashMap<String, android.view.Surface>()
 
+    /**
+     * Round-28: last ST-class-derived compensation per camera-layer source
+     * id. Seeds the rebind path (camera Bound collect) so lifecycle bounces
+     * don't flash mis-oriented frames before the next ST_CLASS event.
+     */
+    private val lastOrientationComp = LinkedHashMap<String, StCompensation>()
+
     private var lifecycleOwner: LifecycleOwner? = null
 
     val uiState: StateFlow<UiState> = combine(
@@ -181,6 +192,13 @@ class StudioViewModel @Inject constructor(
         engine.onExternalSourceReleased = { sourceId ->
             onExternalSourceReleased(sourceId)
         }
+        // Round-28: the engine classifies every producer ST (ST_CLASS event);
+        // the camera-layer UV compensation derives from that class — the
+        // single canonical rotation place (round-24 mandate, supersedes the
+        // r18 sensor-arithmetic revert).
+        engine.onSourceOrientationClassified = { sourceId, rotCwDeg, mirror ->
+            onSourceOrientationClassified(sourceId, rotCwDeg, mirror)
+        }
 
         // Mic PCM (48 kHz mono) feeds the mixer MIC bus for recording.
         mic.pcmSink = { pcm, _ -> mixer.offerPcm(AudioBusId.MIC, pcm, 1) }
@@ -189,26 +207,32 @@ class StudioViewModel @Inject constructor(
             settings.sceneResolution.collect { sceneResolution.value = it }
         }
         viewModelScope.launch {
-            // Camera bound -> apply sensor rotation to camera-layer UVs so the
-            // GL compositor shows upright content (RAW/PreviewView does its own).
+            // Camera bound -> re-apply the LAST ST-class-derived orientation
+            // compensation if one is known for this camera layer (rebind /
+            // lifecycle path: the engine re-classifies within a frame or two,
+            // but the seed avoids any mis-oriented first frames). The
+            // rotation itself derives EXCLUSIVELY from ST_CLASS events
+            // (round-24 mandate) — no sensor arithmetic here anymore.
             cameraSource.state.collect { st ->
                 if (st !is CameraSource.State.Bound) return@collect
-                // Reverted to the c73a4d5 semantics per owner directive
-                // (round 18): uvRot = (360 - sensor) % 360, mirror = front only.
-                val rot = ((360 - cameraSource.rotationDegrees()) % 360).toFloat()
-                val mirror = cameraSource.isFrontCamera()
                 var changed = false
                 scenes.value = scenes.value.map { s ->
                     s.copy(layers = s.layers.map { l ->
-                        if (l is LayerDefinition.Camera &&
-                            (l.transform.uvRotationDeg != rot || l.transform.mirrorX != mirror)
-                        ) {
-                            changed = true
-                            l.copy(transform = l.transform.copy(uvRotationDeg = rot, mirrorX = mirror))
+                        if (l is LayerDefinition.Camera) {
+                            val comp = lastOrientationComp[l.id] ?: return@map l
+                            if (l.transform.uvRotationDeg != comp.uvRotDeg ||
+                                l.transform.mirrorX != comp.mirrorX
+                            ) {
+                                changed = true
+                                l.copy(transform = l.transform.copy(uvRotationDeg = comp.uvRotDeg, mirrorX = comp.mirrorX))
+                            } else l
                         } else l
                     })
                 }
-                if (changed) commit()
+                if (changed) {
+                    Timber.i("ORIENT_SEED re-applied last ST-class compensation on camera bind")
+                    commit()
+                }
             }
         }
         viewModelScope.launch {
@@ -805,6 +829,43 @@ class StudioViewModel @Inject constructor(
         } else {
             cameraSource.unbind()
         }
+    }
+
+    /**
+     * Round-28 (owner "ROUND 24 — ROTATION"): the engine classified this
+     * source's producer ST into a new orientation class. Derive the layer UV
+     * compensation from the class as a pure function — back camera nets
+     * ROT_0 (upright, not mirrored), front selfie nets ROT_0 + horizontal
+     * mirror (upright, mirrored) — and apply it to the matching camera layer.
+     * This is the ONE canonical rotation place for the GL path; no sensor
+     * arithmetic anywhere (the r18 formula is superseded by this mandate).
+     * Video layers keep their own metadata-rotation path (out of scope).
+     */
+    private fun onSourceOrientationClassified(sourceId: String, rotCwDeg: Int, mirrorTag: String) {
+        val mirror = StMirror.fromTag(mirrorTag) ?: return
+        var applied: StCompensation? = null
+        var changedAny = false
+        scenes.value = scenes.value.map { s ->
+            s.copy(layers = s.layers.map { l ->
+                if (l is LayerDefinition.Camera && l.id == sourceId) {
+                    val front = l.lensFacing == RenderLensFacing.FRONT
+                    val comp = StOrientation.compensate(StClass(rotCwDeg, mirror), front)
+                    applied = comp
+                    lastOrientationComp[sourceId] = comp
+                    if (l.transform.uvRotationDeg != comp.uvRotDeg || l.transform.mirrorX != comp.mirrorX) {
+                        changedAny = true
+                        l.copy(transform = l.transform.copy(uvRotationDeg = comp.uvRotDeg, mirrorX = comp.mirrorX))
+                    } else l
+                } else l
+            })
+        }
+        val comp = applied
+        Timber.i(
+            "ORIENT_APPLY id=%s st_class=rot%d/%s -> uvRot=%.0f mirrorX=%s changed=%s",
+            sourceId, rotCwDeg, mirrorTag,
+            comp?.uvRotDeg ?: -1f, comp?.mirrorX?.toString() ?: "?", changedAny,
+        )
+        if (changedAny) commit()
     }
 
     private fun rebindCamera(layerId: String, controls: ProControls) {

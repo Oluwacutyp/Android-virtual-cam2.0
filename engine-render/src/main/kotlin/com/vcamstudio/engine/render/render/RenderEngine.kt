@@ -62,6 +62,14 @@ class RenderEngine(
     /** Called on the MAIN thread when the engine released an external source. */
     var onExternalSourceReleased: ((sourceId: String) -> Unit)? = null
 
+    /**
+     * Round-28: fired on the MAIN thread whenever a source's producer ST
+     * classifies to a NEW orientation class (rot CW deg + mirror tag
+     * none|h|v). The app derives the camera-layer UV compensation from this —
+     * the single canonical rotation place (round-24 mandate).
+     */
+    var onSourceOrientationClassified: ((sourceId: String, rotCwDeg: Int, mirror: String) -> Unit)? = null
+
     @Volatile
     private var started = false
 
@@ -161,6 +169,10 @@ class RenderEngine(
 
     override fun onExternalSourceReleased(sourceId: String) {
         onExternalSourceReleased?.invoke(sourceId)
+    }
+
+    override fun onSourceOrientationClassified(sourceId: String, rotCwDeg: Int, mirror: String) {
+        onSourceOrientationClassified?.invoke(sourceId, rotCwDeg, mirror)
     }
 
     // ---------------------------------------------------------- diagnostics

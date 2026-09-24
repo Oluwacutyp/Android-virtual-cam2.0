@@ -1198,3 +1198,53 @@ a live skip path. Fixed.
    every capture.
 Out of scope honored: rotation parked; TRIANGLES closed; r17 direct toggle
 stays DEV-only default-OFF.
+
+## Increment 28 — rotation: ST-class classifier + pure compensation + 64-case golden harness
+
+Owner round-24 mandate (final Phase-1 item): the GL preview shows both
+cameras mis-rotated (front selfie upside-down per r27 screenshot) while the
+RAW CameraX path is correct for both — so the defect is in how the GL layer
+transforms the producer ST. One build, three things: classify, compensate,
+harness.
+
+1. ST-CLASS CLASSIFIER (new geometry/StOrientation.kt, pure Kotlin): the
+   producer ST decomposes at bind/every-change into one of EIGHT canonical
+   classes StClass(rotCwDeg 0/90/180/270, mirror none/h|v) via a corner
+   probe (map TL/TR/BL through the ST, match the (TL, du, dv) signature).
+   Canonical form = mirror-in-texture-space first, then CW rotation; the 8
+   signatures cover the full dihedral group. RenderThread classifies every
+   ExternalTextureSource after each successful update(), st-hash-gated, and
+   on change logs `ST_CLASS id=<src> rot=<n> mirror=<none|h|v>` into the
+   event ring + fires onSourceOrientationClassified (RenderThread.Listener ->
+   RenderEngine -> VM, MAIN thread). Non-orthogonal STs (video crop/scale)
+   log ST_CLASS_UNCLASSIFIED once per hash instead. captureOesDebug's
+   OES_ORIENT line now also carries ST_CLASS=. NEVER hardcoded — the matrix
+   is read fresh.
+2. PURE COMPENSATION: StOrientation.compensate(class, frontFacing) derives
+   the layer transform: uvRot = (front ? (360-rotCw) : rotCw) + (mirror==V ?
+   180) mod 360; mirrorX = (mirror != NONE) XOR front — the rot cancels in
+   the OPPOSITE sense per facing (the mirrored target conjugates the
+   cancellation; V == H + 180 in this decomposition), which the naive
+   (desired-current)%360 shape gets wrong for back cameras. The VM applies
+   it to the matching camera layer (back nets IDENTITY, front nets
+   MIRROR_H) — the one canonical rotation place. The r18 sensor-arithmetic
+   block in the camera Bound collect is DELETED (orientation now derives
+   exclusively from ST_CLASS events; the collect only re-seeds the last
+   known compensation on rebind). Video metadata-rotation path untouched
+   (out of scope). Device anchors: dump ST (u,v)->(v,1-u) classifies
+   rot=90/mirror=none -> front uvRot=270/mirrorX=true, back
+   uvRot=90/mirrorX=false.
+3. GOLDEN HARNESS (new engine-render/src/test/.../StOrientationGoldenTest.kt,
+   permanence artifact): 8 ST classes x {front, back} x sensor fold
+   {0, 90, 180, 270} = 64 cases. Each case: fold a canonical ST by the
+   sensor angle, classify, compensate, and corner-probe the EXACT production
+   chain (SourceUvMath.transform, clamp=false) — asserting the composed net
+   equals the desired orientation AND that exactly ONE (rot, mirrorX) in the
+   whole compensation vocabulary reaches it (uniqueness proof, so the
+   formula can never silently drift). Plus: 8-class classifier roundtrip,
+   device-dump-ST regression (rot 90/none), common producer matrices
+   (identity, flipY, transposedFlip), cropped-ST -> null, and the device
+   compensation anchors. All existing tests untouched (TRIANGLES gate stays
+   green; no GL_TRIANGLE_STRIP anywhere).
+Out of scope honored: TRIANGLES path, skip path/blit state, r25-r27
+changes — untouched.

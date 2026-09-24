@@ -6,6 +6,7 @@ import android.opengl.GLES30
 import android.util.Log
 import com.vcamstudio.engine.render.geometry.LayerGeometry
 import com.vcamstudio.engine.render.geometry.SourceUvMath
+import com.vcamstudio.engine.render.geometry.StOrientation
 import com.vcamstudio.engine.render.gl.Framebuffer
 import com.vcamstudio.engine.render.gl.GlProgram
 import com.vcamstudio.engine.render.gl.LutCache
@@ -902,6 +903,10 @@ internal class SceneRenderer(
             append(",boundId=").append(bound[0]).append(",srcId=").append(src.glTextureId)
             append(",sampler=").append(samplerType).append(",unit=").append(samplerUnit).append("]")
             append(" NET=").append(net)
+            // Round-28: producer ST class (rot CW + mirror) from the pure
+            // classifier — the diagnostic anchor for the rotation round.
+            val stCls = StOrientation.classify(st)
+            append(" ST_CLASS=").append(if (stCls != null) stCls.label() else "other")
             if (errs.isNotEmpty()) append(" AUDIT_ERR=[").append(errs.toString().trim()).append("]")
         }
         oesDebug = line

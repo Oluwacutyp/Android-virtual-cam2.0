@@ -15,6 +15,7 @@ import com.vcamstudio.engine.render.gl.EglWindowSurface
 import com.vcamstudio.engine.render.gl.Framebuffer
 import com.vcamstudio.engine.render.gl.GlException
 import com.vcamstudio.engine.render.gl.checkGlError
+import com.vcamstudio.engine.render.geometry.StOrientation
 import com.vcamstudio.engine.render.model.BlendMode
 import com.vcamstudio.engine.render.model.LayerDefinition
 import com.vcamstudio.engine.render.model.SceneDefinition
@@ -47,6 +48,14 @@ internal class RenderThread(
     interface Listener {
         fun onExternalSourceReady(sourceId: String, surface: Surface, width: Int, height: Int)
         fun onExternalSourceReleased(sourceId: String)
+
+        /**
+         * Round-28: the producer ST for [sourceId] classified to a new
+         * orientation class (rot CW deg + mirror tag). Fired on the MAIN
+         * thread every time the ST actually changes (st-hash gated), never
+         * per frame.
+         */
+        fun onSourceOrientationClassified(sourceId: String, rotCwDeg: Int, mirror: String)
     }
 
     @Volatile
@@ -204,6 +213,11 @@ internal class RenderThread(
 
     private val externalSources = LinkedHashMap<String, ExternalTextureSource>()
     private val bitmapSources = LinkedHashMap<String, BitmapTextureSource>()
+
+    // Round-28: per-source ST classification. Keyed by sourceId -> (st hash,
+    // (rotCw, mirror tag)). The ST_CLASS event + listener callback fire ONLY
+    // when the hash changes — recompute per ST change, never hardcoded.
+    private val stClassCache = HashMap<String, Pair<String, Pair<Int, String>>>()
 
     private var choreographer: Choreographer? = null
     private var lastPresentClockMs = 0L
@@ -586,6 +600,7 @@ internal class RenderThread(
 
     fun closeSource(sourceId: String) {
         bitmapSources.remove(sourceId)?.release()
+        stClassCache.remove(sourceId) // round-28: classification dies with the source
         externalSources.remove(sourceId)?.let {
             it.release()
             postMain { listener?.onExternalSourceReleased(sourceId) }
@@ -597,6 +612,7 @@ internal class RenderThread(
         val stale = externalSources.keys.filter { it !in needed }
         for (id in stale) {
             val src = externalSources.remove(id) ?: continue
+            stClassCache.remove(id) // round-28: classification dies with the source
             src.release()
             postMain { listener?.onExternalSourceReleased(id) }
         }
@@ -675,6 +691,9 @@ internal class RenderThread(
                     // Round 24 mandate 1: per-source frame readiness (camera vs video).
                     if (src is com.vcamstudio.engine.render.source.ExternalTextureSource) {
                         if (src.sourceId.contains("cam", ignoreCase = true)) frCamReady = true else frVidReady = true
+                        // Round-28: classify the producer ST on every change
+                        // (st-hash gated) -> ST_CLASS event + app callback.
+                        classifySourceOrientation(src)
                     }
                 }
             }
@@ -776,6 +795,31 @@ internal class RenderThread(
             h = h and 0xFFFFFFFFL
         }
         return String.format("%08X", h)
+    }
+
+    /**
+     * Round-28 (owner "ROUND 24 — ROTATION"): decompose the producer ST into
+     * its net orientation class and log `ST_CLASS id=<src> rot=<n>
+     * mirror=<none|h|v>` on EVERY ST change (st-hash gated, never hardcoded).
+     * Pure corner-probe on the render thread; the app callback (main thread)
+     * derives the layer UV compensation from the class — the single
+     * canonical rotation place.
+     */
+    private fun classifySourceOrientation(src: ExternalTextureSource) {
+        val hash = stHashOf(src.transformMatrix)
+        val cached = stClassCache[src.sourceId]
+        if (cached != null && cached.first == hash) return
+        val cls = StOrientation.classify(src.transformMatrix)
+        if (cls == null) {
+            // Not a pure axis-aligned orientation (crop/scale/shear ST, e.g.
+            // some video producers). Log once per hash, never spam per frame.
+            stClassCache[src.sourceId] = hash to (-1 to "other")
+            noteEvent("ST_CLASS_UNCLASSIFIED id=${src.sourceId} st_hash=$hash")
+            return
+        }
+        stClassCache[src.sourceId] = hash to (cls.rotCwDeg to cls.mirror.tag)
+        noteEvent("ST_CLASS id=${src.sourceId} ${cls.label()}")
+        postMain { listener?.onSourceOrientationClassified(src.sourceId, cls.rotCwDeg, cls.mirror.tag) }
     }
 
     private fun allSources(): Collection<TextureSource> {
