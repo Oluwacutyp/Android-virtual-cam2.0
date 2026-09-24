@@ -295,6 +295,48 @@ class DrawPathGoldenTest {
     }
 
     @Test
+    fun `staging write path asserts SIX vertices and dump prints all twelve floats`() {
+        val sr = File(engineMainSrc(), "render/SceneRenderer.kt")
+        val code = stripComments(sr.readText())
+        // Round 23 mandate 5: the hard staging assertion must exist — a quad
+        // is six vertices, and any other count must fail loudly.
+        assertTrue(
+            "staging write assertion missing (check(written == ...))",
+            "staging write emitted" in code && "check(written == TRI_ORDER.size)" in code,
+        )
+        // Round 23 mandate 4: CLIENT_BYTES must print 12 floats per attribute.
+        assertTrue(
+            "CLIENT_BYTES truncated — floatWords(posBuf, 12) missing",
+            "floatWords(posBuf, 12)" in code,
+        )
+        // bindSource must transform the 4 unique corners and scatter to all
+        // six slots (the round-22 defect: only the first four were rotated).
+        assertTrue(
+            "bindSource 6-slot UV scatter missing",
+            "UNIQUE_CORNER_SLOT" in code,
+        )
+    }
+
+    @Test
+    fun `TRI_ORDER expansion maps duplicates to the right corners`() {
+        // The staged six vertices must be TL,TR,BR,TL,BR,BL: 4th==1st,
+        // 5th==3rd, 6th is BL. This IS the owner-mandated six-entry form.
+        val cs = corners()
+        val six = expandToSix(cs)
+        for (k in 0 until 6) {
+            for (f in 0 until 6) {
+                assertEquals(
+                    "vertex $k float $f mismatch",
+                    cs[triOrder[k]][f], six[k][f], 0f,
+                )
+            }
+        }
+        org.junit.Assert.assertArrayEquals(cs[0], six[3], 0f) // 4th == TL
+        org.junit.Assert.assertArrayEquals(cs[2], six[4], 0f) // 5th == BR
+        org.junit.Assert.assertArrayEquals(cs[3], six[5], 0f) // 6th == BL
+    }
+
+    @Test
     fun `DRAW_PATH marker is TRIANGLES and every quad draw routes through it`() {
         val sr = File(engineMainSrc(), "render/SceneRenderer.kt")
         val code = stripComments(sr.readText())

@@ -336,14 +336,23 @@ internal class SceneRenderer(
         } else {
             st = null
         }
-        for (i in 0 until 4) {
-            uvBase[i * 2] = uvBuf.get(i * 2)
-            uvBase[i * 2 + 1] = uvBuf.get(i * 2 + 1)
+        // Round 23 (owner mandate): the staged buffer is SIX vertices
+        // (TL,TR,BR, TL,BR,BL). Transform the FOUR UNIQUE corners (verts
+        // 0,1,2,5) through the golden-tested 4-corner SourceUvMath, then
+        // scatter back to ALL SIX slots via TRI_ORDER. The round-22 build
+        // rotated only the first four entries — triangle 2 sampled stale,
+        // unrotated UVs (the "draw says TRIANGLES, data is strip-shaped"
+        // device report). This closes that gap.
+        for (k in 0 until 4) {
+            val vv = UNIQUE_CORNER_SLOT[k]
+            uvBase[k * 2] = uvBuf.get(vv * 2)
+            uvBase[k * 2 + 1] = uvBuf.get(vv * 2 + 1)
         }
         SourceUvMath.transformInto(uvBase, st, uvRotationDeg, mirrorX, uvWork)
-        for (i in 0 until 4) {
-            uvBuf.put(i * 2, uvWork[i * 2])
-            uvBuf.put(i * 2 + 1, uvWork[i * 2 + 1])
+        for (vi in 0 until 6) {
+            val c = TRI_ORDER[vi]
+            uvBuf.put(vi * 2, uvWork[c * 2])
+            uvBuf.put(vi * 2 + 1, uvWork[c * 2 + 1])
         }
         uvBuf.position(0)
         if (source is ExternalTextureSource) captureOesDebug(program, source, uvRotationDeg, mirrorX)
@@ -474,11 +483,12 @@ internal class SceneRenderer(
         val now = System.nanoTime() / 1_000_000L
         if (now - lastPresentDebugMs < 1000) return
         lastPresentDebugMs = now
-        val finite = (0 until 8).all {
+        val finite = (0 until 12).all {
             val v = posBuf.get(it)
             !v.isNaN() && !v.isInfinite()
         }
-        presentDebug = "PRESENT_CLIP=" + (0 until 4).joinToString(";", "[", "]") { i ->
+        // Round 23: all SIX staged vertices.
+        presentDebug = "PRESENT_CLIP=" + (0 until 6).joinToString(";", "[", "]") { i ->
             String.format(Locale.US, "%.3f,%.3f", posBuf.get(i * 2), posBuf.get(i * 2 + 1))
         } + " finite=$finite"
         Log.i("vcam-render", presentDebug!!)
@@ -592,6 +602,11 @@ internal class SceneRenderer(
     /** Vertex count actually staged by [uploadVertexData] (guard input). */
     @Volatile
     private var stagedVerts: Int = TRI_ORDER.size
+
+    /** Bytes written by the last staging upload (pos+uv+local, before the
+     *  pre-glVertexAttribPointer rewind) — the dump's staging pos= figure. */
+    @Volatile
+    private var stagingWrittenBytes: Int = 0
 
     /**
      * Draw the staged quad as GL_TRIANGLES. The staged-count guard is the
@@ -715,18 +730,20 @@ internal class SceneRenderer(
             (0 until n).joinToString(",") {
                 String.format(Locale.US, "%08X", java.lang.Float.floatToIntBits(buf.get(it)))
             }
-        val clientBytes = "pos:[" + floatWords(posBuf, 8) + "] uv:[" + floatWords(uvBuf, 8) + "]" +
-            " loc:[" + floatWords(localBuf, 8) + "]"
+        // Round 23 mandate 4: TWELVE hex values per attribute (6 vec2s) —
+        // the full staged vertex data, no truncation.
+        val clientBytes = "pos:[" + floatWords(posBuf, 12) + "] uv:[" + floatWords(uvBuf, 12) + "]" +
+            " loc:[" + floatWords(localBuf, 12) + "]"
         var gpuBytes = "n/a(client-array)"
         if (arrayBuf[0] != 0) {
             audited(errs, "mapBuffer") {
                 val mapped = GLES30.glMapBufferRange(
-                    GLES20.GL_ARRAY_BUFFER, 0, 96, GLES30.GL_MAP_READ_BIT,
+                    GLES20.GL_ARRAY_BUFFER, 0, 144, GLES30.GL_MAP_READ_BIT,
                 ) as java.nio.ByteBuffer?
                 if (mapped != null) {
                     mapped.order(java.nio.ByteOrder.nativeOrder())
                     val words = mapped.asIntBuffer()
-                    gpuBytes = (0 until 24).joinToString(",") {
+                    gpuBytes = (0 until 36).joinToString(",") {
                         String.format(Locale.US, "%08X", words.get(it))
                     }
                     GLES30.glUnmapBuffer(GLES20.GL_ARRAY_BUFFER)
@@ -753,7 +770,11 @@ internal class SceneRenderer(
                 }
                 else -> {
                     capB = (posBuf.capacity() + uvBuf.capacity() + localBuf.capacity()) * 4
-                    posB = (posBuf.position() + uvBuf.position() + localBuf.position()) * 4
+                    // Round 23: pos = bytes the last upload WROTE (buffers are
+                    // rewound before glVertexAttribPointer, so the live
+                    // position is always 0 at draw time — the written figure
+                    // is the honest "how much data did we stage" number).
+                    posB = stagingWrittenBytes
                 }
             }
             append(" staging=[cap=").append(capB)
@@ -812,12 +833,14 @@ internal class SceneRenderer(
         // (B) vertex dump: gl_Position = vec4(aPos, 0, 1) with aPos exactly as
         // uploaded by uploadQuad — read the live position buffer (pass-through
         // vertex shader, so these ARE the post-MVP clip xy values).
-        val clip = (0 until 4).joinToString(";", "[", "]") { i ->
+        // Round 23: all SIX staged vertices (4th=TL, 5th=BR, 6th=BL).
+        val clip = (0 until 6).joinToString(";", "[", "]") { i ->
             String.format(Locale.US, "%.3f,%.3f", posBuf.get(i * 2), posBuf.get(i * 2 + 1))
         }
-        val finite = (0 until 8).all {
-            val p = posBuf.get(it); val w = uvWork.get(it)
-            !p.isNaN() && !p.isInfinite() && !w.isNaN() && !w.isInfinite()
+        val finite = (0 until 12).all {
+            val p = posBuf.get(it); !p.isNaN() && !p.isInfinite()
+        } && (0 until 8).all {
+            val w = uvWork.get(it); !w.isNaN() && !w.isInfinite()
         }
         // (D) bind audit: runtime target binding + the declared sampler TYPE
         // (read from the program's RETAINED compile source — verbatim, see E)
@@ -848,11 +871,15 @@ internal class SceneRenderer(
             append(" uvRot=").append(rot).append(" mirrorX=").append(mirror)
             append(" ST=[").append((0 until 16).joinToString(",") { f(st[it]) }).append("]")
             append(" ST_T=[").append((0 until 16).joinToString(",") { f(stT[it]) }).append("]")
-            append(" baseUV=").append((0 until 4).joinToString(";", "[", "]") { i ->
-                String.format(Locale.US, "%.3f,%.3f", uvBase[i * 2], uvBase[i * 2 + 1])
+            // Round 23: six-entry forms — the canonical 4-corner transform
+            // output scattered through TRI_ORDER, exactly as staged.
+            val base6 = expand4To6(uvBase)
+            val final6 = expand4To6(uvWork)
+            append(" baseUV=").append((0 until 6).joinToString(";", "[", "]") { i ->
+                String.format(Locale.US, "%.3f,%.3f", base6[i * 2], base6[i * 2 + 1])
             })
-            append(" finalUV=").append((0 until 4).joinToString(";", "[", "]") { i ->
-                String.format(Locale.US, "%.3f,%.3f", uvWork[i * 2], uvWork[i * 2 + 1])
+            append(" finalUV=").append((0 until 6).joinToString(";", "[", "]") { i ->
+                String.format(Locale.US, "%.3f,%.3f", final6[i * 2], final6[i * 2 + 1])
             })
             append(" CLIP=").append(clip)
             append(" finite=").append(finite)
@@ -924,6 +951,19 @@ internal class SceneRenderer(
     }
 
     // ---------------------------------------------------------- quad upload
+
+    /** Vertices holding the UNIQUE corners TL,TR,BR,BL inside the 6-vert
+     *  staging (TRI_ORDER = 0,1,2,0,2,3 -> first occurrence of each). */
+    private val UNIQUE_CORNER_SLOT = intArrayOf(0, 1, 2, 5)
+
+    /** Expand a 4-corner (8-float) attribute array to the 6-vert staged form. */
+    private fun expand4To6(src: FloatArray): FloatArray = FloatArray(12).also { out ->
+        for (vi in 0 until 6) {
+            val c = TRI_ORDER[vi]
+            out[vi * 2] = src[c * 2]
+            out[vi * 2 + 1] = src[c * 2 + 1]
+        }
+    }
 
     private fun uploadQuad(quad: LayerGeometry.Quad, sceneW: Float, sceneH: Float, uvFlipY: Boolean = false) {
         // cornersPx/uvs are TIGHTLY-PACKED 8-float arrays (4 verts x 2): index
@@ -1014,6 +1054,14 @@ internal class SceneRenderer(
             uvBuf.put(staging[s + 2]); uvBuf.put(staging[s + 3])
             localBuf.put(staging[s + 4]); localBuf.put(staging[s + 5])
         }
+        // Round 23 mandate 5: hard assertion on the write path. A quad is
+        // SIX vertices; anything else must fail LOUDLY (this class of bug
+        // escaped three times — the assertion ends the class).
+        val written = posBuf.position() / 2
+        check(written == TRI_ORDER.size) {
+            "staging write emitted $written verts, expected ${TRI_ORDER.size}"
+        }
+        stagingWrittenBytes = (posBuf.position() + uvBuf.position() + localBuf.position()) * 4
         posBuf.position(0); uvBuf.position(0); localBuf.position(0)
         GLES30.glVertexAttribPointer(0, 2, GLES30.GL_FLOAT, false, 0, posBuf)
         GLES30.glVertexAttribPointer(1, 2, GLES30.GL_FLOAT, false, 0, uvBuf)

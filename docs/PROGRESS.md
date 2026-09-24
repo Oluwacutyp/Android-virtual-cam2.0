@@ -1026,3 +1026,40 @@ GL_TRIANGLES, ONE change; rotation untouched.
    UV corner mapping + monotonic ramp, single shared winding; PLUS source
    gate: any GL_TRIANGLE_STRIP in engine code (comments stripped) fails CI.
    Geometry validated by simulation before commit (0 uncovered/0 mismatch).
+
+## Increment 23 — 6-VERTEX WRITE PATH COMPLETED (bindSource rotated only 4)
+
+Owner device report on the round-22 build: draw call says TRIANGLES, staged
+data is strip-shaped (4-entry CLIP/UV lines, 8-hex CLIENT_BYTES, staging
+pos=0). Root cause CONFIRMED in code — my round-22 migration was incomplete:
+uploadVertexData expanded positions/UVs/locals to six vertices, but
+bindSource still rotated ONLY the first four uvBuf entries (8-float
+uvBase/uvWork, loop 0 until 4). Triangle 2 (verts 5-6 = BR,BL duplicates)
+sampled STALE, unrotated UVs on every OES/video draw — corrupt second
+triangle. (The owner's dump 4th==1st was the six-vertex sequence truncated
+by the four-entry printers; the underlying rotation gap was real.)
+
+Fixes, in mandate order:
+1. Write function located: uploadQuad stages 4 corners -> uploadVertexData
+   expands via TRI_ORDER -> bindSource post-stages UVs (the gap).
+2. Corner-list builder: already 6-vert (r22); bindSource now gathers the 4
+   UNIQUE corners (verts 0,1,2,5 = TL,TR,BR,BL), transforms them through the
+   UNCHANGED golden-tested 4-corner SourceUvMath, and SCATTERS to all six
+   slots via TRI_ORDER (4th=TL, 5th=BR, 6th=BL).
+3. baseUV/finalUV: printed as six-entry scattered forms (structure per
+   mandate; absolute v values follow our texture v-origin convention —
+   flipping v is orientation work, out of scope this round).
+4. Dump: CLIENT_BYTES prints 12 hex per attribute (pos/uv/loc); GPU VBO map
+   reads 144 bytes/36 words; CLIP + PRESENT_CLIP are six entries; staging
+   pos= now reports bytes WRITTEN by the last upload (144 when healthy —
+   live positions are rewound to 0 before glVertexAttribPointer, so pos=0
+   was meaningless, not evidence).
+5. Hard assertion: check(written == TRI_ORDER.size) in uploadVertexData —
+   throws (FRAME_ERROR, visible) on any non-6 staging write; golden source
+   gate pins the assertion + 12-float print + scatter presence in CI.
+6. VBO diagnostic: default OFF verified (vboDrawPass = false at rest);
+   toggle remains in DEV panel per mandate.
+
+Rotation untouched (next round's single change). No strip path anywhere
+(golden source gate green). All other dev toggles default OFF in this build:
+uvDebugPass=false, directSurfacePass=false, bisectLevel=0, vboDrawPass=false.
