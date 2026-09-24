@@ -1449,3 +1449,35 @@ From the owner's r28 dump + prior reports, exactly one display model fits ALL si
 
 Ops: sandbox restored the base commit AGAIN mid-round (2nd time); recovered via fetch +
 reset --hard to c14b6aa + re-apply of the 4 staged files (verified diff-identical).
+
+## Increment 34 — Round-29: UI wiring (REC + scene tabs)
+
+**Head `e3e82cf`, CI run 36051740222 SUCCESS** (8dee59a lacked a theme import, fixed same round).
+2 files: StudioScreen.kt, StudioViewModel.kt. No engine/rotation/GL changes.
+
+### Findings (code-level, before the fixes)
+- The recording CHAIN was already fully wired (RecChip -> toggleRecording -> RecordingController
+  -> RecordingSession [real MediaCodec+MediaMuxer, AVC Surface input + AAC from mixer] ->
+  engine.attachRecordingOutput -> render-thread RECORDING_OUTPUT_ID second output). Two real
+  defects made REC read dead: (a) the idle chip was StudioBorder grey (looks disabled) and
+  (b) startRecording() SILENTLY returned when uiState.activeScene was null (stale active id).
+- Scene tabs: the red "delete" label rendered ALWAYS when scenes.size > 1 (looked like a stuck
+  delete-mode). Active highlight (surfaceVariant + 1dp border) was near-invisible in dark theme.
+- Duplicate "Scene 2": count-based naming (size+1) after a deletion — delete "Scene 1" leaves
+  "Scene 2"; create names size+1="Scene 2" again. Exactly the device screenshot state.
+
+### Fixes (8dee59a)
+1. REC chip: enabled = health != UNHEALTHY && scenes non-empty && activeSceneId non-empty;
+   idle chip now StudioRed (visibly tappable), disabled = 40% alpha + not clickable; recording
+   state unchanged (amber ● REC mm:ss, tap = stop+save).
+2. startRecording: stale/empty activeSceneId no longer silent — REC_FALLBACK log + recover to
+   first scene; toast only if NO scene exists.
+3. Scene tabs: delete affordance ONLY in per-tile edit mode (long-press); exits on any tap,
+   scene selection, and back-press (BackHandler); edit-mode tile gets error-tinted border/bg.
+   Active tab: accent fill (28%), 2dp accent border, bold accent label + dot marker.
+4. Naming: nextSceneName() = max existing "Scene <N>" + 1 (deletion-proof; sim-verified on the
+   exact device scenario ['Scene 2','Scene 2'] -> next "Scene 3").
+
+Device verification (owner): REC active + timer while recording; 3 scenes Scene 1/2/3 with one
+highlight and no delete labels; long-press -> labels appear, tap-away -> disappear; recorded
+MP4 playable + shareable. Recording pipeline itself unchanged this round.
