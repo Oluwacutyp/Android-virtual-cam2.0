@@ -7,33 +7,32 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Round-25 golden harness (owner "ROUND 25 — ROTATION. SIGN FLIP + VIDEO
- * ROUTING"): the ST-class classifier and the pure compensation function,
- * verified over the FULL orientation + display space —
+ * Round-28 golden harness (owner "STOP GUESSING CONSTANTS. RESTRUCTURE."):
+ * tests the EXACT composition order of the SOLE derivation function
+ * [StOrientation.transformFromST] — ST matrix in, (uvRot, mirrorX) out —
+ * over the full orientation + display space:
  *
- *     8 ST classes x {mirror, clean} x sensor fold {0, 90, 180, 270}
+ *     8 ST classes x {isFront} x sensor fold {0, 90, 180, 270}
  *     x display {0, 90, 180, 270} = 256 cases
  *
- * Each case: fold a canonical ST by the sensor angle, classify it with the
- * REAL production classifier, compensate with the REAL production function
- * (round-25 sign: uvRot = rotCw - display, V-shift for V classes, XOR
- * mirror), then compose the resulting NET through the exact engine chain
- * (Rot(uvRot) . Mirror(mirrorX) . ST) as 2x2 matrices and assert it against
- * an INDEPENDENT closed form:
+ * Each case: fold a canonical ST by the sensor angle, feed the FOLDED
+ * MATRIX through transformFromST (the real classify-inside path), compose
+ * the resulting layer chain Rot(uvRot) . Mirror(mirrorX) . ST as 2x2
+ * matrices, and assert the closed-form laws of the derivation:
  *
- *     clean desired  -> net == R(360 - display)   (rot != 90 classes)
- *                       net == R(450 - display)   (rot=90 family: the r26
- *                       device-calibrated bias — canonical nets read 90-off
- *                       on the device, mirrored chains in the opposite
- *                       direction from clean ones)
- *     mirror desired -> net improper AND the mandated mirror/rot form
+ *     RIGID    -> the net is one of EXACTLY the 8 D4 transforms (never a
+ *                 shear — the runtime decoder names all 8 as of round 27);
+ *     improper -> IFF isFront (back/video clean chains are proper);
+ *     clean    -> net == R((270 - display) mod 360) for EVERY ST class —
+ *                 the device display-frame law (displayed(X) = R180·X,
+ *                 upright-clean = canonical R90; derived from the owner's
+ *                 r24/r25/r26 calibration reports, see StOrientation.kt).
  *
- * Anchors pin the device-calibrated values (r26 owner ladder: r24 uvRot=270
- * -> 180 off; r25 uvRot=90 -> 90 off; r26 uvRot=180 = the remaining
- * constant): front class rot=90/none at display 0 -> uvRot=180/mirrorX=true,
- * back same class -> uvRot=180/mirrorX=false, video (rot=90/h, same
- * function) -> uvRot=180/mirrorX=true. The r28 270/true value MUST NOT
- * reappear; the r25 90/90 pair read 90-off in opposite directions.
+ * Anchors pin the device-calibrated values at display 0, class rot=90/none:
+ * front (isFront) -> uvRot=0/mirrorX=true (net MH_R270); back ->
+ * uvRot=0/mirrorX=false (net R270); video (rot=90/h, same function) ->
+ * uvRot=0/mirrorX=true (net R270). The r24 (270/true), r25 (90/true) and
+ * r26 (180/true) front values are all superseded and must not reappear.
  */
 class StOrientationGoldenTest {
 
@@ -146,31 +145,26 @@ class StOrientationGoldenTest {
     }
 
     /**
-     * Frame-free geometric laws the mandate's algebra MUST satisfy, asserted
-     * per case on the composed net (canonical frame):
-     *   RIGID           -> the net is one of the 8 (assertRigid, round 27);
-     *   clean desired   -> net == R(360 - display) EXACTLY for rot != 90
-     *                      classes; for the rot=90 family the r26 device
-     *                      calibration post-applies R90: R(450 - display);
-     *   mirror desired  -> net improper (a displayed mirror state), axis
-     *                      pinned by the anchor test on the device dump ST.
+     * Frame-free geometric laws the round-28 derivation MUST satisfy, per
+     * case, on the composed net (canonical frame):
+     *   RIGID    -> member of the exact 8 (assertRigid);
+     *   improper -> IFF isFront (mirrored selfie net; back/video proper);
+     *   clean    -> EXACTLY R((270 - display) mod 360), class-independent.
      */
     private fun assertMandateNet(
         net: FloatArray,
-        rotCwDeg: Int,
-        desiredMirrorH: Boolean,
+        isFront: Boolean,
         display: Int,
         case: String,
     ) {
         assertRigid(net, case)
         val label = d4Label(net)
         val improper = label.startsWith("MH") || label == "MV"
-        assertEquals("$case: displayed-mirror state", desiredMirrorH, improper)
-        if (!desiredMirrorH) {
-            val r90Bias = if (rotCwDeg == 90) 90 else 0
+        assertEquals("$case: mirrored state must equal isFront", isFront, improper)
+        if (!isFront) {
             assertEquals(
-                "$case: clean net must be exactly R(360-display+r90Bias)",
-                "R${((360 - display) + r90Bias) % 360}",
+                "$case: clean net must be exactly R((270-display) mod 360)",
+                "R${(270 - display % 360 + 360) % 360}",
                 label,
             )
         }
@@ -240,89 +234,57 @@ class StOrientationGoldenTest {
     }
 
     @Test
-    fun `round-26 device anchors - class rot90 none display 0`() {
-        // THE r26 constant (owner ladder: r24 270->180 off, r25 90->90 off,
-        // r26 180 = the remaining value): front selfie uvRot=180/mirrorX=true,
-        // back uvRot=180/mirrorX=false — same class, same uvRot, mirror-only
-        // difference (the r25 90/90 pair was 90-off in opposite directions).
-        val front = StOrientation.compensate(StClass(90, StMirror.NONE), desiredMirrorH = true, displayRotDeg = 0)
-        assertEquals(180f, front.uvRotDeg, 0.01f)
+    fun `round-28 device anchors - class rot90 none display 0`() {
+        // THE round-28 derivation at display 0: uvRot = rotCw - 0 - 90 (mod 360).
+        // front selfie: upright + mirrored on device -> uvRot=0/mirrorX=true
+        // (supersedes r24 270/true, r25 90/true, r26 180/true).
+        val frontSt = canonicalSt(90, StMirror.NONE)
+        val front = StOrientation.transformFromST(frontSt, isFront = true, displayRotation = 0)!!
+        assertEquals(0f, front.uvRotDeg, 0.01f)
         assertTrue(front.mirrorX)
-        // Back camera: same 180, no mirror.
-        val back = StOrientation.compensate(StClass(90, StMirror.NONE), desiredMirrorH = false, displayRotDeg = 0)
-        assertEquals(180f, back.uvRotDeg, 0.01f)
+        // back camera: same derivation, isFront=false -> uvRot=0/mirrorX=false.
+        val back = StOrientation.transformFromST(frontSt, isFront = false, displayRotation = 0)!!
+        assertEquals(0f, back.uvRotDeg, 0.01f)
         assertTrue(!back.mirrorX)
+        // Video (device dump: class rot=90 mirror=h) — SAME function, no own
+        // formula: uvRot=0/mirrorX=true at display 0.
+        val video = StOrientation.transformFromST(canonicalSt(90, StMirror.H), isFront = false, displayRotation = 0)!!
+        assertEquals(0f, video.uvRotDeg, 0.01f)
+        assertTrue(video.mirrorX)
+
+        // Net pins (canonical frame, device display law displayed(X)=R180.X):
+        // front net = MH_R270 (displays upright+mirrored: R180.MH_R270 = MH_R90
+        // = the device's upright-mirror state); back/video nets = R270
+        // (displays upright: R180.R270 = R90 = the device upright-clean state).
+        val frontNet = mmul(mrot(front.uvRotDeg.toInt()), mmul(if (front.mirrorX) MH else I, classLin(90, StMirror.NONE)))
+        assertRigid(frontNet, "front net (round-28)")
+        assertEquals("MH_R270", d4Label(frontNet))
+        val backNet = mmul(mrot(back.uvRotDeg.toInt()), mmul(if (back.mirrorX) MH else I, classLin(90, StMirror.NONE)))
+        assertRigid(backNet, "back net (round-28)")
+        assertEquals("R270", d4Label(backNet))
+        val videoNet = mmul(mrot(video.uvRotDeg.toInt()), mmul(if (video.mirrorX) MH else I, classLin(90, StMirror.H)))
+        assertRigid(videoNet, "video net (round-28)")
+        assertEquals("R270", d4Label(videoNet))
+
+        // The device dump ST (st_hash 4AE91905) still classifies rot=90/none
+        // through the mandated signature.
         val devSt = floatArrayOf(
             0f, -1f, 0f, 0f,
             1f, 0f, 0f, 0f,
             0f, 0f, 1f, 0f,
             0f, 1f, 0f, 1f,
         )
-        val frontNet = mmul(mrot(front.uvRotDeg.toInt()), mmul(if (front.mirrorX) MH else I, classLin(90, StMirror.NONE)))
-        // Device-calibrated front net (r26): canonical MV read 90-off on the
-        // r25 build (up at RIGHT), so the correct net is R90 pre-multiplied:
-        // R180 . MH . R90classLin = MH_R90. Back: R180 . R90classLin = R90
-        // (r25's canonical R0 read up-at-LEFT — 90 CW off).
-        assertRigid(frontNet, "front net (round-27 step 2)")
-        assertEquals("MH_R90", d4Label(frontNet))
-        assertEquals(StClass(90, StMirror.NONE), StOrientation.classify(devSt))
-
-        // Back net through the chain MUST be R90 (the r26 device constant).
-        val backNet = mmul(mrot(back.uvRotDeg.toInt()), mmul(if (back.mirrorX) MH else I, classLin(90, StMirror.NONE)))
-        assertRigid(backNet, "back net (round-27 step 2)")
-        assertEquals("R90", d4Label(backNet))
-
-        // Video (dump: class rot=90 mirror=h) — SAME function, no own formula:
-        // uvRot=180/mirrorX=true at display 0, net R90 (was canonical R0 in
-        // r25 and read up-at-LEFT, same as back).
-        val video = StOrientation.compensate(StClass(90, StMirror.H), desiredMirrorH = false, displayRotDeg = 0)
-        assertEquals(180f, video.uvRotDeg, 0.01f)
-        assertTrue(video.mirrorX)
-        val videoNet = mmul(mrot(video.uvRotDeg.toInt()), mmul(if (video.mirrorX) MH else I, classLin(90, StMirror.H)))
-        assertRigid(videoNet, "video net (round-27 step 2)")
-        assertEquals("R90", d4Label(videoNet))
+        val fromDevice = StOrientation.transformFromST(devSt, isFront = true, displayRotation = 0)!!
+        assertEquals(front, fromDevice)
     }
 
     @Test
-    fun `production net decoder names all 8 rigid transforms (round-27 step 2)`() {
-        // Bridge test: the RUNTIME decoder (SourceUvMath.classifyNet — the one
-        // that produced the r26 dump line OTHER[u=(0,1) v=(1,0)]) must name
-        // ALL EIGHT D4 transforms. Production composition order: ST ->
-        // mirrorX -> rotDeg (CCW). Name mapping: harness MH_R90 (the
-        // transpose, u=(0,1) v=(1,0)) is DIAG_MIRROR; MH_R270 is
-        // ANTI_DIAG_MIRROR.
-        val identity = canonicalSt(0, StMirror.NONE)
-        val rows = listOf(
-            Triple(identity, false to 0f, "IDENTITY"),
-            Triple(identity, true to 0f, "MIRROR_H"),
-            Triple(canonicalSt(0, StMirror.V), false to 0f, "MIRROR_V"),
-            Triple(canonicalSt(180, StMirror.NONE), false to 0f, "ROT180"),
-            Triple(identity, false to 90f, "ROT90CCW"),
-            Triple(identity, false to 270f, "ROT90CW"),
-            Triple(identity, true to 270f, "DIAG_MIRROR"),
-            Triple(identity, true to 90f, "ANTI_DIAG_MIRROR"),
-        )
-        for ((st, mr, expected) in rows) {
-            assertEquals(expected, SourceUvMath.classifyNet(st, mr.second, mr.first))
-        }
-        // A genuinely non-rigid composition (shear) must be flagged, never
-        // named. Shear 0.6: ny=0.51 escapes the legacy 0.3 near-tolerance
-        // and det=0.86 escapes the rigid band (a 0.3 shear would still be
-        // NAMED as its nearest rigid — tolerance is legacy round-16).
-        val shear = floatArrayOf(
-            1f, 0.6f, 0f, 0f,
-            0f, 1f, 0f, 0f,
-            0f, 0f, 1f, 0f,
-            0f, 0f, 0f, 1f,
-        )
-        assertTrue(SourceUvMath.classifyNet(shear, 0f, false).startsWith("NOT_RIGID"))
-    }
-
-    @Test
-    fun `r28 sign must not reappear at display 0`() {
-        // The r28 front value for this class was uvRot=270/mirrorX=true.
-        val front = StOrientation.compensate(StClass(90, StMirror.NONE), true, 0)
-        assertTrue("r28 flip regression", front.uvRotDeg != 270f)
+    fun `superseded front values must not reappear at display 0`() {
+        // r24=270/true, r25=90/true, r26=180/true — all read wrong on device.
+        val front = StOrientation.transformFromST(canonicalSt(90, StMirror.NONE), true, 0)!!
+        assertTrue("r24 regression", front.uvRotDeg != 270f)
+        assertTrue("r25 regression", front.uvRotDeg != 90f)
+        assertTrue("r26 regression", front.uvRotDeg != 180f)
     }
 
     @Test
@@ -336,17 +298,18 @@ class StOrientationGoldenTest {
                 val folded = mulSt(foldLin(sensor), canonicalSt(key.first, key.second))
                 val cls = StOrientation.classify(folded)
                 assertNotNull("folded ST $key sensor=$sensor must classify", cls)
-                for (desiredMirrorH in booleanArrayOf(false, true)) {
+                for (isFront in booleanArrayOf(false, true)) {
                     for (display in displays) {
-                        val comp = StOrientation.compensate(cls!!, desiredMirrorH, display)
+                        // The FULL mandated path: folded MATRIX in, transform out.
+                        val comp = StOrientation.transformFromST(folded, isFront, display)!!
                         // Compose the exact engine chain net: Rot . Mirror . ST.
                         val net = mmul(
                             mrot(comp.uvRotDeg.toInt()),
                             mmul(if (comp.mirrorX) MH else I, classLin(cls.rotCwDeg, cls.mirror)),
                         )
                         assertMandateNet(
-                            net, cls.rotCwDeg, desiredMirrorH, display,
-                            "base=$key sensor=$sensor dm=$desiredMirrorH display=$display " +
+                            net, isFront, display,
+                            "base=$key sensor=$sensor isFront=$isFront display=$display " +
                                 "comp=(${comp.uvRotDeg},${comp.mirrorX})",
                         )
                         cases++

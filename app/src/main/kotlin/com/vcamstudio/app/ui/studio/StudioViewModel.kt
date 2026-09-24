@@ -820,8 +820,8 @@ class StudioViewModel @Inject constructor(
             controller.onVideoSizeChanged = { w, h, _ ->
                 engine.resizeSource(sourceId, w, h)
                 // Round-25: the separate metadata-UV math is DELETED — video
-                // orientation routes through the SAME ST-class compensate()
-                // as cameras (ST_CLASS event -> applyOrientation). Metadata
+                // orientation routes through the SAME ST-class transformFromClass()
+                // (the round-28 sole derivation; ST_CLASS event -> applyOrientation). Metadata
                 // dims still drive the source aspect via resizeSource.
             }
             videoControllers[sourceId] = controller
@@ -913,8 +913,8 @@ class StudioViewModel @Inject constructor(
             s.copy(layers = s.layers.map { l ->
                 when {
                     l is LayerDefinition.Camera && l.id == sourceId -> {
-                        val desiredMirrorH = l.lensFacing == RenderLensFacing.FRONT
-                        val comp = StOrientation.compensate(cls, desiredMirrorH, displayDeg)
+                        val isFront = l.lensFacing == RenderLensFacing.FRONT
+                        val comp = StOrientation.transformFromClass(cls, isFront, displayDeg)
                         applied = comp
                         lastOrientationComp[sourceId] = comp
                         if (l.transform.uvRotationDeg != comp.uvRotDeg || l.transform.mirrorX != comp.mirrorX) {
@@ -923,7 +923,7 @@ class StudioViewModel @Inject constructor(
                         } else l
                     }
                     l is LayerDefinition.Video && l.sourceId == sourceId -> {
-                        val comp = StOrientation.compensate(cls, desiredMirrorH = false, displayRotDeg = displayDeg)
+                        val comp = StOrientation.transformFromClass(cls, isFront = false, displayRotation = displayDeg)
                         applied = comp
                         lastOrientationComp[l.id] = comp
                         if (l.transform.uvRotationDeg != comp.uvRotDeg || l.transform.mirrorX != comp.mirrorX) {
