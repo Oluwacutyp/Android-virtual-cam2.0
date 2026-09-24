@@ -78,3 +78,13 @@ jobs:
         with:
           name: vcam-studio-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+
+      # Round-20 mandate 1: the standalone wedge probe APK (separate app,
+      # com.vcamstudio.probe) — install from a FRESH uninstall, run BEFORE
+      # judging the studio engine.
+      - name: Upload probe-wedge APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-wedge-debug-apk
+          path: probe-wedge/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
