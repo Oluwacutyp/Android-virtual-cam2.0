@@ -1403,3 +1403,49 @@ grep ST_CLASS_FLIP / ST_CLASS / OES_ORIENT ... NET= / ORIENT_APPLY. Stable run =
 + one constant ST_CLASS; any FLIP = root cause named (scope=in-read => unstable HAL matrix;
 scope=cross-event => source/id alternation => hypothesis (b) confirmed). NET= now decodes all 8;
 NOT_RIGID in a dump would mean a real composition bug (not seen in 256/256).
+
+## Increment 33 — Round-28: RESTRUCTURE (one derivation, no constants)
+
+**Head `401706e`, CI run 36041578747 SUCCESS** (ea69c4d had a test smart-cast compile error,
+fixed same round). 4 files: StOrientation.kt, RenderThread.kt, StudioViewModel.kt, golden test.
+
+### The device model (derived, not guessed — closes r24+25+26 simultaneously)
+
+From the owner's r28 dump + prior reports, exactly one display model fits ALL six readings:
+  displayed(X) = R180·X;  upright-clean = canonical R90;  upright-mirror = canonical MH_R90.
+  r24 front MH → displayed MV (=upright-mirror·R180) "180 off" ✓ · r25 front MV → MH
+  (=upright-mirror·R90) "90 off" ✓ · r25 back R0 → R180 (=upright-clean·R270) "90 off" ✓ ·
+  r26 front MH_R90 → MH_R270 (=upright-mirror·R180) "180 off" ✓ · r26 back R90 → R270
+  (=upright-clean·R180) "180 off" ✓.
+
+### THE DERIVATION (sole source of truth; compensate() DELETED)
+  transformFromST(st, isFront, display) = classify(st) → transformFromClass:
+    mirrorX = (st.mirror != NONE) XOR isFront
+    uvRot   = (st.rotCw - display - 90 + (V?180)) mod 360
+  Class-covariant: BOTH observed camera classes ((90,none)→(0,true) and (90,h)→(0,false) at
+  display 0) land upright under the model — no per-class constants.
+  Predicted anchors @display0: front (0,true) net MH_R270; back (0,false) net R270;
+  video (90,h) (0,true) net R270. Ladder end uvRot=0 = theorem, not guess.
+
+### Classifier hardening (mandate 2)
+  ST read twice per classification; reads must agree or the frame is INVALID (hold previous
+  transform). Unclassified → ST_CLASS_AMBIGUOUS + hold (identity only as ever-first default).
+  ST_CLASS_FLIP label REMOVED. The r28 dump had already proven the classifier deterministic:
+  st_hash 4AE91905 constant across 300+ frames, zero in-read flips; the r27 FLIP lines were
+  first-classification events of newly created sources (`first=none` = sentinel, removed).
+
+### Record corrections (owner premises vs their own dump)
+  - "classifier non-deterministic": NO — constant st_hash; flips were new-source firsts.
+  - "NET=DIAG_MIRROR is a shear": NO — it is the transpose, one of the 8 D4 rigid transforms;
+    production measured exactly the harness's closed-form prediction.
+  - "finalUV degenerate": NO — v0==v3 is the 6-vertex shared diagonal; the quad's corners are
+    TL(0,0.342) TR(0,0.658) BR(1,0.658) BL(1,0.342) — four distinct.
+
+### Harness (mandate 4)
+  Drives transformFromST over 256 cases (8 classes × isFront × sensor fold × display).
+  Laws: net rigid ALWAYS; improper IFF isFront; clean == R((270-display) mod 360) for every
+  class. 256/256 in sim AND CI. Expected device lines (front): ST_CLASS rot=90 …; NET=
+  ANTI_DIAG_MIRROR (rigid ✓); finalUV four distinct corners.
+
+Ops: sandbox restored the base commit AGAIN mid-round (2nd time); recovered via fetch +
+reset --hard to c14b6aa + re-apply of the 4 staged files (verified diff-identical).
