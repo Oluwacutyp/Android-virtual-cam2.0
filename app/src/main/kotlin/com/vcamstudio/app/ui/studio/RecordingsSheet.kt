@@ -18,6 +18,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.vcamstudio.app.recording.RecordingStore
 
 /**
  * Round-31 (owner mandate 2): the in-app recordings library — backed by the
@@ -28,9 +29,9 @@ import androidx.compose.ui.unit.dp
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RecordingsSheet(
-    items: List<RecordingItem>,
-    onPlay: (RecordingItem) -> Unit,
-    onShare: (RecordingItem) -> Unit,
+    items: List<RecordingStore.Item>,
+    onPlay: (RecordingStore.Item) -> Unit,
+    onShare: (RecordingStore.Item) -> Unit,
     onRefresh: () -> Unit,
     onDismiss: () -> Unit,
 ) {

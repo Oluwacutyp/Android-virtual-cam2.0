@@ -125,8 +125,8 @@ class StudioViewModel @Inject constructor(
     private val lastRecording = MutableStateFlow<SavedRecording?>(null)
 
     /** Round-31: in-app library — same MediaStore rows the gallery shows. */
-    private val _recordings = MutableStateFlow<List<RecordingItem>>(emptyList())
-    val recordings: StateFlow<List<RecordingItem>> = _recordings.asStateFlow()
+    private val _recordings = MutableStateFlow<List<RecordingStore.Item>>(emptyList())
+    val recordings: StateFlow<List<RecordingStore.Item>> = _recordings.asStateFlow()
 
     private val videoControllers = LinkedHashMap<String, VideoLayerController>()
     private val videoParams = LinkedHashMap<String, VideoParams>()
@@ -706,7 +706,7 @@ class StudioViewModel @Inject constructor(
     }
 
     /** Plays a library clip through the system player (content Uri, granted read). */
-    fun playRecording(item: RecordingItem) {
+    fun playRecording(item: RecordingStore.Item) {
         val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
             setDataAndType(item.uri, "video/mp4")
             addFlags(
@@ -719,7 +719,7 @@ class StudioViewModel @Inject constructor(
     }
 
     /** Shares a library clip (content Uri, granted read) via the system chooser. */
-    fun shareRecording(item: RecordingItem) {
+    fun shareRecording(item: RecordingStore.Item) {
         val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
             type = "video/mp4"
             putExtra(android.content.Intent.EXTRA_STREAM, item.uri)
@@ -1106,9 +1106,6 @@ class StudioViewModel @Inject constructor(
 
 /** A finished recording handed to the UI for the auto-share sheet. */
 data class SavedRecording(val uri: Uri, val name: String)
-
-/** One row of the in-app recordings library (MediaStore Movies/VCamStudio). */
-data class RecordingItem(val uri: Uri, val name: String, val sizeBytes: Long, val dateAddedSec: Long)
 
 private fun LayerDefinition.duplicateWithNewId(): LayerDefinition = when (this) {
     is LayerDefinition.Camera -> copy(id = id + "-copy")
