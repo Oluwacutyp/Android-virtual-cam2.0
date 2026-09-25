@@ -283,7 +283,8 @@ class RecordingSession(
         // Round-31: our handle on a MediaStore fd closes once the muxer is
         // done with it (MediaMuxer dup'd its own); the app then publishes the
         // pending row (IS_PENDING=0) so the gallery sees the clip.
-        if (output is RecordingOutput.FdOutput) runCatching { output.pfd.close() }
+        val fdOut = output as? RecordingOutput.FdOutput
+        if (fdOut != null) runCatching { fdOut.pfd.close() }
         val bytes = when (val o = output) {
             is RecordingOutput.FileOutput -> o.file.length()
             is RecordingOutput.FdOutput -> bytesWritten
