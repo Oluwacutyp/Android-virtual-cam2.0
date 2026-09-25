@@ -15,12 +15,11 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        // Round-32 (owner "CI HANG ON ASSEMBLE DEBUG"): mirrors first —
-        // Maven Central throttled/timed out fetching the ~65 MB ONNX
-        // Runtime AAR on two consecutive CI runs. Mirrors cost nothing
-        // when fast; Gradle falls through to the canonical repos on a 404.
-        maven { url = uri("https://maven.aliyun.com/repository/central") }
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        // Round-32c follow-up: aliyun mirrors REMOVED — run 36100804971 got
+        // HTTP 502 from maven.aliyun.com on androidx lifecycle poms and
+        // Gradle then disabled the whole repo mid-resolve. The r32 hang was
+        // :app:packageDebug zipping ~400 MB unstripped natives (see
+        // app/build.gradle.kts), not the network; canonical repos only.
         google()
         mavenCentral()
     }

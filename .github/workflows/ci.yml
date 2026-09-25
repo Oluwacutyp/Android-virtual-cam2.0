@@ -32,11 +32,7 @@ jobs:
       - name: Assemble debug
         run: |
           set -o pipefail
-          # Round-32b (owner B.2): first attempt after landing B — force
-          # fresh validation of the ORT fetch (cold cache after the
-          # 'Cache service responded 400' restore failures). Remove this
-          # flag once one build succeeds (cache warm).
-          ./gradlew --no-daemon --stacktrace --refresh-dependencies assembleDebug 2>&1 | tee /tmp/build.log
+          ./gradlew --no-daemon --stacktrace assembleDebug 2>&1 | tee /tmp/build.log
 
       - name: Unit tests
         run: |
