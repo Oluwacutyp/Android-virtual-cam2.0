@@ -14,6 +14,11 @@
         android:maxSdkVersion="28"
         tools:ignore="ScopedStorage" />
 
+    <!-- Phase 2 (owner mandate): model downloads are user-initiated fetches
+         from the configured HuggingFace mirrors. This is the app's first
+         network permission — inference itself stays fully on-device. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <uses-feature android:name="android.hardware.camera" android:required="true" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 

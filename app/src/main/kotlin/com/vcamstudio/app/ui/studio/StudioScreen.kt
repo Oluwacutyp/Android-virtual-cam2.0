@@ -237,11 +237,16 @@ fun StudioScreen(
             onStaticFboContent = vm::setStaticFboContent,
             bisectLevel = vm.bisectLevel.collectAsStateWithLifecycle().value,
             onBisect = vm::setBisectLevel,
+            scrfdStats = vm.scrfdStats.collectAsStateWithLifecycle().value,
+            scrfdPhase = vm.scrfdPhase.collectAsStateWithLifecycle().value,
+            scrfdNnapi = vm.scrfdNnapi.collectAsStateWithLifecycle().value,
+            onScrfdNnapi = vm::setScrfdNnapi,
             onDismiss = { vm.setSheet(StudioViewModel.Sheet.NONE) },
         )
         StudioViewModel.Sheet.SETTINGS -> SettingsSheet(
             resolution = state.sceneResolution,
             onResolution = vm::setSceneResolution,
+            onOpenModels = { vm.setSheet(StudioViewModel.Sheet.MODELS) },
             onDismiss = { vm.setSheet(StudioViewModel.Sheet.NONE) },
         )
         StudioViewModel.Sheet.MIXER -> MixerSheet(
@@ -257,6 +262,14 @@ fun StudioScreen(
             onPlay = vm::playRecording,
             onShare = vm::shareRecording,
             onRefresh = vm::refreshRecordings,
+            onDismiss = { vm.setSheet(StudioViewModel.Sheet.NONE) },
+        )
+        StudioViewModel.Sheet.MODELS -> ModelsSheet(
+            states = vm.modelStates.collectAsStateWithLifecycle().value,
+            onDownload = vm::downloadModel,
+            onDelete = vm::deleteModel,
+            licenseSeen = vm::licenseSeen,
+            onMarkLicenseSeen = vm::markLicenseSeen,
             onDismiss = { vm.setSheet(StudioViewModel.Sheet.NONE) },
         )
         StudioViewModel.Sheet.NONE -> Unit
@@ -387,6 +400,16 @@ private fun StageArea(state: StudioViewModel.UiState, vm: StudioViewModel, modif
                         )
                     }
                 }
+                // Phase 2: SCRFD debug overlay (cyan box + confidence) or the
+                // "Model missing" badge. Reads VM flows directly; the render
+                // engine is untouched.
+                FaceDebugOverlay(
+                    box = vm.faceOverlay.collectAsStateWithLifecycle().value,
+                    phase = vm.scrfdPhase.collectAsStateWithLifecycle().value,
+                    rawMode = state.rawMode,
+                    scene = scene,
+                    sceneRes = state.sceneResolution,
+                )
             }
         }
         StatusChip(

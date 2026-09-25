@@ -62,6 +62,8 @@ dependencies {
     implementation(project(":engine-media"))
     implementation(project(":engine-audio"))
     implementation(project(":engine-output"))
+    implementation(project(":engine-ai-core"))
+    implementation(project(":engine-ai-face"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

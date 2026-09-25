@@ -51,6 +51,10 @@ fun DiagnosticsSheet(
 
     bisectLevel: Int,
     onBisect: (Int) -> Unit,
+    scrfdStats: com.vcamstudio.engine.aiface.FaceDetectionController.Stats,
+    scrfdPhase: com.vcamstudio.engine.aiface.FaceDetectionController.Phase,
+    scrfdNnapi: Boolean,
+    onScrfdNnapi: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
@@ -197,6 +201,38 @@ fun DiagnosticsSheet(
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.labelLarge,
                     )
+                }
+            }
+            item { SectionTitle("Phase 2 — SCRFD detection") }
+            item {
+                val s = scrfdStats
+                Column {
+                    Text(
+                        "SCRFD_MS=%.2f".format(s.avgMs),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    Text(
+                        "SCRFD_FPS=%.1f".format(s.fps),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    Text(
+                        "SCRFD_RUNS=${s.runsTotal}  state=$scrfdPhase",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    Text(
+                        "FACE_BOX=" + (s.box?.let { "[%.3f,%.3f,%.3f,%.3f]".format(it.x1, it.y1, it.x2, it.y2) } ?: "none"),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    ) {
+                        Text("DEV: NNAPI delegate (default off)", style = MaterialTheme.typography.labelMedium)
+                        androidx.compose.material3.Switch(
+                            checked = scrfdNnapi,
+                            onCheckedChange = onScrfdNnapi,
+                        )
+                    }
                 }
             }
             item { SectionTitle("Frame times") }

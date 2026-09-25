@@ -62,6 +62,8 @@ import javax.inject.Inject
 class StudioViewModel @Inject constructor(
     private val engine: RenderEngine,
     private val cameraSource: CameraSource,
+    private val modelManager: com.vcamstudio.engine.aicore.ModelManager,
+    private val faceDetection: com.vcamstudio.engine.aiface.FaceDetectionController,
     private val mic: MicLevelMonitor,
     private val settings: StudioSettings,
     private val dispatchers: DispatcherProvider,
@@ -70,7 +72,7 @@ class StudioViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
-    enum class Sheet { NONE, INSPECTOR, DIAGNOSTICS, SETTINGS, MIXER, RECORDINGS }
+    enum class Sheet { NONE, INSPECTOR, DIAGNOSTICS, SETTINGS, MIXER, RECORDINGS, MODELS }
 
     data class VideoParams(
         val uri: Uri,
@@ -127,6 +129,50 @@ class StudioViewModel @Inject constructor(
     /** Round-31: in-app library — same MediaStore rows the gallery shows. */
     private val _recordings = MutableStateFlow<List<RecordingStore.Item>>(emptyList())
     val recordings: StateFlow<List<RecordingStore.Item>> = _recordings.asStateFlow()
+
+    // ---------------- Phase 2: model manager + SCRFD detection ----------------
+
+    val modelStates: StateFlow<Map<String, com.vcamstudio.engine.aicore.ModelManager.ModelState>> =
+        modelManager.states
+
+    /** Whether the active scene shows a camera layer (detection precondition). */
+    private val _hasCameraLayer = MutableStateFlow(false)
+    val hasCameraLayer: StateFlow<Boolean> = _hasCameraLayer.asStateFlow()
+
+    /** Face box (upright-frame normalized, front-mirror applied) for the debug overlay. */
+    private val _faceOverlay = MutableStateFlow<com.vcamstudio.engine.aiface.FaceBox?>(null)
+    val faceOverlay: StateFlow<com.vcamstudio.engine.aiface.FaceBox?> = _faceOverlay.asStateFlow()
+
+    val scrfdPhase: StateFlow<com.vcamstudio.engine.aiface.FaceDetectionController.Phase> =
+        faceDetection.phase
+
+    val scrfdStats: StateFlow<com.vcamstudio.engine.aiface.FaceDetectionController.Stats> =
+        faceDetection.stats
+
+    val scrfdModelStates: StateFlow<Map<String, com.vcamstudio.engine.aicore.ModelManager.ModelState>>
+        get() = modelManager.states
+
+    /** NNAPI dev toggle (default OFF per mandate) — applied at session (re)build. */
+    val scrfdNnapi = MutableStateFlow(false)
+
+    private var scrfdFailureToasted = false
+
+    fun downloadModel(id: String) = modelManager.download(id)
+    fun deleteModel(id: String) = modelManager.delete(id)
+    fun licenseSeen(id: String) = modelManager.licenseSeen(id)
+    fun markLicenseSeen(id: String) = modelManager.markLicenseSeen(id)
+
+    fun setScrfdNnapi(enabled: Boolean) {
+        scrfdNnapi.value = enabled
+        faceDetection.setNnapi(enabled)
+    }
+
+    private fun syncDetection() {
+        val scrfdReady = modelManager.isReady("scrfd_10g_bnkps")
+        cameraSource.setAnalysisAnalyzer(
+            if (scrfdReady && _hasCameraLayer.value) faceDetection.analyzer else null,
+        )
+    }
 
     private val videoControllers = LinkedHashMap<String, VideoLayerController>()
     private val videoParams = LinkedHashMap<String, VideoParams>()
@@ -247,6 +293,52 @@ class StudioViewModel @Inject constructor(
                     recorder.offerAudio(out.copyOf())
                 }
                 if (!monitored) kotlinx.coroutines.delay(15)
+            }
+        }
+
+        // Phase 2: SCRFD lifecycle — model presence gates the detector; a
+        // camera layer on the active scene gates the analysis stream.
+        var lastScrfdReady = false
+        viewModelScope.launch {
+            modelManager.states.collect {
+                // Act on READY transitions only — progress ticks arrive ~1/s
+                // during downloads and must not churn the ONNX session.
+                val ready = modelManager.isReady("scrfd_10g_bnkps")
+                if (ready != lastScrfdReady) {
+                    lastScrfdReady = ready
+                    faceDetection.setModel(modelManager.readyFile("scrfd_10g_bnkps")?.absolutePath)
+                }
+                syncDetection()
+            }
+        }
+        viewModelScope.launch {
+            kotlinx.coroutines.flow.combine(scenes, activeSceneId) { s, id ->
+                s.firstOrNull { it.id == id }?.layers?.any { it is LayerDefinition.Camera } ?: false
+            }.collect {
+                _hasCameraLayer.value = it
+                syncDetection()
+            }
+        }
+        viewModelScope.launch {
+            faceDetection.stats.collect { stats ->
+                val box = stats.box ?: return@collect
+                val mirrored = cameraSource.isFrontCamera()
+                _faceOverlay.value = if (mirrored) {
+                    box.copy(x1 = 1f - box.x2, x2 = 1f - box.x1)
+                } else {
+                    box
+                }
+            }
+        }
+        viewModelScope.launch {
+            // one-time toast on session failure (mandate)
+            faceDetection.phase.collect { phase ->
+                if (phase == com.vcamstudio.engine.aiface.FaceDetectionController.Phase.SESSION_FAILED &&
+                    !scrfdFailureToasted
+                ) {
+                    scrfdFailureToasted = true
+                    toast.value = "SCRFD session failed — detection disabled"
+                }
             }
         }
 
@@ -809,7 +901,9 @@ class StudioViewModel @Inject constructor(
         engine.requestRecovery("manual test from diagnostics")
     }
 
-    fun diagnosticsDump(): String = engine.dump()
+    fun diagnosticsDump(): String =
+        engine.dump() + "\n\nSCRFD_SECTION\n  " +
+            faceDetection.dumpSection().replace("\n", "\n  ")
 
     /** DEV DIAGNOSTIC (round 16A): render external sources as a UV gradient. */
     val uvDebugPass = MutableStateFlow(false)

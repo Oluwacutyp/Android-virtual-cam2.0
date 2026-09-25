@@ -36,6 +36,11 @@ include(":engine-capture")
 include(":engine-media")
 include(":engine-audio")
 include(":engine-output")
+// Phase 2 (architecture doc §C "Become Anyone"): AI core lands together
+// with its phase — engine-ai-core (model manager) + engine-ai-face (SCRFD
+// detection this round; swap/tracking in later rounds).
+include(":engine-ai-core")
+include(":engine-ai-face")
 include(":app")
 // Round-20 mandate 1: standalone minimal wedge probe. Separate APK, ZERO
 // dependency on any studio engine module — decisive isolation either way.

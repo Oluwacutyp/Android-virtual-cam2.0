@@ -1,0 +1,52 @@
+{
+  "models": [
+    {
+      "id": "scrfd_10g_bnkps",
+      "displayName": "SCRFD 10G (face detection)",
+      "fileName": "scrfd_10g_bnkps.onnx",
+      "url": "https://huggingface.co/cromsc/scrfd-10g/resolve/main/scrfd_10g_bnkps.onnx",
+      "sizeBytes": 16923827,
+      "sha256": "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91",
+      "licenseTitle": "Apache-2.0 (SCRFD code) / InsightFace model terms",
+      "licenseText": "SCRFD (Sample and Computation Redistribution for Efficient Face Detection) by Guo et al., InsightFace. Detection model for research and app use under the insightface repository terms (Apache-2.0 code; model usage terms per the insightface model zoo). Source: https://github.com/deepinsight/insightface",
+      "sourceUrl": "https://github.com/deepinsight/insightface",
+      "purpose": "Face detection — used this round (live bounding boxes)."
+    },
+    {
+      "id": "w600k_r50",
+      "displayName": "ArcFace R50 (embedding)",
+      "fileName": "w600k_r50.onnx",
+      "url": "https://huggingface.co/richarrrddd/w600k_r50_v1/resolve/main/w600k_r50.onnx",
+      "sizeBytes": 174383860,
+      "sha256": "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
+      "licenseTitle": "InsightFace model zoo — non-commercial research",
+      "licenseText": "ArcFace recognition model (w600k_r50) from the InsightFace model zoo, trained on WebFace600K. Provided for non-commercial research purposes per insightface model zoo terms. Source: https://github.com/deepinsight/insightface",
+      "sourceUrl": "https://github.com/deepinsight/insightface",
+      "purpose": "512-d face embeddings — reserved for a later round."
+    },
+    {
+      "id": "inswapper_128_fp16",
+      "displayName": "INSwapper 128 fp16 (swap)",
+      "fileName": "inswapper_128_fp16.onnx",
+      "url": "https://huggingface.co/nguyenhoanghuy/inswapper_128_fp16/resolve/main/inswapper_128_fp16.onnx",
+      "sizeBytes": 277680829,
+      "sha256": "c4eccca86ad177586c85c28bf1a64a9d9ed237e283a15818d831f7facfd3f420",
+      "licenseTitle": "InsightFace — non-commercial research only",
+      "licenseText": "inswapper_128 is provided by InsightFace for NON-COMMERCIAL RESEARCH PURPOSES ONLY. The canonical deepinsight/inswapper repository was disabled at the author's request; this mirror carries the fp16 conversion. Usage must comply with the original insightface terms and all applicable laws (consent-based use only). Source: https://github.com/deepinsight/insightface",
+      "sourceUrl": "https://github.com/deepinsight/insightface",
+      "purpose": "Face swap inference — reserved for a later round (download only this round)."
+    },
+    {
+      "id": "emap",
+      "displayName": "emap.bin (INSwapper latent template)",
+      "fileName": "emap.bin",
+      "url": "",
+      "sizeBytes": 0,
+      "sha256": null,
+      "licenseTitle": "InsightFace — non-commercial research only",
+      "licenseText": "The emap matrix template ships with INSwapper-based pipelines under the same InsightFace non-commercial research terms. No verified public mirror is currently configured; this row is wired to the same download pipeline and will gain a mirror in a later round.",
+      "sourceUrl": "https://github.com/deepinsight/insightface",
+      "purpose": "INSwapper latent mean — reserved for a later round."
+    }
+  ]
+}

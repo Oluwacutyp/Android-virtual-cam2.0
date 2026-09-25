@@ -58,4 +58,15 @@ object AppModule {
     @Provides
     @Singleton
     fun recordingController(): RecordingController = RecordingController()
+
+    // ---- Phase 2: model manager + SCRFD detection ----
+    @Provides
+    @Singleton
+    fun modelManager(@ApplicationContext context: Context): com.vcamstudio.engine.aicore.ModelManager =
+        com.vcamstudio.engine.aicore.ModelManager(context)
+
+    @Provides
+    @Singleton
+    fun faceDetectionController(): com.vcamstudio.engine.aiface.FaceDetectionController =
+        com.vcamstudio.engine.aiface.FaceDetectionController()
 }

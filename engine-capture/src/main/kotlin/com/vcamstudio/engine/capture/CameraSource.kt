@@ -10,6 +10,7 @@ import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.FocusMeteringAction
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.core.SurfaceRequest
 import androidx.camera.core.resolutionselector.ResolutionSelector
@@ -66,6 +67,56 @@ class CameraSource(
     private var provider: ProcessCameraProvider? = null
     private var camera: Camera? = null
     private var boundControls: ProControls? = null
+
+    // ---- Phase 2: optional ImageAnalysis stream (SCRFD detection) ----
+    private var analysis: ImageAnalysis? = null
+
+    @Volatile
+    private var analysisAnalyzer: ImageAnalysis.Analyzer? = null
+    private val analysisExecutor = java.util.concurrent.Executors.newSingleThreadExecutor {
+        Thread(it, "vcam-cam-analysis")
+    }
+    private var lastControls: ProControls? = null
+    private var lastLifecycleOwner: LifecycleOwner? = null
+    private var lastAttach: ((Preview) -> Unit)? = null
+
+    /**
+     * Phase 2: attach/detach (null) an analyzer for the ImageAnalysis use
+     * case. Detached -> the use case is dropped at the next (re)bind; when
+     * currently bound, setting triggers a fast rebind so detection starts
+     * immediately. Analysis NEVER touches the preview/GL pipeline surfaces.
+     */
+    fun setAnalysisAnalyzer(analyzer: ImageAnalysis.Analyzer?) {
+        analysisAnalyzer = analyzer
+        mainScope.launch {
+            val controls = lastControls ?: return@launch
+            val owner = lastLifecycleOwner ?: return@launch
+            val attach = lastAttach ?: return@launch
+            if ((analysis != null) != (analyzer != null)) {
+                Log.i(TAG, "ANALYSIS_REBIND analyzer=${analyzer != null}")
+                bindInternal(controls, owner, attach)
+            }
+        }
+    }
+
+    private fun buildAnalysis(): ImageAnalysis? {
+        val analyzer = analysisAnalyzer ?: return null
+        return ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setResolutionStrategy(
+                        ResolutionStrategy(
+                            Size(640, 480),
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                        ),
+                    )
+                    .build(),
+            )
+            .build()
+            .also { it.setAnalyzer(analysisExecutor, analyzer) }
+    }
 
     /**
      * Binds the camera to [surface] (engine external texture). Must be called
@@ -152,6 +203,11 @@ class CameraSource(
 
                 val preview = previewBuilder.build()
                 attachSurface(preview)
+                lastControls = controls
+                lastLifecycleOwner = lifecycleOwner
+                lastAttach = attachSurface
+                val analysisUseCase = buildAnalysis()
+                analysis = analysisUseCase
 
                 cameraProvider.unbindAll()
                 val selector = if (controls.lensFacing == LensFacing.FRONT) {
@@ -159,7 +215,11 @@ class CameraSource(
                 } else {
                     CameraSelector.DEFAULT_BACK_CAMERA
                 }
-                val cam = cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview)
+                val cam = if (analysisUseCase != null) {
+                    cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview, analysisUseCase)
+                } else {
+                    cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview)
+                }
                 camera = cam
                 boundControls = controls
 

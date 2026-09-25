@@ -30,6 +30,7 @@ import com.vcamstudio.app.settings.SceneResolution
 fun SettingsSheet(
     resolution: SceneResolution,
     onResolution: (SceneResolution) -> Unit,
+    onOpenModels: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var showLicenses by remember { mutableStateOf(false) }
@@ -50,6 +51,17 @@ fun SettingsSheet(
                     Text("${entry.label}  (${entry.width}×${entry.height})", style = MaterialTheme.typography.bodyMedium)
                     RadioButton(selected = resolution == entry, onClick = { onResolution(entry) })
                 }
+            }
+            item { SectionTitle("AI models") }
+            item {
+                Text(
+                    "Download & manage (SCRFD detection, swap models)",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenModels() }
+                        .padding(vertical = 8.dp),
+                )
             }
             item { SectionTitle("Open-source licenses") }
             item {
