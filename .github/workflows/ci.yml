@@ -10,33 +10,19 @@ permissions:
   contents: write
 
 jobs:
-  build-test-lint:
-    name: Build + unit tests + lint (JDK 17, API 34)
+  # Round-34 (owner mandate 1): SPLIT JOBS. :app and :probe-wedge each get
+  # their own runner — if :app is the stall it now has the entire 6-hour
+  # budget without blocking the probe build, and the two log streams are
+  # separate. Unit tests + lint are SUSPENDED for this diagnostic round;
+  # they return once the :app stall is resolved (the golden ST harness runs
+  # there — do not forget to restore).
+  build-app:
+    name: :app assemble (diagnostic, live task log)
     runs-on: ubuntu-latest
-    # Round-32c (owner 4): bounded jobs — a stuck assemble returns a red X
-    # with the exact task name instead of riding to the 6h cap. 25 min
-    # (r32c) killed run 36100971988 MID-ASSEMBLE at 25:08 with the 60 s
-    # HTTP timeouts never tripped: first-ever cold fetch of the full graph
-    # + ~200 MB ORT AAR (cache restore failing all day) is SLOW, not hung.
-    # 60 min (run 36102908317) capped the same way at 60:08, cache-save
-    # completing — still no failure signature. Round-32d budget test:
-    # 120 min distinguishes "genuinely slow cold build" from "stuck";
-    # warm-cache builds are ~5.
-    timeout-minutes: 120
+    timeout-minutes: 360
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      # Round-33 (owner mandate 1): vendored ORT AAR from this repo's
-      # release (GitHub CDN) — removes the Maven fetch variable entirely.
-      # Local builds without libs/ort.aar fall back to Maven (conditional
-      # in :app and :engine-ai-face build files).
-      - name: Fetch vendored ORT AAR
-        run: |
-          mkdir -p libs
-          curl -L --fail --retry 3 \
-            -o libs/ort.aar \
-            https://github.com/Oluwacutyp/Android-virtual-cam2.0/releases/download/vendor-ort-1.20.0/ort.aar
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -44,53 +30,45 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle (cache + wrapper validation)
+      - name: Setup Gradle (cache try)
         uses: gradle/actions/setup-gradle@v3
 
+      # Round-33: vendored ORT AAR from this repo's release (GitHub CDN).
+      - name: Fetch vendored ORT AAR
+        run: |
+          mkdir -p libs
+          curl -L --fail --retry 3 \
+            -o libs/ort.aar \
+            https://github.com/Oluwacutyp/Android-virtual-cam2.0/releases/download/vendor-ort-1.20.0/ort.aar
+
+      # Round-34 (owner mandate 3): cache-independent network probe. Not
+      # wired into the build — it measures whether services.gradle.org can
+      # deliver ~130 MB quickly on this runner. Fast (~10 s) = egress is
+      # fine and the stall is gradle-internal; hangs = the whole runner
+      # network path is degraded and we have the answer immediately.
+      - name: Warm gradle dist from release
+        run: |
+          mkdir -p ~/gradle-warm
+          time curl -L --fail --retry 3 \
+            -o ~/gradle-warm/gradle-8.9-bin.zip \
+            https://services.gradle.org/distributions/gradle-8.9-bin.zip || true
+
+      # Round-34 (owner mandate 2): -i prints a timestamped line per task
+      # start; the last line before any cancel NAMES the stalled task
+      # (--profile was removed — it writes nothing on killed builds).
       - name: Assemble debug
         run: |
           set -o pipefail
-          # Round-33 (owner mandate 3): --profile writes per-task duration
-          # HTML to build/reports/profile/ — dumped below (if: always()) so
-          # even a capped run shows where the time went.
-          ./gradlew --no-daemon --stacktrace --profile --console=plain :app:assembleDebug :probe-wedge:assembleDebug 2>&1 | tee /tmp/build.log
+          ./gradlew :app:assembleDebug -i --console=plain 2>&1 | tee /tmp/build.log
 
-      - name: Unit tests
-        run: |
-          set -o pipefail
-          ./gradlew --no-daemon --stacktrace testDebugUnitTest 2>&1 | tee /tmp/test.log
-
-      - name: Lint
-        run: |
-          set -o pipefail
-          ./gradlew --no-daemon --stacktrace lintDebug 2>&1 | tee /tmp/lint.log
-
-      # Agent verification loop: CI failures are posted as commit comments so
-      # the coding agent (egress-restricted to github.com) can read compiler
-      # output and iterate.
-      - name: Dump build profile
-        if: always()
-        run: |
-          find . -path '*/reports/profile/*.html' -exec cat {} \; || true
-
+      # Agent verification loop: CI failures are posted as commit comments.
       - name: Report failure to commit comments
         if: failure()
         run: |
           : > /tmp/errors.txt
-          for f in /tmp/build.log /tmp/test.log /tmp/lint.log; do
-            if [ -f "$f" ]; then
-              grep -aE "^[e]: |error:|Error:|FAILURE|What went wrong|Caused by:|Task .* FAILED|Unresolved reference|Could not (resolve|find|get)|Execution failed|Lint found|> .* FAILED" "$f" >> /tmp/errors.txt || true
-            fi
-          done
-          # JUnit XML failure messages + first stack frames (assertion text).
-          {
-            find . -path "*/test-results/*" -name "*.xml" 2>/dev/null | while read -r x; do
-              echo "=== $x ==="
-              grep -aoE '<testcase name="[^"]*"[^>]*>' "$x" | head -20
-              grep -aoE '<failure message="[^"]*"' "$x" | head -20
-              grep -aoE 'at com\.vcamstudio\.[^<"]*' "$x" | head -10
-            done
-          } >> /tmp/errors.txt
+          if [ -f /tmp/build.log ]; then
+            grep -aE "^[e]: |error:|Error:|FAILURE|What went wrong|Caused by:|Task .* FAILED|Unresolved reference|Could not (resolve|find|get)|Execution failed|> .* FAILED" /tmp/build.log >> /tmp/errors.txt || true
+          fi
           {
             echo "CI failure report for run ${{ github.run_id }} (${GITHUB_WORKFLOW})"
             echo ""
@@ -101,25 +79,50 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Upload test & lint reports (on failure)
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: reports
-          path: |
-            **/build/reports/tests/**
-            **/build/reports/lint-results-debug.*
-          if-no-files-found: ignore
-
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: vcam-studio-debug-apk
           path: app/build/outputs/apk/debug/*.apk
 
-      # Round-20 mandate 1: the standalone wedge probe APK (separate app,
-      # com.vcamstudio.probe) — install from a FRESH uninstall, run BEFORE
-      # judging the studio engine.
+  build-probe:
+    name: :probe-wedge assemble
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Assemble probe
+        run: |
+          set -o pipefail
+          ./gradlew :probe-wedge:assembleDebug --console=plain 2>&1 | tee /tmp/probe.log
+
+      - name: Report failure to commit comments
+        if: failure()
+        run: |
+          : > /tmp/errors.txt
+          if [ -f /tmp/probe.log ]; then
+            grep -aE "^[e]: |error:|Error:|FAILURE|What went wrong|Caused by:|Task .* FAILED|Unresolved reference|Could not (resolve|find|get)|Execution failed|> .* FAILED" /tmp/probe.log >> /tmp/errors.txt || true
+          fi
+          {
+            echo "CI failure report (probe job) for run ${{ github.run_id }} (${GITHUB_WORKFLOW})"
+            echo ""
+            head -c 60000 /tmp/errors.txt
+          } > /tmp/body.txt
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
+            -F body=@/tmp/body.txt --jq '.html_url' || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      # Round-20 mandate 1: standalone wedge probe APK (com.vcamstudio.probe)
+      # — install from a FRESH uninstall, run BEFORE judging the studio engine.
       - name: Upload probe-wedge APK
         uses: actions/upload-artifact@v4
         with:
