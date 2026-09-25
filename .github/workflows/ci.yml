@@ -18,8 +18,11 @@ jobs:
     # (r32c) killed run 36100971988 MID-ASSEMBLE at 25:08 with the 60 s
     # HTTP timeouts never tripped: first-ever cold fetch of the full graph
     # + ~200 MB ORT AAR (cache restore failing all day) is SLOW, not hung.
-    # 60 min gives that one-time fetch headroom; warm-cache builds are ~5.
-    timeout-minutes: 60
+    # 60 min (run 36102908317) capped the same way at 60:08, cache-save
+    # completing — still no failure signature. Round-32d budget test:
+    # 120 min distinguishes "genuinely slow cold build" from "stuck";
+    # warm-cache builds are ~5.
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v4
