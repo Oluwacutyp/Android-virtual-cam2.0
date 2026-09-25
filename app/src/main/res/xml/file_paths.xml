@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <external-files-path name="movies" path="Movies/" />
+    <external-path name="movies_public" path="Movies/VCamStudio/" />
     <files-path name="movies_int" path="Movies/" />
 </paths>

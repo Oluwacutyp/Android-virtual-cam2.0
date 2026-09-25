@@ -115,20 +115,16 @@ fun StudioScreen(
         }
     }
 
-    LaunchedEffect(state.lastRecordingPath) {
-        state.lastRecordingPath?.let { path ->
-            val file = java.io.File(path)
-            if (file.exists()) {
-                val uri = androidx.core.content.FileProvider.getUriForFile(
-                    context, "com.vcamstudio.fileprovider", file,
-                )
-                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                    type = "video/mp4"
-                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                shareLauncher.launch(android.content.Intent.createChooser(intent, "Share recording"))
+    // Round-31: share the finished recording by its content Uri directly —
+    // MediaStore rows need no FileProvider hop and no private copy.
+    LaunchedEffect(state.lastRecording) {
+        state.lastRecording?.let { saved ->
+            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "video/mp4"
+                putExtra(android.content.Intent.EXTRA_STREAM, saved.uri)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
+            shareLauncher.launch(android.content.Intent.createChooser(intent, "Share recording"))
             vm.clearLastRecording()
         }
     }
@@ -202,6 +198,10 @@ fun StudioScreen(
                 onMic = vm::toggleMic,
                 onMix = { vm.setSheet(StudioViewModel.Sheet.MIXER) },
                 onDiag = { vm.setSheet(StudioViewModel.Sheet.DIAGNOSTICS) },
+                onClips = {
+                    vm.refreshRecordings()
+                    vm.setSheet(StudioViewModel.Sheet.RECORDINGS)
+                },
             )
         }
     }
@@ -250,6 +250,13 @@ fun StudioScreen(
             limiterEnabled = state.limiterEnabled,
             onMasterGain = vm::setMasterGain,
             onLimiter = vm::setLimiterEnabled,
+            onDismiss = { vm.setSheet(StudioViewModel.Sheet.NONE) },
+        )
+        StudioViewModel.Sheet.RECORDINGS -> RecordingsSheet(
+            items = vm.recordings.collectAsStateWithLifecycle().value,
+            onPlay = vm::playRecording,
+            onShare = vm::shareRecording,
+            onRefresh = vm::refreshRecordings,
             onDismiss = { vm.setSheet(StudioViewModel.Sheet.NONE) },
         )
         StudioViewModel.Sheet.NONE -> Unit
@@ -613,6 +620,7 @@ private fun DockBar(
     onMic: () -> Unit,
     onMix: () -> Unit,
     onDiag: () -> Unit,
+    onClips: () -> Unit,
 ) {
     Surface(color = StudioSurface) {
         Row(
@@ -632,6 +640,7 @@ private fun DockBar(
             DockButton("🎚", "Mix", onMix)
             DockButton("🎙", "Mic", onMic)
             DockButton("📊", "Diag", onDiag)
+            DockButton("📼", "Clips", onClips)
         }
     }
 }

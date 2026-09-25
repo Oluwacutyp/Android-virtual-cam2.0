@@ -18,7 +18,9 @@ import com.vcamstudio.engine.capture.ProControls
 import com.vcamstudio.engine.media.ImageLoader
 import com.vcamstudio.engine.media.MixerAudioTap
 import com.vcamstudio.engine.media.VideoLayerController
+import com.vcamstudio.app.recording.RecordingStore
 import com.vcamstudio.engine.output.RecordingController
+import com.vcamstudio.engine.output.RecordingOutput
 import com.vcamstudio.engine.render.geometry.StClass
 import com.vcamstudio.engine.render.geometry.StMirror
 import com.vcamstudio.engine.render.geometry.StOrientation
@@ -68,7 +70,7 @@ class StudioViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
-    enum class Sheet { NONE, INSPECTOR, DIAGNOSTICS, SETTINGS, MIXER }
+    enum class Sheet { NONE, INSPECTOR, DIAGNOSTICS, SETTINGS, MIXER, RECORDINGS }
 
     data class VideoParams(
         val uri: Uri,
@@ -99,7 +101,7 @@ class StudioViewModel @Inject constructor(
         val masterGain: Float = 1f,
         val limiterEnabled: Boolean = true,
         val lutNames: List<String> = emptyList(),
-        val lastRecordingPath: String? = null,
+        val lastRecording: SavedRecording? = null,
     ) {
         val activeScene: SceneDefinition?
             get() = scenes.firstOrNull { it.id == activeSceneId }
@@ -120,7 +122,11 @@ class StudioViewModel @Inject constructor(
     private var previewViewRef: androidx.camera.view.PreviewView? = null
     private val sceneResolution = MutableStateFlow(SceneResolution.P_720)
     private val lutNames = MutableStateFlow<List<String>>(emptyList())
-    private val lastRecordingPath = MutableStateFlow<String?>(null)
+    private val lastRecording = MutableStateFlow<SavedRecording?>(null)
+
+    /** Round-31: in-app library — same MediaStore rows the gallery shows. */
+    private val _recordings = MutableStateFlow<List<RecordingItem>>(emptyList())
+    val recordings: StateFlow<List<RecordingItem>> = _recordings.asStateFlow()
 
     private val videoControllers = LinkedHashMap<String, VideoLayerController>()
     private val videoParams = LinkedHashMap<String, VideoParams>()
@@ -174,7 +180,7 @@ class StudioViewModel @Inject constructor(
             Quint(d, h, lvl, run, rec)
         },
         combine(
-            sceneResolution, lutNames, lastRecordingPath, mixer.masterGain, mixer.limiterEnabled,
+            sceneResolution, lutNames, lastRecording, mixer.masterGain, mixer.limiterEnabled,
         ) { res, luts, lastRec, mg, lim ->
             Quint(res, luts, lastRec, mg, lim)
         },
@@ -197,7 +203,7 @@ class StudioViewModel @Inject constructor(
             recording = diagStuff.e,
             sceneResolution = extra.a,
             lutNames = extra.b,
-            lastRecordingPath = extra.c,
+            lastRecording = extra.c,
             masterGain = extra.d,
             limiterEnabled = extra.e,
         )
@@ -635,32 +641,94 @@ class StudioViewModel @Inject constructor(
             Timber.w("REC_FALLBACK activeSceneId stale -> recovering to %s", scene.name)
             activeSceneId.value = scene.id
         }
-        val dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES) ?: context.filesDir
-        val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
-            .format(java.util.Date())
-        val file = java.io.File(dir, "vcam_$stamp.mp4")
+        // Round-31: output goes to the PUBLIC media library (MediaStore,
+        // Movies/VCamStudio) so clips are visible in gallery/Files with no
+        // share-through. Legacy (<29) uses the public Movies dir.
+        val target = try {
+            RecordingStore.createTarget(context, RecordingStore.newName())
+        } catch (t: Throwable) {
+            Timber.e(t, "REC_TARGET failed")
+            toast.value = "Storage error: ${t.message}"
+            return
+        }
         mixer.reset()
         val started = recorder.start(
-            file, scene.width, scene.height,
+            target.output, scene.width, scene.height,
             onSurfaceReady = { surface ->
                 engine.attachRecordingOutput(surface, scene.width, scene.height)
                 Timber.i("RECORDER_STATE SURFACE_ATTACHED %sx%s", scene.width, scene.height)
             },
-            onFailed = { msg -> toast.value = "Recorder: $msg" },
+            onFailed = { msg ->
+                target.uri?.let { RecordingStore.discardPending(context, it) }
+                toast.value = "Recorder: $msg"
+            },
         )
-        if (!started) toast.value = "Recorder busy"
+        if (!started) {
+            target.uri?.let { RecordingStore.discardPending(context, it) }
+            toast.value = "Recorder busy"
+        }
     }
 
     private fun stopRecording() {
-        recorder.stop { file ->
+        recorder.stop { output ->
             engine.detachRecordingOutput()
-            if (file != null && file.length() > 0) {
-                lastRecordingPath.value = file.absolutePath
-                toast.value = "Saved ${file.name}"
-            } else {
-                toast.value = "Recording failed — nothing written"
+            when (output) {
+                is RecordingOutput.FdOutput -> {
+                    RecordingStore.publish(context, output.uri)
+                    lastRecording.value = SavedRecording(output.uri, output.displayName)
+                    toast.value = "Saved ${output.displayName} to Movies/VCamStudio"
+                    refreshRecordings()
+                }
+                is RecordingOutput.FileOutput -> {
+                    val f = output.file
+                    if (f.exists() && f.length() > 0) {
+                        RecordingStore.scan(context, f)
+                        lastRecording.value =
+                            SavedRecording(RecordingStore.shareUriFor(context, f), f.name)
+                        toast.value = "Saved ${f.name}"
+                        refreshRecordings()
+                    } else {
+                        toast.value = "Recording failed — nothing written"
+                    }
+                }
+                null -> toast.value = "Recording failed — nothing written"
             }
         }
+    }
+
+    // ---------------------------------------------------- recordings library
+
+    /** Refreshes the in-app list from MediaStore (Movies/VCamStudio, vcam_*). */
+    fun refreshRecordings() {
+        viewModelScope.launch(dispatchers.io) {
+            _recordings.value = RecordingStore.queryLibrary(context)
+        }
+    }
+
+    /** Plays a library clip through the system player (content Uri, granted read). */
+    fun playRecording(item: RecordingItem) {
+        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+            setDataAndType(item.uri, "video/mp4")
+            addFlags(
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+            )
+        }
+        runCatching { context.startActivity(intent) }
+            .onFailure { toast.value = "No video player found" }
+    }
+
+    /** Shares a library clip (content Uri, granted read) via the system chooser. */
+    fun shareRecording(item: RecordingItem) {
+        val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "video/mp4"
+            putExtra(android.content.Intent.EXTRA_STREAM, item.uri)
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = android.content.Intent.createChooser(send, "Share recording")
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(chooser) }
+            .onFailure { toast.value = "Share failed" }
     }
 
     // (Round-30: the record-time pump was REPLACED by the always-on master
@@ -708,7 +776,7 @@ class StudioViewModel @Inject constructor(
     }
 
     fun clearLastRecording() {
-        lastRecordingPath.value = null
+        lastRecording.value = null
     }
 
     // ---------------------------------------------------------------- sheets
@@ -1035,6 +1103,12 @@ class StudioViewModel @Inject constructor(
         // Engine is app-scoped; it stays alive across configuration changes.
     }
 }
+
+/** A finished recording handed to the UI for the auto-share sheet. */
+data class SavedRecording(val uri: Uri, val name: String)
+
+/** One row of the in-app recordings library (MediaStore Movies/VCamStudio). */
+data class RecordingItem(val uri: Uri, val name: String, val sizeBytes: Long, val dateAddedSec: Long)
 
 private fun LayerDefinition.duplicateWithNewId(): LayerDefinition = when (this) {
     is LayerDefinition.Camera -> copy(id = id + "-copy")

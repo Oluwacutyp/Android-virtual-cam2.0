@@ -7,7 +7,6 @@ import android.view.Surface
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.io.File
 import java.util.concurrent.Executors
 
 /**
@@ -20,14 +19,14 @@ class RecordingController {
     sealed interface State {
         data object Idle : State
         data object Starting : State
-        data class Recording(val file: File, val startedAtMs: Long) : State
+        data class Recording(val output: RecordingOutput, val startedAtMs: Long) : State
         data object Stopping : State
     }
 
     private val _state = MutableStateFlow<State>(State.Idle)
     val state: StateFlow<State> = _state.asStateFlow()
 
-    var lastRecording: File? = null
+    var lastRecording: RecordingOutput? = null
         private set
 
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "vcam-rec-ctl") }
@@ -48,7 +47,7 @@ class RecordingController {
      * codec/setup failures. Returns false when a recording is already active.
      */
     fun start(
-        file: File,
+        output: RecordingOutput,
         width: Int,
         height: Int,
         fps: Int = 30,
@@ -65,16 +64,16 @@ class RecordingController {
                 // createInputSurface() after codec.start() (the r29 bug)
                 // threw "valid only at Configured state".
                 val s = RecordingSession(
-                    file, width, height, fps,
+                    output, width, height, fps,
                     VIDEO_BITRATE_BPS, AUDIO_SAMPLE_RATE, AUDIO_BITRATE_BPS,
                 ) { msg -> main.post { eventSink?.invoke(msg) } }
                 session = s
-                lastRecording = file
+                lastRecording = output
                 main.post {
                     onSurfaceReady(s.inputSurface)
                     try {
                         s.start()
-                        _state.value = State.Recording(file, System.currentTimeMillis())
+                        _state.value = State.Recording(output, System.currentTimeMillis())
                     } catch (t: Throwable) {
                         session = null
                         _state.value = State.Idle
@@ -100,20 +99,20 @@ class RecordingController {
         session?.offerAudioPcm(pcm)
     }
 
-    /** Stops asynchronously; [onStopped] (main thread) gets the file or null. */
-    fun stop(onStopped: (File?) -> Unit = {}) {
+    /** Stops asynchronously; [onStopped] (main thread) gets the finalized target or null. */
+    fun stop(onStopped: (RecordingOutput?) -> Unit = {}) {
         val s = session ?: return
         if (_state.value !is State.Recording) return
         _state.value = State.Stopping
         executor.execute {
-            val file = runCatching { s.stop() }
+            val out = runCatching { s.stop() }
                 .onFailure { Log.e(TAG, "recorder stop failed", it) }
                 .getOrNull()
             session = null
             main.post {
                 _state.value = State.Idle
                 eventSink?.invoke("RECORDER_STATE STOPPED (controller)")
-                onStopped(file)
+                onStopped(out)
             }
         }
     }

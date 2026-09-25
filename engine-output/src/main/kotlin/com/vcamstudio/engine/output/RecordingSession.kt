@@ -6,7 +6,6 @@ import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.util.Log
 import android.view.Surface
-import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.LinkedBlockingQueue
@@ -36,7 +35,7 @@ import java.util.concurrent.TimeUnit
  * file.
  */
 class RecordingSession(
-    val file: File,
+    val output: RecordingOutput,
     private val width: Int,
     private val height: Int,
     private val fps: Int,
@@ -46,9 +45,29 @@ class RecordingSession(
     private val stateLog: ((String) -> Unit)? = null,
 ) {
     private val muxLock = Any()
-    private val muxer = MediaMuxer(file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+    private val muxer = createMuxer()
     private var videoTrack = -1
     private var audioTrack = -1
+
+    /** Approximate written payload (exact size for MediaStore targets, which have no File). */
+    private var bytesWritten = 0L
+
+    /**
+     * Round-31: the muxer targets either a real file or a MediaStore
+     * ParcelFileDescriptor (Movies/VCamStudio). If the muxer cannot be
+     * created on an FD target, the fd must not leak.
+     */
+    private fun createMuxer(): MediaMuxer = try {
+        when (val o = output) {
+            is RecordingOutput.FileOutput ->
+                MediaMuxer(o.file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            is RecordingOutput.FdOutput ->
+                MediaMuxer(o.pfd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        }
+    } catch (t: Throwable) {
+        (output as? RecordingOutput.FdOutput)?.let { runCatching { it.pfd.close() } }
+        throw t
+    }
 
     @Volatile
     private var muxerStarted = false
@@ -71,7 +90,7 @@ class RecordingSession(
     private var audioThread: Thread? = null
 
     init {
-        stateLog?.invoke("RECORDER_STATE CONFIGURED file=${file.name} ${width}x${height}@${fps}")
+        stateLog?.invoke("RECORDER_STATE CONFIGURED file=${output.displayName} ${width}x${height}@${fps}")
         Log.i(TAG, "RECORDER_STATE CONFIGURED")
     }
 
@@ -146,6 +165,7 @@ class RecordingSession(
                             synchronized(muxLock) {
                                 if (muxerStarted && videoTrack >= 0) {
                                     muxer.writeSampleData(videoTrack, buf, info)
+                                    bytesWritten += info.size
                                 }
                             }
                         }
@@ -210,6 +230,7 @@ class RecordingSession(
                                 synchronized(muxLock) {
                                     if (muxerStarted && audioTrack >= 0) {
                                         muxer.writeSampleData(audioTrack, buf, info)
+                                        bytesWritten += info.size
                                     }
                                 }
                             }
@@ -238,8 +259,8 @@ class RecordingSession(
 
     // ---------------------------------------------------------------- stop
 
-    /** Blocks until both encoders drain; returns the finalized file. */
-    fun stop(): File {
+    /** Blocks until both encoders drain; returns the finalized output target. */
+    fun stop(): RecordingOutput {
         stopRequested = true
         runCatching { videoCodec.signalEndOfInputStream() }
         val vt = videoThread
@@ -259,9 +280,17 @@ class RecordingSession(
             }
             runCatching { muxer.release() }
         }
-        stateLog?.invoke("RECORDER_STATE STOPPED file=${file.name} bytes=${file.length()}")
-        Log.i(TAG, "RECORDER_STATE STOPPED recording finalized: ${file.absolutePath} (${file.length()} bytes)")
-        return file
+        // Round-31: our handle on a MediaStore fd closes once the muxer is
+        // done with it (MediaMuxer dup'd its own); the app then publishes the
+        // pending row (IS_PENDING=0) so the gallery sees the clip.
+        if (output is RecordingOutput.FdOutput) runCatching { output.pfd.close() }
+        val bytes = when (val o = output) {
+            is RecordingOutput.FileOutput -> o.file.length()
+            is RecordingOutput.FdOutput -> bytesWritten
+        }
+        stateLog?.invoke("RECORDER_STATE STOPPED file=${output.displayName} bytes=$bytes")
+        Log.i(TAG, "RECORDER_STATE STOPPED recording finalized: ${output.displayName} ($bytes bytes)")
+        return output
     }
 
     companion object {
