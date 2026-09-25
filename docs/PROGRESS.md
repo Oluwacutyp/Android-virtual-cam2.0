@@ -1507,3 +1507,51 @@ Owner device evidence on r29 build (e3e82cf): (1) REC tap → toast "Recorder: s
 
 ### CI
 - f734da4 (code) run: SUCCESS (first try). Docs increment: this commit.
+
+## Increment 36 — Round 31 (461cf13): recordings land in the public media library
+
+Owner evidence on r30 build: recording works end to end (REC, timer, encoder chain, MP4 produced —
+shared via a third-party app in the device screenshot), but the file was written to
+`getExternalFilesDir(DIRECTORY_MOVIES)` — app-private, unindexed by MediaStore on Android 10+, so
+gallery/Files never see it. Mandated ONE fix: write to PUBLIC MediaStore. Encoder chain untouched.
+
+### Output contract (engine-output)
+- New `RecordingOutput` sealed interface: `FileOutput(file)` | `FdOutput(ParcelFileDescriptor, name, uri)`.
+  `RecordingSession`/`RecordingController` are output-agnostic; muxer is `MediaMuxer(fd)` on MediaStore
+  targets (fd closed by the session after `muxer.release()`; created in a try that closes the fd on failure).
+- `State.Recording(output, startedAtMs)`; `stop(onStopped: (RecordingOutput?) -> Unit)`. STOPPED log carries
+  bytes (`file.length()` for file targets, sampled sum for FD targets).
+
+### MediaStore path (API 29+, the owner's device)
+- `RecordingStore.createTarget`: insert row (`DISPLAY_NAME vcam_<ts>`, `MIME video/mp4`,
+  `RELATIVE_PATH Movies/VCamStudio`, `IS_PENDING 1`) → `openFileDescriptor(uri,"rw")` → encoder writes into
+  the row's fd. On stop: fd closed → `publish` sets `IS_PENDING 0` → clip visible in gallery/Files
+  immediately. Failed start/discarded busy → `discardPending` (no 0-byte ghosts).
+- Logs: `REC_TARGET kind=mediastore|public-legacy|private-fallback name=… uri=…`, `REC_SAVED uri=…`.
+
+### Legacy path (API <29)
+- Public `Movies/VCamStudio` via `getExternalStoragePublicDirectory` + `MediaScannerConnection.scanFile`
+  after stop; `WRITE_EXTERNAL_STORAGE` declared with `maxSdkVersion="28"`; falls back to the private dir
+  (still shareable via FileProvider — `file_paths.xml` gained `external-path Movies/VCamStudio`).
+
+### In-app library (mandate 2 — same URIs as the gallery)
+- New `RecordingsSheet` ("Clips" button in the dock bar): MediaStore query
+  `RELATIVE_PATH LIKE 'Movies/VCamStudio/%' AND DISPLAY_NAME LIKE 'vcam_%'` sorted DATE_ADDED DESC
+  (legacy: public dir listing). Tap = `ACTION_VIEW` on the content uri; Share = `ACTION_SEND` content uri.
+  Post-stop auto-share now uses the MediaStore uri (no FileProvider hop).
+
+### Migration (mandate 3)
+- `StudioApp.onCreate` spawns `RecordingStore.migrateExisting`: moves every `vcam_*.mp4` from the old
+  private locations (external app Movies dir + filesDir root) into Movies/VCamStudio, deletes the private
+  copy, logs `MIGRATED_RECORDING name=<n>` per move + `MIGRATED_RECORDINGS count=<n>` (idempotent).
+
+### CI ledger
+- f8f1bdb FAIL `:engine-output:compileDebugKotlin` — member smart cast does not cross the `runCatching`
+  lambda (`output.pfd` unresolved) → capture `val fdOut = output as? FdOutput` (df09238).
+- df09238 FAIL `:app:compileDebugKotlin` — top-level `RecordingItem` duplicated `RecordingStore.Item` →
+  single model `RecordingStore.Item` (461cf13 SUCCESS). Docs: this commit.
+
+### Device verification checklist (r31 build)
+- Record → clip appears in system Files/Gallery under Movies/VCamStudio/vcam_<ts>.mp4 with no share-through.
+- In-app Clips sheet lists the same clip; tap plays; Share hands the file to the target app directly.
+- Reinstall-over-old-build → private clips migrate into Movies/VCamStudio (MIGRATED_RECORDING in log).
