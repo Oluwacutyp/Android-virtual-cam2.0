@@ -24,10 +24,24 @@ android {
         versionName = "0.1.0-phase1"
 
         ndk {
-            // Round-32b (owner B.1): ship ARM ABIs only. Does not shrink the
-            // AAR download (fetched whole, filtered at packaging) but removes
-            // ~100 MB of install size / half the native libs from the APK.
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            // Round-32c (owner): arm64-v8a ONLY. The r32b hang was
+            // :app:packageDebug zipping ~400 MB of UNSTRIPPED natives
+            // (stripDebugDebugSymbols fell back — no NDK strip tool on the
+            // runner; 4 ABIs x ~100 MB). One ABI cuts that ~4x. The S22
+            // Ultra is arm64-v8a; re-add armeabi-v7a only if a 32-bit
+            // device enters scope.
+            abiFilters.clear()
+            abiFilters += "arm64-v8a"
+        }
+    }
+
+    packaging {
+        jniLibs {
+            // Round-32c (owner 3): ORT ships pre-stripped; the runner has no
+            // NDK strip tool (AGP warned "Unable to strip" and repackaged
+            // as-is). No legacy extraction avoids the extra intermediate
+            // copy on the way into the APK.
+            useLegacyPackaging = false
         }
     }
 

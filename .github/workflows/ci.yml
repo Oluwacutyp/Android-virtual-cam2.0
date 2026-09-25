@@ -13,6 +13,9 @@ jobs:
   build-test-lint:
     name: Build + unit tests + lint (JDK 17, API 34)
     runs-on: ubuntu-latest
+    # Round-32c (owner 4): a stuck assemble now returns a red X with the
+    # exact task name in <=25 min instead of riding to the 6h cap.
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
