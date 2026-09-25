@@ -23,6 +23,11 @@ android {
         versionCode = 1
         versionName = "0.1.0-phase1"
 
+        // Round-35 (owner fix 1): ORT's AAR may push the debug dex over the
+        // 64K method limit; without multidex mergeDex can hang/OOM instead
+        // of erroring. Costs nothing when not needed.
+        multiDexEnabled = true
+
         ndk {
             // Round-32c (owner): arm64-v8a ONLY. The r32b hang was
             // :app:packageDebug zipping ~400 MB of UNSTRIPPED natives
@@ -37,14 +42,20 @@ android {
 
     packaging {
         jniLibs {
-            // Round-32c (owner 3): ORT ships pre-stripped; the runner has no
-            // NDK strip tool (AGP warned "Unable to strip" and repackaged
-            // as-is). No legacy extraction avoids the extra intermediate
-            // copy on the way into the APK.
-            useLegacyPackaging = false
-            // Round-33 (owner mandate 2): exclude the ORT libs from AGP's
-            // strip pass entirely — they ship pre-stripped from Microsoft,
-            // and the no-NDK runner was warning + repackaging as-is.
+            // Round-35 (owner fix 3): the r34 log shows x86_64 libs STILL in
+            // merged_native_libs despite the arm64 abiFilter — the vendored
+            // files(...) AAR bypasses ndk.abiFilters, so ~400 MB of
+            // unstripped natives (4 ABIs of ORT) fed packageDebug again.
+            // excludes apply at merge time regardless of dependency type.
+            useLegacyPackaging = true
+            excludes += listOf(
+                "lib/x86/**",
+                "lib/x86_64/**",
+                "lib/mips/**",
+                "lib/mips64/**",
+            )
+            // Round-33: ORT ships pre-stripped; the no-NDK runner warned and
+            // repackaged as-is. keepDebugSymbols skips the futile strip pass.
             keepDebugSymbols += setOf(
                 "**/libonnxruntime.so",
                 "**/libonnxruntime4j_jni.so",
