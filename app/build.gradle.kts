@@ -22,6 +22,13 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1.0-phase1"
+
+        ndk {
+            // Round-32b (owner B.1): ship ARM ABIs only. Does not shrink the
+            // AAR download (fetched whole, filtered at packaging) but removes
+            // ~100 MB of install size / half the native libs from the APK.
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     buildTypes {
