@@ -15,6 +15,12 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
+        // Round-32 (owner "CI HANG ON ASSEMBLE DEBUG"): mirrors first —
+        // Maven Central throttled/timed out fetching the ~65 MB ONNX
+        // Runtime AAR on two consecutive CI runs. Mirrors cost nothing
+        // when fast; Gradle falls through to the canonical repos on a 404.
+        maven { url = uri("https://maven.aliyun.com/repository/central") }
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
         google()
         mavenCentral()
     }
