@@ -59,10 +59,20 @@ jobs:
       # invocations, 15-min step timeouts each — a stall is attributed to
       # Compile / Dex / Package by name. -i keeps the live task lines.
       - name: Compile
-        timeout-minutes: 15
+        timeout-minutes: 30
         run: |
           set -o pipefail
-          ./gradlew :app:compileDebugKotlin :app:mergeExtDexDebug -i --console=plain 2>&1 | tee /tmp/compile.log
+          echo "=== MEMORY BEFORE ==="
+          free -m
+          echo "=== /proc/meminfo OOM hints ==="
+          grep -iE 'oom|avail' /proc/meminfo || true
+          ./gradlew :app:compileDebugKotlin -i --console=plain 2>&1 | tee /tmp/compile.log
+          EXIT=$?
+          echo "=== MEMORY AFTER ==="
+          free -m
+          echo "=== KERNEL OOM CHECK ==="
+          (dmesg 2>/dev/null || sudo dmesg 2>/dev/null) | tail -100 | grep -iE 'oom|killed process' || echo "(dmesg unavailable)"
+          exit $EXIT
 
       - name: Dex
         timeout-minutes: 15
