@@ -27,6 +27,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Round-33 (owner mandate 1): vendored ORT AAR from this repo's
+      # release (GitHub CDN) — removes the Maven fetch variable entirely.
+      # Local builds without libs/ort.aar fall back to Maven (conditional
+      # in :app and :engine-ai-face build files).
+      - name: Fetch vendored ORT AAR
+        run: |
+          mkdir -p libs
+          curl -L --fail --retry 3 \
+            -o libs/ort.aar \
+            https://github.com/Oluwacutyp/Android-virtual-cam2.0/releases/download/vendor-ort-1.20.0/ort.aar
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -39,7 +50,10 @@ jobs:
       - name: Assemble debug
         run: |
           set -o pipefail
-          ./gradlew --no-daemon --stacktrace assembleDebug 2>&1 | tee /tmp/build.log
+          # Round-33 (owner mandate 3): --profile writes per-task duration
+          # HTML to build/reports/profile/ — dumped below (if: always()) so
+          # even a capped run shows where the time went.
+          ./gradlew --no-daemon --stacktrace --profile --console=plain :app:assembleDebug :probe-wedge:assembleDebug 2>&1 | tee /tmp/build.log
 
       - name: Unit tests
         run: |
@@ -54,6 +68,11 @@ jobs:
       # Agent verification loop: CI failures are posted as commit comments so
       # the coding agent (egress-restricted to github.com) can read compiler
       # output and iterate.
+      - name: Dump build profile
+        if: always()
+        run: |
+          find . -path '*/reports/profile/*.html' -exec cat {} \; || true
+
       - name: Report failure to commit comments
         if: failure()
         run: |

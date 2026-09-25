@@ -24,11 +24,21 @@ android {
     }
 }
 
+// Round-33: the ORT dependency is declared in THIS module (not :app), so the
+// vendored-AAR conditional must live here too or CI would still hit Maven.
+// :app carries the identical files(...) so the AAR classes are packaged into
+// the APK (file deps are not transitive from library modules).
+val ortAar = file("../libs/ort.aar")
+
 dependencies {
+    if (ortAar.exists()) {
+        implementation(files(ortAar))
+    } else {
+        implementation(libs.onnxruntime.android)
+    }
     implementation(project(":core-common"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.camerax.core)
-    implementation(libs.onnxruntime.android)
     implementation(libs.coroutines.core)
     implementation(libs.timber)
     testImplementation(libs.junit)

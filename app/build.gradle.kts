@@ -42,6 +42,13 @@ android {
             // as-is). No legacy extraction avoids the extra intermediate
             // copy on the way into the APK.
             useLegacyPackaging = false
+            // Round-33 (owner mandate 2): exclude the ORT libs from AGP's
+            // strip pass entirely — they ship pre-stripped from Microsoft,
+            // and the no-NDK runner was warning + repackaging as-is.
+            keepDebugSymbols += setOf(
+                "**/libonnxruntime.so",
+                "**/libonnxruntime4j_jni.so",
+            )
         }
     }
 
@@ -75,7 +82,17 @@ android {
     }
 }
 
+// Round-33 (owner mandate 1): vendored ORT AAR when present (CI fetches it
+// from the GitHub release; local builds fall back to Maven). files(...) is
+// the modern form — no flatDir.
+val ortAar = file("../libs/ort.aar")
+
 dependencies {
+    if (ortAar.exists()) {
+        implementation(files(ortAar))
+    } else {
+        implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+    }
     implementation(project(":core-common"))
     implementation(project(":engine-render"))
     implementation(project(":engine-capture"))
