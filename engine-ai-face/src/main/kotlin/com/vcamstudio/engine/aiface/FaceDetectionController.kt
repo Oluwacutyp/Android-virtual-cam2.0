@@ -52,7 +52,7 @@ class FaceDetectionController : AutoCloseable {
 
     @Volatile private var detector: ScrfdDetector? = null
     @Volatile private var useNnapi: Boolean = false
-    @Volatile private var lastRunMs: Long = 0L
+    @Volatile internal var lastRunMs: Long = 0L
     @Volatile private var runsTotal: Long = 0L
 
     /** (tMs, durationMs) ring, last 30 runs — SCRFD_MS / SCRFD_FPS. */
@@ -107,24 +107,24 @@ class FaceDetectionController : AutoCloseable {
     /**
      * The analyzer to hand to [com.vcamstudio.engine.capture.CameraSource].
      * Runs on the dedicated executor; closes the proxy on every path.
+     * Round-39: a proper class ([ScrfdAnalyzer]), constructed once — the
+     * SAM-lambda form triggered the Kotlin 2.0.20 inference hang.
      */
-    val analyzer = ImageAnalysis.Analyzer { proxy ->
-        try {
-            val d = detector ?: return@Analyzer
-            val now = System.currentTimeMillis()
-            if (now - lastRunMs < 200) return@Analyzer // 5 Hz gate
-            lastRunMs = now
-            val t0 = System.currentTimeMillis()
-            val detection = runFrame(proxy, d)
-            val t1 = System.currentTimeMillis()
-            publish(detection, t1)
-            recordRun(t1, t1 - t0)
-        } catch (t: Throwable) {
-            // Never propagate into CameraX — detection failures are logged.
-            Timber.w(t, "SCRFD_FRAME_FAIL")
-        } finally {
-            runCatching { proxy.close() }
-        }
+    val analyzer: ImageAnalysis.Analyzer = ScrfdAnalyzer(this)
+
+    internal fun currentDetectorOrNull(): ScrfdDetector? = detector
+
+    /**
+     * Frame body lifted verbatim from the former analyzer lambda —
+     * logic unchanged, only moved (round 39).
+     */
+    internal fun handleFrame(proxy: ImageProxy, d: ScrfdDetector, now: Long) {
+        lastRunMs = now
+        val t0 = System.currentTimeMillis()
+        val detection = runFrame(proxy, d)
+        val t1 = System.currentTimeMillis()
+        publish(detection, t1)
+        recordRun(t1, t1 - t0)
     }
 
     /**
