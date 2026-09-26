@@ -280,9 +280,10 @@ object CrashLogger {
             )?.use { c -> while (c.moveToNext()) ids.add(c.getLong(0)) }
             var deleted = 0
             for (id in ids) {
-                if (runCatching { resolver.delete(ContentUris.withAppendedId(collection, id), null, null) }
-                        .getOrDefault(false)
-                ) deleted++
+                // ContentResolver.delete returns ROWS DELETED (Int), not a flag.
+                val ok = runCatching { resolver.delete(ContentUris.withAppendedId(collection, id), null, null) }
+                    .getOrDefault(0) > 0
+                if (ok) deleted++
             }
             Log.i("vcam-engine", "CACHE_TOMBSTONE dcim_sweep rel=$CRASH_DIR_REL stale=${ids.size} deleted=$deleted")
         } catch (t: Throwable) {
