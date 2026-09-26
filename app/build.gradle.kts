@@ -102,7 +102,7 @@ dependencies {
     if (ortAar.exists()) {
         implementation(files(ortAar))
     } else {
-        implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+        implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.1")
     }
     implementation(project(":core-common"))
     implementation(project(":engine-render"))
