@@ -54,5 +54,15 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- Round 47 (owner mandate): ORT process isolation. OrtEnvironment
+             .createSession aborts natively inside libonnxruntime.so (two ORT
+             versions, same signature: no Kotlin trace, no crash file). All
+             session work happens in the :ai child process so a native crash
+             can never take the studio down. -->
+        <service
+            android:name=".ai.AiInferenceService"
+            android:process=":ai"
+            android:exported="false" />
     </application>
 </manifest>

@@ -1843,3 +1843,54 @@ dead; assembleDebug APK produced). Device protocol: DEV toggle ON ->
 force-close -> relaunch; launches = 1.17.1 fixed the native crash -> verify
 SCRFD READY + cyan box; still crashes = report and stop, round 47 is process
 isolation.
+
+## Increment 43 — Round 47: ORT process isolation (:ai) — the durable fix
+
+Two ORT versions (1.20.0, 1.17.1) natively abort at OrtEnvironment.createSession
+with the same signature (no Kotlin trace, no crash file, instant death).
+Version-swapping is dead; per owner mandate the durable fix: the main process
+never touches ORT again.
+
+### The isolation
+- Manifest: <service android:name=".ai.AiInferenceService"
+  android:process=":ai" android:exported="false"/> in the APP manifest.
+- AiInferenceService (app/ai/): session creation on a "vcam-ai-probe" worker
+  thread behind the model_path extra; reports pid/state/model/ts into
+  ai_proc_state.tmp at started -> ok | fail | stopped (shared filesDir, same
+  uid). Detector HELD ALIVE per mandate (round 48 wires inference); closed in
+  onDestroy (clean teardown only — a native death never reaches it). Logs
+  AI_PROC_START pid= / AI_PROC_SESSION_OK model= / AI_PROC_SESSION_FAIL.
+- AiProcMonitor (app/ai/, MAIN process): probe() = mandate steps 3+4 — writes
+  ai_proc_probe.tmp (main pid), startService, polls the child report +
+  /proc/<pid> liveness every 2 s for 30 s (the mandate's "simpler" option;
+  same-uid /proc visibility). Child died in-window -> AI_PROC_CRASHED +
+  AI_PROC_STATE=dead + deathEvents. Stale reports discarded via the report ts.
+- Boot path (StudioApp): process-name-guarded onCreate (26-27 via
+  /proc/self/cmdline, 28+ Application.getProcessName()). MAIN process only:
+  tombstone sweep, migrate thread, and startAiProcProbeIfArmed() — DEV SCRFD
+  toggle ON (DataStore, read on a boot thread; nothing blocks the main
+  thread) + model READY -> AiProcMonitor.probe(path). Toggle OFF -> nothing.
+  r44's main-process sentinel RETIRED (retired file deleted at boot; the
+  VM's tryScrfdDevSession/clearScrfdSentinel machinery removed).
+- Main-process ORT paths eliminated: syncDetection never attaches the
+  analyzer (round 48 re-wires via :ai); the states collector no longer calls
+  setModel for READY; phase collector's sentinel-clearing gone. The main
+  process's remaining FaceDetectionController usage is state-only (setModel
+  (null) / stats / phase / dumpSection) — no ORT construction anywhere.
+- Diagnostics: AI_PROC_SECTION (AI_PROC_STATE=idle|running|dead /
+  AI_PROC_PID=<pid|-> / AI_PROC_LAST=<ts> / AI_PROC_MODEL=<path> /
+  AI_PROC_DETAIL=<reason>); VM toasts "AI inference stopped unexpectedly —
+  see Diagnostics" on deathEvents (mandate 6).
+
+### Expected device behavior (owner's test)
+DEV toggle ON + model on disk + restart: if ORT aborts again, the studio
+STAYS USABLE and Diagnostics shows AI_PROC_STATE=dead within ~30 s (watcher
+poll) — the app is now immune to the native crash. If 1.17.1 survives,
+AI_PROC_STATE=running + pid, and round 48 wires real inference. Either way
+the main process lives.
+
+### DO-NOTs honored
+No new ORT versions (1.17.1 stays); main-process engine/render/capture/
+output/audio untouched; no Kotlin catch attempted around the native abort;
+no dependency changes. Restore incident #12 mid-round recovered via fetch +
+mixed reset (diff verified = exactly the r47 changeset before commit).

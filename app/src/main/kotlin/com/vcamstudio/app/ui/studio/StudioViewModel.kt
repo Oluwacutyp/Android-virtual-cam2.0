@@ -52,7 +52,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import timber.log.Timber
-import java.io.File
 import java.util.UUID
 import javax.inject.Inject
 
@@ -206,44 +205,18 @@ class StudioViewModel @Inject constructor(
         viewModelScope.launch { settings.setMonitorMediaWhileRecording(enabled) }
     }
 
-    /** Sentinel file: armed right before ORT is touched, cleared once the
-     *  phase collector proves the process survived session creation. A boot
-     *  that finds it means the previous attempt died NATIVELY. */
-    private fun scrfdSentinel(): File = File(context.filesDir, "scrfd_session_sentinel")
-
-    private fun tryScrfdDevSession(path: String?) {
-        if (path == null) return
-        val sentinel = scrfdSentinel()
-        if (sentinel.exists()) {
-            runCatching { sentinel.delete() }
-            scrfdSessionDev.value = false
-            viewModelScope.launch { settings.setScrfdSessionEnabled(false) }
-            Timber.w("SCRFD_DEV_AUTODISABLE reason=sentinel-leftover")
-            toast.value = "SCRFD dev session crashed previously — toggle disabled"
-            return
-        }
-        runCatching { sentinel.writeText("armed ts=${System.currentTimeMillis()} path=$path\n") }
-        Timber.i("SCRFD_SENTINEL_ARMED path=%s", path)
-        faceDetection.setModel(path)
-    }
-
-    private fun clearScrfdSentinel(why: String) {
-        val s = scrfdSentinel()
-        if (s.exists() && runCatching { s.delete() }.getOrDefault(false)) {
-            Timber.i("SCRFD_SENTINEL_CLEARED reason=%s", why)
-        }
-    }
-
     /** Never-throw (round 43): called from guarded collectors AND the UI —
      *  an analyzer rebind failure must log, not crash the main thread.
      *  Round 44: the analyzer additionally requires the DEV session toggle —
      *  with it off, NOTHING loads the model (owner decisions 1+2). */
     private fun syncDetection() {
         runCatching {
-            val scrfdReady = modelManager.isReady("scrfd_10g_bnkps")
-            cameraSource.setAnalysisAnalyzer(
-                if (scrfdReady && scrfdSessionDev.value && _hasCameraLayer.value) faceDetection.analyzer else null,
-            )
+            // Round 47: the analyzer would run ScrfdDetector IN THIS
+            // PROCESS — the call that natively aborts inside
+            // libonnxruntime.so. It stays DETACHED until inference moves
+            // to the :ai child process (round 48); detection is parked,
+            // the studio is unaffected.
+            cameraSource.setAnalysisAnalyzer(null)
         }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=syncDetection") }
     }
 
@@ -402,34 +375,29 @@ class StudioViewModel @Inject constructor(
 
         // Phase 2: SCRFD lifecycle — model presence gates the detector; a
         // camera layer on the active scene gates the analysis stream.
-        // Phase 2: SCRFD lifecycle. Round 44 (owner decision 1): the
-        // download-complete path NO LONGER touches ORT — the model lands on
-        // disk and the row reports "Ready (not active)"; NOTHING loads it.
-        // The ORT session is attempted ONLY if the DEV toggle was ON at
-        // process boot (mandate: requires restart), behind the native-crash
-        // sentinel (tryScrfdDevSession). Round 42 guards stay.
+        // Phase 2: SCRFD lifecycle. Round 47 (owner mandate): session
+        // creation moved to the :ai CHILD process (AiInferenceService,
+        // armed from StudioApp when the DEV toggle is on). THIS process
+        // never touches OrtEnvironment/ScrfdDetector — a native abort can
+        // only ever kill :ai. The model lands on disk and the row reports
+        // "Ready (not active)"; round-42 collector guards stay.
         viewModelScope.launch {
             val scrfdDevAtBoot = runCatching { settings.scrfdSessionEnabled.first() }.getOrDefault(false)
             scrfdSessionDev.value = scrfdDevAtBoot
             var lastScrfdReady = false
-            var devSessionAttempted = false
             modelManager.states.collect {
                 // Act on READY transitions only — progress ticks arrive ~1/s
-                // during downloads and must not churn the ONNX session.
+                // during downloads and must not churn anything.
                 runCatching {
                     val ready = modelManager.isReady("scrfd_10g_bnkps")
                     if (ready != lastScrfdReady) {
                         lastScrfdReady = ready
-                        if (ready) {
-                            if (scrfdDevAtBoot && !devSessionAttempted) {
-                                devSessionAttempted = true
-                                tryScrfdDevSession(modelManager.readyFile("scrfd_10g_bnkps")?.absolutePath)
-                            }
-                            // else (r44): MODEL_DOWNLOADED — the file sits on
-                            // disk; no OrtSession, no ScrfdDetector, ever.
-                        } else {
+                        if (!ready) {
                             faceDetection.setModel(null)
                         }
+                        // ready == true: r44 MODEL_DOWNLOADED semantics —
+                        // the file sits on disk; the :ai probe (if armed)
+                        // already picked it up at boot.
                     }
                     syncDetection()
                 }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=states") }
@@ -437,6 +405,13 @@ class StudioViewModel @Inject constructor(
         }
         viewModelScope.launch {
             settings.scrfdSessionEnabled.collect { scrfdSessionDev.value = it }
+        }
+        viewModelScope.launch {
+            // Round 47 (owner mandate 6): the :ai process died natively —
+            // THIS process survived. Say so, point at Diagnostics.
+            com.vcamstudio.app.ai.AiProcMonitor.deathEvents.collect {
+                toast.value = "AI inference stopped unexpectedly — see Diagnostics"
+            }
         }
         viewModelScope.launch {
             kotlinx.coroutines.flow.combine(scenes, activeSceneId) { s, id ->
@@ -465,21 +440,8 @@ class StudioViewModel @Inject constructor(
             // one-time toast on session failure (mandate)
             faceDetection.phase.collect { phase ->
                 runCatching {
-                    // Round 44: the process SURVIVED the session-create
-                    // attempt (session built, or it failed in Java) — the
-                    // native-crash sentinel can go. A NATIVE death kills the
-                    // process before any phase lands, leaving it armed.
-                    if (phase == com.vcamstudio.engine.aiface.FaceDetectionController.Phase.RUNNING ||
-                        phase == com.vcamstudio.engine.aiface.FaceDetectionController.Phase.SESSION_FAILED
-                    ) {
-                        clearScrfdSentinel(
-                            if (phase == com.vcamstudio.engine.aiface.FaceDetectionController.Phase.RUNNING) {
-                                "session-running"
-                            } else {
-                                "session-failed-java"
-                            },
-                        )
-                    }
+                    // Round 47: sentinel machinery retired with the
+                    // main-process session path (isolation replaced it).
                     if (phase == com.vcamstudio.engine.aiface.FaceDetectionController.Phase.SESSION_FAILED &&
                         !scrfdFailureToasted
                     ) {
@@ -1079,7 +1041,9 @@ class StudioViewModel @Inject constructor(
                 ""
             }) +
             "\n\nMODEL_SECTION\n  " +
-            modelManager.dumpSection().replace("\n", "\n  ")
+            modelManager.dumpSection().replace("\n", "\n  ") +
+            "\n\nAI_PROC_SECTION\n  " +
+            com.vcamstudio.app.ai.AiProcMonitor.dumpSection().replace("\n", "\n  ")
 
     /** DEV DIAGNOSTIC (round 16A): render external sources as a UV gradient. */
     val uvDebugPass = MutableStateFlow(false)
