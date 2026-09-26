@@ -118,6 +118,11 @@ fun ModelsSheet(
                             "${ms.progressPct}%",
                             style = MaterialTheme.typography.labelMedium,
                         )
+                        ModelManager.State.VERIFIED -> Text(
+                            "Verified…",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                         ModelManager.State.NO_MIRROR -> Text(
                             "No mirror",
                             style = MaterialTheme.typography.labelMedium,

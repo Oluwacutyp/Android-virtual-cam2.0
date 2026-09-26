@@ -298,47 +298,60 @@ class StudioViewModel @Inject constructor(
 
         // Phase 2: SCRFD lifecycle — model presence gates the detector; a
         // camera layer on the active scene gates the analysis stream.
+        // Phase 2: SCRFD lifecycle — model presence gates the detector; a
+        // camera layer on the active scene gates the analysis stream.
+        // Round 42: every observable callback is runCatching-guarded —
+        // a bug here must log, never kill the process from the main
+        // thread ("no view-model observable callback may crash us").
         var lastScrfdReady = false
         viewModelScope.launch {
             modelManager.states.collect {
                 // Act on READY transitions only — progress ticks arrive ~1/s
                 // during downloads and must not churn the ONNX session.
-                val ready = modelManager.isReady("scrfd_10g_bnkps")
-                if (ready != lastScrfdReady) {
-                    lastScrfdReady = ready
-                    faceDetection.setModel(modelManager.readyFile("scrfd_10g_bnkps")?.absolutePath)
-                }
-                syncDetection()
+                runCatching {
+                    val ready = modelManager.isReady("scrfd_10g_bnkps")
+                    if (ready != lastScrfdReady) {
+                        lastScrfdReady = ready
+                        faceDetection.setModel(modelManager.readyFile("scrfd_10g_bnkps")?.absolutePath)
+                    }
+                    syncDetection()
+                }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=states") }
             }
         }
         viewModelScope.launch {
             kotlinx.coroutines.flow.combine(scenes, activeSceneId) { s, id ->
                 s.firstOrNull { it.id == id }?.layers?.any { it is LayerDefinition.Camera } ?: false
             }.collect {
-                _hasCameraLayer.value = it
-                syncDetection()
+                runCatching {
+                    _hasCameraLayer.value = it
+                    syncDetection()
+                }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=camera-layer") }
             }
         }
         viewModelScope.launch {
             faceDetection.stats.collect { stats ->
-                val box = stats.box ?: return@collect
-                val mirrored = cameraSource.isFrontCamera()
-                _faceOverlay.value = if (mirrored) {
-                    box.copy(x1 = 1f - box.x2, x2 = 1f - box.x1)
-                } else {
-                    box
-                }
+                runCatching {
+                    val box = stats.box ?: return@runCatching
+                    val mirrored = cameraSource.isFrontCamera()
+                    _faceOverlay.value = if (mirrored) {
+                        box.copy(x1 = 1f - box.x2, x2 = 1f - box.x1)
+                    } else {
+                        box
+                    }
+                }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=stats") }
             }
         }
         viewModelScope.launch {
             // one-time toast on session failure (mandate)
             faceDetection.phase.collect { phase ->
-                if (phase == com.vcamstudio.engine.aiface.FaceDetectionController.Phase.SESSION_FAILED &&
-                    !scrfdFailureToasted
-                ) {
-                    scrfdFailureToasted = true
-                    toast.value = "SCRFD session failed — detection disabled"
-                }
+                runCatching {
+                    if (phase == com.vcamstudio.engine.aiface.FaceDetectionController.Phase.SESSION_FAILED &&
+                        !scrfdFailureToasted
+                    ) {
+                        scrfdFailureToasted = true
+                        toast.value = "SCRFD session failed — detection disabled"
+                    }
+                }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=phase") }
             }
         }
 
@@ -903,7 +916,9 @@ class StudioViewModel @Inject constructor(
 
     fun diagnosticsDump(): String =
         engine.dump() + "\n\nSCRFD_SECTION\n  " +
-            faceDetection.dumpSection().replace("\n", "\n  ")
+            faceDetection.dumpSection().replace("\n", "\n  ") +
+            "\n\nMODEL_SECTION\n  " +
+            modelManager.dumpSection().replace("\n", "\n  ")
 
     /** DEV DIAGNOSTIC (round 16A): render external sources as a UV gradient. */
     val uvDebugPass = MutableStateFlow(false)

@@ -1604,3 +1604,63 @@ download -> Ready; kill mid-download -> resume (MODEL_DOWNLOAD_RESUME);
 hash mismatch -> MODEL_HASH_MISMATCH. Camera layer + face -> cyan box overlay
 + confidence; Diagnostics: SCRFD_MS/SCRFD_FPS/FACE_BOX; NNAPI dev toggle
 default off. Screenshots + dump or it did not happen.
+
+## Increment 38 — Round 42: device crash post-download; crash net + guarded model path
+
+Field report (owner, Samsung S22 Ultra, fresh r40/r41 debug install): AI Models ->
+SCRFD -> Get -> download climbs to 100%, app dies immediately after completion;
+every reopen then shows the system crash dialog. First execution ever of the
+download-complete path on a device — and, because init adopts an existing file as
+READY, the same path (setModel -> ORT session build) also runs at every launch,
+which explains the reproducible reopen crash.
+
+### FIX 1 — crash net (app/crash/CrashLogger.kt, NEW)
+- `CrashLogger.install(this)` FIRST in StudioApp.onCreate: chained
+  UncaughtExceptionHandler writes `/sdcard/Android/data/<pkg>/files/crashes/
+  crash-<epochMs>.txt` — header (version/device/SDK) + `thread=<name>` +
+  `Log.getStackTraceString` + the last 400 RingLog engine lines — then delegates
+  to the PREVIOUS handler (platform dialog preserved). DEVIATION from the
+  mandate snippet (intent preserved): the snippet re-reads
+  getDefaultUncaughtExceptionHandler() INSIDE the handler = self-reference =
+  guaranteed StackOverflowError; we capture the previous handler before install.
+- `RingLog` (Timber tree, planted debug AND release): synchronized 400-line RAM
+  ring — the owner has no adb, so MODEL_STATE/SCRFD lines only reach him if the
+  crash file carries them.
+- `CrashLogger.onAppStart` on "vcam-crash-boot" thread: CACHE_TOMBSTONE sweep
+  (crash files > 7 days deleted, counts logged) + append launch line (ts +
+  versionName/versionCode/debug) to `files/launch.log`.
+- Diagnostic asymmetry (documented in-file): a NATIVE death (SIGSEGV/SIGABRT in
+  JNI, e.g. ORT session code) bypasses ANY Java handler. If a crash leaves NO
+  crash file -> native suspect -> next round attacks session build directly.
+
+### FIX 2 — guarded post-download path (engine-ai-core ModelManager)
+- State enum gains VERIFIED (between DOWNLOADING and READY; FAILED/READY
+  existed): DOWNLOADING -> (hash ok) -> VERIFIED -> (promoted) -> READY.
+- ALL state changes now flow through guarded `transition()`: try/catch(Throwable)
+  + `MODEL_STATE name=<file> state=<STATE>` logged on every STATE change
+  (DOWNLOADING progress ticks are pct changes, not state changes -> not logged,
+  else 16.9 MB / 64 KB would flood the ring).
+- Post-100% tail, per step: hash mismatch -> runCatching delete of partial +
+  MODEL_HASH_MISMATCH + FAILED (flag, no throw, return); VERIFIED marker
+  publish; promote() — rename-first (same-volume rename is atomic AND overwrites
+  an existing destination on Android), fallback stream-copy to `.tmp` sibling +
+  atomic rename over destination (no RAM slurp of 16-280 MB models), fully
+  runCatching, never throws if destination exists; then MODEL_DOWNLOAD_DONE +
+  READY. Any failure -> guarded FAILED, never the vcam-model-dl thread floor.
+- init adoption (file exists -> READY) guarded (runCatching exists + MODEL_ADOPT
+  log); delete() guarded.
+- StudioViewModel: all four SCRFD/model observable callbacks (states, camera-
+  layer combine, stats, phase) runCatching-wrapped -> MODEL_OBSERVE_FAIL logged;
+  an observer bug can no longer kill the main thread.
+- ModelsSheet: exhaustive when gains VERIFIED -> "Verified…" row label.
+- Diagnostics dump gains MODEL_SECTION (ModelManager.dumpSection: per-row
+  MODEL name/state/pct/bytes/msg) appended after SCRFD_SECTION.
+
+### Round 42 contracts
+Crash file path: /sdcard/Android/data/<applicationId>/files/crashes/ (debug build
+suffix .debug applies on-device). launch.log: one line per boot. New log keys:
+MODEL_STATE / MODEL_STATE_FAIL / MODEL_ADOPT / MODEL_PROMOTE_FAIL /
+MODEL_PROMOTE_COPY_FAIL / MODEL_OBSERVE_FAIL / CACHE_TOMBSTONE (sweep|launch) /
+CRASH_LOGGER_INSTALL. Dump keys added: MODEL_SECTION > MODEL_STATES.
+Untouched (mandate): r39 analyzer class, r40 SessionOptions/import fixes, r41
+tests+lint, Kotlin/AGP/ORT versions, all CI green-path config.
