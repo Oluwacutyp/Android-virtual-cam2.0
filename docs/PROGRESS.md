@@ -1822,3 +1822,24 @@ bus: MEDIA still reached the monitor, speaker -> mic -> recording's MIC bus.
 SCRFD/DEV-toggle/ModelManager/ORT untouched; no ORT-crash "fix" (parking is
 the end-state); rotation/TRIANGLES/skip/blit untouched; r33 A+B untouched
 (readInto math identical, mask lookup replaces the single flag).
+
+## Increment 42 — Round 46: ORT 1.20.0 -> 1.17.1 (one-variable native-crash experiment)
+
+Field signature: native abort inside libonnxruntime.so at
+OrtEnvironment.createSession (no Kotlin trace, no crash file; parked r44).
+Hypothesis under test: 1.20.0's native-lib/Kotlin-metadata overhaul; 1.17.1
+is the last release before it. NOT the r32-era 1.17.0 question (that was the
+compile-time metadata hang r39 killed with the ScrfdAnalyzer class).
+
+Diff (complete): gradle/libs.versions.toml onnxruntime "1.20.0" -> "1.17.1";
+app/build.gradle.kts Maven fallback literal -> 1.17.1. engine-ai-face
+follows via libs.onnxruntime.android (version.ref). Vendored libs/ort.aar
+conditional untouched; no source/tooling/other-version changes; SessionOptions
+import untouched.
+
+CI: run 36255250801 GREEN first try (:engine-ai-face:compileDebugKotlin
+compiled against 1.17.1 -> the compile-time-metadata concern is empirically
+dead; assembleDebug APK produced). Device protocol: DEV toggle ON ->
+force-close -> relaunch; launches = 1.17.1 fixed the native crash -> verify
+SCRFD READY + cyan box; still crashes = report and stop, round 47 is process
+isolation.
