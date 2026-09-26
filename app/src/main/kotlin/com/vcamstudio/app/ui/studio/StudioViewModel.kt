@@ -47,10 +47,12 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import java.io.File
 import java.util.UUID
 import javax.inject.Inject
 
@@ -155,6 +157,15 @@ class StudioViewModel @Inject constructor(
     /** NNAPI dev toggle (default OFF per mandate) — applied at session (re)build. */
     val scrfdNnapi = MutableStateFlow(false)
 
+    /** Round 44: DEV "enable SCRFD session" (persisted, default OFF). The
+     *  live value drives the UI (overlay/dump gating, row label); the
+     *  BOOT-time value drives the session attempt ("requires restart"). */
+    val scrfdSessionDev = MutableStateFlow(false)
+
+    /** Round 44 (r33 FIX B): DEV "monitor mic" (persisted, default OFF) —
+     *  UI mirror; the mixer holds the effective value. */
+    val monitorMicEnabled = MutableStateFlow(false)
+
     private var scrfdFailureToasted = false
 
     fun downloadModel(id: String) = modelManager.download(id)
@@ -167,13 +178,57 @@ class StudioViewModel @Inject constructor(
         faceDetection.setNnapi(enabled)
     }
 
+    /** Round 44 (owner decision 1): DEV toggle — persisted only; the session
+     *  attempt happens at the NEXT process boot ("requires restart"). */
+    fun setScrfdDevSession(enabled: Boolean) {
+        viewModelScope.launch { settings.setScrfdSessionEnabled(enabled) }
+        Timber.i("SCRFD_DEV_TOGGLE enabled=%s effective=next-boot", enabled)
+    }
+
+    /** Round 44 (r33 FIX B): DEV "monitor mic" (default OFF, headphones). */
+    fun setMonitorMic(enabled: Boolean) {
+        viewModelScope.launch { settings.setMonitorMic(enabled) }
+        // mixer + AUDIO_MONITOR log happen in the settings collector —
+        // DataStore is the single source of truth.
+    }
+
+    /** Sentinel file: armed right before ORT is touched, cleared once the
+     *  phase collector proves the process survived session creation. A boot
+     *  that finds it means the previous attempt died NATIVELY. */
+    private fun scrfdSentinel(): File = File(context.filesDir, "scrfd_session_sentinel")
+
+    private fun tryScrfdDevSession(path: String?) {
+        if (path == null) return
+        val sentinel = scrfdSentinel()
+        if (sentinel.exists()) {
+            runCatching { sentinel.delete() }
+            scrfdSessionDev.value = false
+            viewModelScope.launch { settings.setScrfdSessionEnabled(false) }
+            Timber.w("SCRFD_DEV_AUTODISABLE reason=sentinel-leftover")
+            toast.value = "SCRFD dev session crashed previously — toggle disabled"
+            return
+        }
+        runCatching { sentinel.writeText("armed ts=${System.currentTimeMillis()} path=$path\n") }
+        Timber.i("SCRFD_SENTINEL_ARMED path=%s", path)
+        faceDetection.setModel(path)
+    }
+
+    private fun clearScrfdSentinel(why: String) {
+        val s = scrfdSentinel()
+        if (s.exists() && runCatching { s.delete() }.getOrDefault(false)) {
+            Timber.i("SCRFD_SENTINEL_CLEARED reason=%s", why)
+        }
+    }
+
     /** Never-throw (round 43): called from guarded collectors AND the UI —
-     *  an analyzer rebind failure must log, not crash the main thread. */
+     *  an analyzer rebind failure must log, not crash the main thread.
+     *  Round 44: the analyzer additionally requires the DEV session toggle —
+     *  with it off, NOTHING loads the model (owner decisions 1+2). */
     private fun syncDetection() {
         runCatching {
             val scrfdReady = modelManager.isReady("scrfd_10g_bnkps")
             cameraSource.setAnalysisAnalyzer(
-                if (scrfdReady && _hasCameraLayer.value) faceDetection.analyzer else null,
+                if (scrfdReady && scrfdSessionDev.value && _hasCameraLayer.value) faceDetection.analyzer else null,
             )
         }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=syncDetection") }
     }
@@ -288,11 +343,31 @@ class StudioViewModel @Inject constructor(
         // Round-30: the ONE mix pump — always on. Feeds the master monitor
         // (speaker; write() blocks -> real-time pacing) and the recorder
         // while recording. Recording no longer owns a pump.
+        // Round 44 (r33 FIX B): monitor routing at graph build — the
+        // RECORDER keeps the full mix; the SPEAKER hears MEDIA+MUSIC+TTS,
+        // never the MIC unless the DEV "monitor mic" toggle is on.
+        viewModelScope.launch {
+            val micAtBoot = runCatching { settings.monitorMic.first() }.getOrDefault(false)
+            mixer.setMonitorMic(micAtBoot)
+            monitorMicEnabled.value = micAtBoot
+            for (bus in com.vcamstudio.engine.audio.AudioBusId.entries) {
+                val enabled = bus != com.vcamstudio.engine.audio.AudioBusId.MIC || micAtBoot
+                Timber.i("AUDIO_MONITOR bus=%s enabled=%s", bus, enabled)
+            }
+        }
+        viewModelScope.launch {
+            settings.monitorMic.collect { v ->
+                monitorMicEnabled.value = v
+                mixer.setMonitorMic(v)
+                Timber.i("AUDIO_MONITOR bus=MIC enabled=%s (dev toggle)", v)
+            }
+        }
         audioOutJob = viewModelScope.launch(dispatchers.io) {
             val out = ShortArray(AudioMixer.FRAME_FRAMES * 2)
+            val mon = ShortArray(AudioMixer.FRAME_FRAMES * 2)
             while (isActive) {
-                mixer.read(out)
-                val monitored = masterMonitor.write(out)
+                mixer.readInto(out, mon)
+                val monitored = masterMonitor.write(mon)
                 if (recorder.state.value is RecordingController.State.Recording) {
                     recorder.offerAudio(out.copyOf())
                 }
@@ -302,13 +377,17 @@ class StudioViewModel @Inject constructor(
 
         // Phase 2: SCRFD lifecycle — model presence gates the detector; a
         // camera layer on the active scene gates the analysis stream.
-        // Phase 2: SCRFD lifecycle — model presence gates the detector; a
-        // camera layer on the active scene gates the analysis stream.
-        // Round 42: every observable callback is runCatching-guarded —
-        // a bug here must log, never kill the process from the main
-        // thread ("no view-model observable callback may crash us").
-        var lastScrfdReady = false
+        // Phase 2: SCRFD lifecycle. Round 44 (owner decision 1): the
+        // download-complete path NO LONGER touches ORT — the model lands on
+        // disk and the row reports "Ready (not active)"; NOTHING loads it.
+        // The ORT session is attempted ONLY if the DEV toggle was ON at
+        // process boot (mandate: requires restart), behind the native-crash
+        // sentinel (tryScrfdDevSession). Round 42 guards stay.
         viewModelScope.launch {
+            val scrfdDevAtBoot = runCatching { settings.scrfdSessionEnabled.first() }.getOrDefault(false)
+            scrfdSessionDev.value = scrfdDevAtBoot
+            var lastScrfdReady = false
+            var devSessionAttempted = false
             modelManager.states.collect {
                 // Act on READY transitions only — progress ticks arrive ~1/s
                 // during downloads and must not churn the ONNX session.
@@ -316,11 +395,23 @@ class StudioViewModel @Inject constructor(
                     val ready = modelManager.isReady("scrfd_10g_bnkps")
                     if (ready != lastScrfdReady) {
                         lastScrfdReady = ready
-                        faceDetection.setModel(modelManager.readyFile("scrfd_10g_bnkps")?.absolutePath)
+                        if (ready) {
+                            if (scrfdDevAtBoot && !devSessionAttempted) {
+                                devSessionAttempted = true
+                                tryScrfdDevSession(modelManager.readyFile("scrfd_10g_bnkps")?.absolutePath)
+                            }
+                            // else (r44): MODEL_DOWNLOADED — the file sits on
+                            // disk; no OrtSession, no ScrfdDetector, ever.
+                        } else {
+                            faceDetection.setModel(null)
+                        }
                     }
                     syncDetection()
                 }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=states") }
             }
+        }
+        viewModelScope.launch {
+            settings.scrfdSessionEnabled.collect { scrfdSessionDev.value = it }
         }
         viewModelScope.launch {
             kotlinx.coroutines.flow.combine(scenes, activeSceneId) { s, id ->
@@ -349,6 +440,21 @@ class StudioViewModel @Inject constructor(
             // one-time toast on session failure (mandate)
             faceDetection.phase.collect { phase ->
                 runCatching {
+                    // Round 44: the process SURVIVED the session-create
+                    // attempt (session built, or it failed in Java) — the
+                    // native-crash sentinel can go. A NATIVE death kills the
+                    // process before any phase lands, leaving it armed.
+                    if (phase == com.vcamstudio.engine.aiface.FaceDetectionController.Phase.RUNNING ||
+                        phase == com.vcamstudio.engine.aiface.FaceDetectionController.Phase.SESSION_FAILED
+                    ) {
+                        clearScrfdSentinel(
+                            if (phase == com.vcamstudio.engine.aiface.FaceDetectionController.Phase.RUNNING) {
+                                "session-running"
+                            } else {
+                                "session-failed-java"
+                            },
+                        )
+                    }
                     if (phase == com.vcamstudio.engine.aiface.FaceDetectionController.Phase.SESSION_FAILED &&
                         !scrfdFailureToasted
                     ) {
@@ -919,8 +1025,14 @@ class StudioViewModel @Inject constructor(
     }
 
     fun diagnosticsDump(): String =
-        engine.dump() + "\n\nSCRFD_SECTION\n  " +
-            faceDetection.dumpSection().replace("\n", "\n  ") +
+        engine.dump() +
+            // Round 44: SCRFD stats are conditional on the DEV session toggle
+            // (owner decision 2); MODEL_SECTION always reports.
+            (if (scrfdSessionDev.value) {
+                "\n\nSCRFD_SECTION\n  " + faceDetection.dumpSection().replace("\n", "\n  ")
+            } else {
+                ""
+            }) +
             "\n\nMODEL_SECTION\n  " +
             modelManager.dumpSection().replace("\n", "\n  ")
 

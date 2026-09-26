@@ -82,6 +82,15 @@ class RecordingSession(
     private var audioEosQueued = false
     private var totalAudioFrames = 0L
 
+    // Round 44 (r33 FIX A): PTS origin rebase. The surface encoder stamps
+    // video with wall-clock time while audio was always session-relative —
+    // the mix made players compute wrong durations. Both tracks are rebased
+    // to their FIRST sample; REC_PTS_ORIGIN / REC_DURATION log the facts.
+    private var firstVideoPtsUs = -1L
+    private var firstAudioPtsUs = -1L
+    private var lastVideoPtsUs = -1L
+    private var lastAudioPtsUs = -1L
+
     private val audioPump = LinkedBlockingQueue<ShortArray>()
 
     // Round-30: drain threads exist only after codec.start() — dequeue on an
@@ -162,6 +171,12 @@ class RecordingSession(
                         if (isEos) eos = true
                         val buf = videoCodec.getOutputBuffer(index)
                         if (buf != null && info.size > 0) {
+                            if (firstVideoPtsUs < 0) {
+                                firstVideoPtsUs = info.presentationTimeUs
+                                Log.i(TAG, "REC_PTS_ORIGIN video=$firstVideoPtsUs audio=$firstAudioPtsUs")
+                            }
+                            info.presentationTimeUs -= firstVideoPtsUs
+                            if (info.presentationTimeUs > lastVideoPtsUs) lastVideoPtsUs = info.presentationTimeUs
                             synchronized(muxLock) {
                                 if (muxerStarted && videoTrack >= 0) {
                                     muxer.writeSampleData(videoTrack, buf, info)
@@ -198,9 +213,18 @@ class RecordingSession(
                         codecBuf.clear()
                         codecBuf.put(inputBuf)
                         codecBuf.flip()
-                        val ptsUs = totalAudioFrames * 1_000_000L / audioSampleRate
+                        var ptsUs = totalAudioFrames * 1_000_000L / audioSampleRate
+                        if (firstAudioPtsUs < 0) {
+                            firstAudioPtsUs = ptsUs
+                            if (firstVideoPtsUs >= 0) {
+                                Log.i(TAG, "REC_PTS_ORIGIN video=$firstVideoPtsUs audio=$firstAudioPtsUs")
+                            }
+                        }
+                        ptsUs -= firstAudioPtsUs
                         audioCodec.queueInputBuffer(idx, 0, pcm.size * 2, ptsUs, 0)
                         totalAudioFrames += pcm.size / 2
+                        val lastUs = ptsUs + pcm.size / 2 * 1_000_000L / audioSampleRate
+                        if (lastUs > lastAudioPtsUs) lastAudioPtsUs = lastUs
                     }
                 } else if (stopRequested && !audioEosQueued) {
                     audioEosQueued = true
@@ -289,6 +313,10 @@ class RecordingSession(
             is RecordingOutput.FileOutput -> o.file.length()
             is RecordingOutput.FdOutput -> bytesWritten
         }
+        // Round 44 (r33 FIX A): rebased duration — max of both track ends.
+        val durationUs = maxOf(lastVideoPtsUs, lastAudioPtsUs).coerceAtLeast(0L)
+        stateLog?.invoke("REC_DURATION us=$durationUs ms=${durationUs / 1000} sec=${durationUs / 1_000_000}")
+        Log.i(TAG, "REC_DURATION us=$durationUs ms=${durationUs / 1000}")
         stateLog?.invoke("RECORDER_STATE STOPPED file=${output.displayName} bytes=$bytes")
         Log.i(TAG, "RECORDER_STATE STOPPED recording finalized: ${output.displayName} ($bytes bytes)")
         return output

@@ -74,6 +74,22 @@ class AudioMixer(
         _limiterEnabled.value = v
     }
 
+    // ---- Round 44 (r33 FIX B): monitor routing. The MASTER feed serves two
+    // consumers with different contracts: the RECORDER must contain every
+    // bus, while the SPEAKER MONITOR must never carry the MIC (owner's
+    // field echo) unless the DEV "monitor mic" toggle is on (headphones).
+    // TTS stays monitored — unchanged from pre-r44 behavior.
+
+    @Volatile
+    private var monitorMicEnabled = false
+
+    fun setMonitorMic(v: Boolean) {
+        monitorMicEnabled = v
+    }
+
+    fun monitorsMic(): Boolean = monitorMicEnabled
+
+
     /** Producer side: interleaved PCM16, mono or stereo. */
     fun offerPcm(id: AudioBusId, pcm: ShortArray, channels: Int) {
         val bus = busMap.getValue(id)
@@ -111,6 +127,47 @@ class AudioMixer(
             out[i] = (v * 32767f).toInt().toShort()
             val a = if (v < 0f) -v else v
             if (a > peak) peak = a
+        }
+        _masterLevel.value = peak
+        return frameFrames
+    }
+
+    /**
+     * Round 44 (r33 FIX B): two-output variant of [read]. [out] receives the
+     * FULL mix (what the recorder must contain); [monitorOut] receives the
+     * MONITOR mix — every bus EXCEPT MIC, unless [setMonitorMic] is on —
+     * which is what [com.vcamstudio.engine.audio.MasterMonitor] renders to
+     * the speaker. Both are scaled by master gain; the limiter applies to
+     * the RECORD path only (it is stateful and must run once per frame).
+     * Buses pop once, so this is the single consumer pass — no double read.
+     */
+    fun readInto(out: ShortArray, monitorOut: ShortArray): Int {
+        val mix = FloatArray(out.size)
+        val mon = FloatArray(out.size)
+        for (bus in busMap.values) {
+            val gain = bus.gain.value * (if (bus.mute.value) 0f else 1f)
+            if (gain <= 0f) {
+                bus.ring.drop(frameFrames)
+                continue
+            }
+            val frame = bus.ring.pop(frameFrames) ?: continue
+            val inMonitor = monitorMicEnabled || bus.id != AudioBusId.MIC
+            for (i in mix.indices) {
+                val s = frame[i] * gain
+                mix[i] += s
+                if (inMonitor) mon[i] += s
+            }
+        }
+        if (_limiterEnabled.value) limiter.process(mix)
+        val master = _masterGain.value
+        var peak = 0f
+        for (i in out.indices) {
+            val v = (mix[i] * master).coerceIn(-1f, 1f)
+            out[i] = (v * 32767f).toInt().toShort()
+            val a = if (v < 0f) -v else v
+            if (a > peak) peak = a
+            val m = (mon[i] * master).coerceIn(-1f, 1f)
+            monitorOut[i] = (m * 32767f).toInt().toShort()
         }
         _masterLevel.value = peak
         return frameFrames

@@ -55,6 +55,10 @@ fun DiagnosticsSheet(
     scrfdPhase: com.vcamstudio.engine.aiface.FaceDetectionController.Phase,
     scrfdNnapi: Boolean,
     onScrfdNnapi: (Boolean) -> Unit,
+    scrfdDevSession: Boolean,
+    onScrfdDevSession: (Boolean) -> Unit,
+    monitorMic: Boolean,
+    onMonitorMic: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
@@ -203,10 +207,32 @@ fun DiagnosticsSheet(
                     )
                 }
             }
-            item { SectionTitle("Phase 2 — SCRFD detection") }
-            item {
-                val s = scrfdStats
-                Column {
+            // Round 44 (owner decision 1): DEV-only gate for the ORT
+            // session. Toggling persists; takes effect at the NEXT boot.
+            if (isDebugBuild) {
+                item {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "DEV: enable SCRFD session (requires restart)",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        androidx.compose.material3.Switch(
+                            checked = scrfdDevSession,
+                            onCheckedChange = onScrfdDevSession,
+                        )
+                    }
+                }
+            }
+            // Round 44 (owner decision 2): the SCRFD stats lines render only
+            // while the DEV session toggle is on.
+            if (scrfdDevSession) {
+                item { SectionTitle("Phase 2 — SCRFD detection") }
+                item {
+                    val s = scrfdStats
+                    Column {
                     Text(
                         "SCRFD_MS=%.2f".format(s.avgMs),
                         style = MaterialTheme.typography.labelMedium,
@@ -223,14 +249,35 @@ fun DiagnosticsSheet(
                         "FACE_BOX=" + (s.box?.let { "[%.3f,%.3f,%.3f,%.3f]".format(it.x1, it.y1, it.x2, it.y2) } ?: "none"),
                         style = MaterialTheme.typography.labelMedium,
                     )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        ) {
+                            Text("DEV: NNAPI delegate (default off)", style = MaterialTheme.typography.labelMedium)
+                            androidx.compose.material3.Switch(
+                                checked = scrfdNnapi,
+                                onCheckedChange = onScrfdNnapi,
+                            )
+                        }
+                    }
+                }
+            }
+            // Round 44 (r33 FIX B): DEV "monitor mic" (default OFF) — the
+            // speaker monitor never carries the mic unless this is on
+            // (headphones case). Runtime-applied; no restart needed.
+            if (isDebugBuild) {
+                item {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                     ) {
-                        Text("DEV: NNAPI delegate (default off)", style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            "DEV: monitor mic on speaker (default off)",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
                         androidx.compose.material3.Switch(
-                            checked = scrfdNnapi,
-                            onCheckedChange = onScrfdNnapi,
+                            checked = monitorMic,
+                            onCheckedChange = onMonitorMic,
                         )
                     }
                 }

@@ -35,6 +35,8 @@ import com.vcamstudio.engine.aicore.ModelManager
 @Composable
 fun ModelsSheet(
     states: Map<String, ModelManager.ModelState>,
+    /** Round 44: DEV SCRFD session toggle — drives the "Ready (not active)" label. */
+    scrfdActive: Boolean,
     onDownload: (String) -> Unit,
     onDelete: (String) -> Unit,
     licenseSeen: (String) -> Boolean,
@@ -108,7 +110,10 @@ fun ModelsSheet(
                     when (ms.state) {
                         ModelManager.State.READY -> {
                             Text(
-                                "Ready ✓",
+                                // Round 44: the file being on disk no longer
+                                // means detection runs — session creation is
+                                // DEV-gated (owner decisions 1+2).
+                                if (scrfdActive) "Ready ✓" else "Ready (not active)",
                                 color = Color(0xFF22C55E),
                                 style = MaterialTheme.typography.labelMedium,
                             )

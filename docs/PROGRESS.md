@@ -1725,3 +1725,67 @@ Untouched per mandate: r39/r40 fixes, unit tests, versions, CI config.
 NOTE (sandbox): local git state reset to the initial commit between rounds
 (restore incident #9); recovered via fetch + mixed reset to 8d49158 —
 working tree verified byte-identical before this round's edits.
+
+## Increment 40 — Round 44: park detection, ship the studio; r33 LANDED
+
+Field verdict (owner): the crash leaves NO Kotlin trace and NO crash file —
+consistent with a NATIVE death inside OrtSession creation (outside every
+catchable surface). Owner decision: stop chasing, park detection off the user
+path, land r33.
+
+### Decision 1 — detection is parked (no ORT on the user path)
+- Download-complete: model verifies -> VERIFIED -> promoted -> READY. That is
+  where the chain ENDS. No setModel, no OrtSession, no ScrfdDetector — the
+  file sits on disk (READY == the mandate's MODEL_DOWNLOADED; the "not
+  active" half is carried by the UI label, not the enum).
+- DEV toggle "DEV: enable SCRFD session (requires restart)" in Diagnostics
+  (debug-build section like the other DEV switches), persisted in DataStore
+  (dev_scrfd_session, default OFF). The BOOT-TIME value (read once per
+  process) drives the attempt — flipping mid-session never hot-starts ORT.
+- Native-crash sentinel (filesDir/scrfd_session_sentinel): armed right before
+  FaceDetectionController.setModel; cleared when the phase collector proves
+  the process survived (RUNNING or Java-level SESSION_FAILED). A boot that
+  finds the sentinel auto-disables the toggle, deletes it, toasts, logs
+  SCRFD_DEV_AUTODISABLE. Mandate's DO-NOT honored: NO new guards around the
+  ORT path — only gating + bookkeeping.
+- New logs: SCRFD_DEV_TOGGLE / SCRFD_SENTINEL_ARMED / SCRFD_SENTINEL_CLEARED /
+  SCRFD_DEV_AUTODISABLE.
+
+### Decision 2 — detection UI hidden until the DEV toggle is used
+- FaceDebugOverlay (cyan box + confidence): not composed unless toggle on.
+- Diagnostics: SCRFD_MS/SCRFD_FPS/SCRFD_RUNS/FACE_BOX block + NNAPI row only
+  when toggle on; diagnosticsDump omits SCRFD_SECTION likewise (MODEL_SECTION
+  always present).
+- AI Models row: "Ready (not active)" (READY + toggle off), "Ready ✓" when
+  the dev session is enabled. syncDetection additionally requires the toggle
+  before attaching the analyzer.
+
+### r33 LANDED (queued since r32)
+- FIX A — RecordingSession PTS rebase: firstVideoPtsUs captured on the first
+  surface-encoded buffer, firstAudioPtsUs on the first queued audio buffer;
+  every PTS rebased to its track origin (video subtraction is the real fix —
+  audio was already session-relative, kept for contract parity).
+  REC_PTS_ORIGIN video=<us> audio=<us> once both known; REC_DURATION
+  us/ms/sec at stop (max of both track ends).
+- FIX B — monitor routing: AudioMixer.readInto(out, monitorOut) — the
+  recorder keeps the FULL mix; the monitor mix excludes MIC unless
+  setMonitorMic (DEV "monitor mic", persisted, default OFF, runtime-applied —
+  headphones case). TTS stays monitored. Limiter applies to the record path
+  only (single stateful pass). MasterMonitor unchanged as renderer (routing
+  lives at the feed). AUDIO_MONITOR bus=<..> enabled=<..> logged at graph
+  build + on toggle. MonitorRoutingTest.kt (4 tests): mic-excluded-by-default,
+  dev-toggle-includes, TTS-monitored, pop-once-no-double-count.
+
+### Device verification queue (owner, r44 build)
+1. Boot + download: no crash, row "Ready (not active)", DCIM launch.log +
+   writetest still prove the r43 sink. 2. Fresh 60 s recording -> correct
+   duration (REC_PTS_ORIGIN/REC_DURATION). 3. Speaker with media + mic feed:
+   no mic echo; DEV monitor-mic on + headphones = mic audible. 4. (Optional,
+   DEV) enable SCRFD session toggle, restart -> if it natively crashes, next
+   boot auto-disables with the toast.
+
+### DO-NOTs honored
+r39/r40 untouched; Kotlin/AGP/ORT versions untouched; ORT dependency stays;
+no model bundling; no new ORT guards. Sandbox restore incident #10 (git reset
+to initial commit between rounds) recovered via fetch + mixed reset — tree
+verified intact first.

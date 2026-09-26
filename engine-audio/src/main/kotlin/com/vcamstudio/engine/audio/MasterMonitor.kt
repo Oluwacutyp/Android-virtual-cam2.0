@@ -11,10 +11,15 @@ import android.media.AudioTrack
  * while video layers played straight to the device speaker via ExoPlayer's
  * own AudioTrack — bus faders/mutes had no audible effect.
  *
- * The single mix pump (app side) calls [write] with every [AudioMixer.read]
+ * The single mix pump (app side) calls [write] with every MONITOR mix
  * frame; this class renders it to the device output. write() blocks on the
  * AudioTrack when its buffer is full, which also paces the pump to real time.
  * Returns false when not running so the pump can fall back to timed pacing.
+ *
+ * Round 44 (r33 FIX B): ROUTING lives at the feed, not here — the pump hands
+ * this track the output of [AudioMixer.readInto]'s monitor mix (MEDIA +
+ * MUSIC + TTS; MIC excluded unless the DEV "monitor mic" toggle is on), so
+ * the mic can never echo through the speaker by construction.
  */
 class MasterMonitor(private val sampleRate: Int = AudioMixer.SAMPLE_RATE) {
 

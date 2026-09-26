@@ -241,6 +241,10 @@ fun StudioScreen(
             scrfdPhase = vm.scrfdPhase.collectAsStateWithLifecycle().value,
             scrfdNnapi = vm.scrfdNnapi.collectAsStateWithLifecycle().value,
             onScrfdNnapi = vm::setScrfdNnapi,
+            scrfdDevSession = vm.scrfdSessionDev.collectAsStateWithLifecycle().value,
+            onScrfdDevSession = vm::setScrfdDevSession,
+            monitorMic = vm.monitorMicEnabled.collectAsStateWithLifecycle().value,
+            onMonitorMic = vm::setMonitorMic,
             onDismiss = { vm.setSheet(StudioViewModel.Sheet.NONE) },
         )
         StudioViewModel.Sheet.SETTINGS -> SettingsSheet(
@@ -266,6 +270,7 @@ fun StudioScreen(
         )
         StudioViewModel.Sheet.MODELS -> ModelsSheet(
             states = vm.modelStates.collectAsStateWithLifecycle().value,
+            scrfdActive = vm.scrfdSessionDev.collectAsStateWithLifecycle().value,
             onDownload = vm::downloadModel,
             onDelete = vm::deleteModel,
             licenseSeen = vm::licenseSeen,
@@ -402,14 +407,17 @@ private fun StageArea(state: StudioViewModel.UiState, vm: StudioViewModel, modif
                 }
                 // Phase 2: SCRFD debug overlay (cyan box + confidence) or the
                 // "Model missing" badge. Reads VM flows directly; the render
-                // engine is untouched.
-                FaceDebugOverlay(
-                    box = vm.faceOverlay.collectAsStateWithLifecycle().value,
-                    phase = vm.scrfdPhase.collectAsStateWithLifecycle().value,
-                    rawMode = state.rawMode,
-                    scene = scene,
-                    sceneRes = state.sceneResolution,
-                )
+                // engine is untouched. Round 44 (owner decision 2): hidden
+                // entirely unless the DEV session toggle is on.
+                if (vm.scrfdSessionDev.collectAsStateWithLifecycle().value) {
+                    FaceDebugOverlay(
+                        box = vm.faceOverlay.collectAsStateWithLifecycle().value,
+                        phase = vm.scrfdPhase.collectAsStateWithLifecycle().value,
+                        rawMode = state.rawMode,
+                        scene = scene,
+                        sceneRes = state.sceneResolution,
+                    )
+                }
             }
         }
         StatusChip(
