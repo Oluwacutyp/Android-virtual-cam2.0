@@ -1555,3 +1555,52 @@ gallery/Files never see it. Mandated ONE fix: write to PUBLIC MediaStore. Encode
 - Record → clip appears in system Files/Gallery under Movies/VCamStudio/vcam_<ts>.mp4 with no share-through.
 - In-app Clips sheet lists the same clip; tap plays; Share hands the file to the target app directly.
 - Reinstall-over-old-build → private clips migrate into Movies/VCamStudio (MIGRATED_RECORDING in log).
+
+## Increment 37 — Phase 2 build war (rounds 32-41): first green :app assemble
+
+Phase 2 shipped feature-complete in 3db25ae (Model Manager + SCRFD) — then the
+build war began. Final resolution: **0668992 (rounds 39+40) builds green in
+~5 minutes** with a 22 MB arm64 APK (run 36240595047: Compile 2m56s, Dex 38s,
+Package 1m08s).
+
+### What it was NOT (all exonerated by controlled runs)
+- Maven Central throttling (r32b): mirrors made it worse (aliyun 502-cascaded,
+  run 36100804971); canonical repos only since.
+- ORT AAR size: the asset is 26.6 MB, not ~200 MB (r33); vendoring via CDN
+  worked (1 s) yet the hang persisted (run 36138073042 capped at 120 min).
+- packageDebug payload alone: fixed by arm64-only + jniLibs excludes (r35),
+  Package is now 68 s — but the hang predated it.
+- Runner degradation: real symptoms existed (cache service 400s all day,
+  0 caches persisted repo-wide, job-log blob EOFs for 20+ h) but were not
+  the build blocker.
+
+### What it WAS (three stacked bugs, each masking the next)
+1. **Kotlin 2.0.20 inference hang**: the inline `ImageAnalysis.Analyzer` SAM
+   lambda on FaceDetectionController (with StateFlow props) hung the compiler
+   indefinitely (owner's Codespace bisection: both files real = hang forever;
+   either stubbed = 17 s). Fix (r39, e395511): analyzer as a proper class
+   (ScrfdAnalyzer) + internal currentDetectorOrNull/lastRunMs/handleFrame —
+   logic moved verbatim.
+2. **Latent missing imports** beneath the hang (r40, 5efa0ab): ScrfdAnalyzer
+   lacked `import timber.log.Timber` (new file, r39) and the controller never
+   imported `java.nio.FloatBuffer` — :engine-ai-face had NEVER compiled; the
+   hang hid it.
+3. **Nested-class import** (r40 fix 2, 0668992): `SessionOptions` is
+   `ai.onnxruntime.OrtSession.SessionOptions`, not top-level — the only ORT
+   import failing on both vendored and Maven classpaths.
+
+### Build-config hardening that stays (r35/r36, correct end-state)
+multiDexEnabled; no-daemon + -Xmx2g + in-process Kotlin; arm64-v8a-only
+abiFilters + jniLibs excludes (x86/x86_64/mips) + keepDebugSymbols for the
+pre-stripped ORT libs; 60 s HTTP timeouts; step-level bisection (Compile/Dex/
+Package @ 15-30 min); job timeout 120 min. Vendored-AAR CI fetch removed
+(r40): an AAR via files(...) contributes no classes to compilation; Maven
+1.20.0 is the compiling path (the libs/ort.aar conditional remains in the
+build files for future vendoring done right).
+
+### Device verification now OPEN (Phase 2 checklist)
+Settings -> AI Models: SCRFD row (Get model, 16.9 MB, sha256 5838f7fe...) ->
+download -> Ready; kill mid-download -> resume (MODEL_DOWNLOAD_RESUME);
+hash mismatch -> MODEL_HASH_MISMATCH. Camera layer + face -> cyan box overlay
++ confidence; Diagnostics: SCRFD_MS/SCRFD_FPS/FACE_BOX; NNAPI dev toggle
+default off. Screenshots + dump or it did not happen.
