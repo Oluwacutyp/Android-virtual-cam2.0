@@ -17,6 +17,16 @@ class MonitorRoutingTest {
         return out
     }
 
+    /** Max absolute sample (manual loop — no stdlib overload resolution). */
+    private fun peak(a: ShortArray): Int {
+        var m = 0
+        for (v in a) {
+            val av = if (v < 0) -v else v
+            if (av > m) m = av
+        }
+        return m
+    }
+
     @Test
     fun `monitor mix excludes mic by default`() {
         val mixer = AudioMixer()
@@ -29,8 +39,8 @@ class MonitorRoutingTest {
         val mon = ShortArray(frames * 2)
         assertEquals(frames, mixer.readInto(rec, mon))
 
-        val maxMon = mon.maxOf { if (it < 0) -it else it }
-        val maxRec = rec.maxOf { if (it < 0) -it else it }
+        val maxMon = peak(mon)
+        val maxRec = peak(rec)
         // Monitor: MEDIA only (~1000 * gain 1 * 32767/32767).
         assertTrue("monitor must not carry mic: maxMon=$maxMon", maxMon in 900..1200)
         // Record: MIC + MEDIA (~9000).
@@ -49,7 +59,7 @@ class MonitorRoutingTest {
         val mon = ShortArray(frames * 2)
         assertEquals(frames, mixer.readInto(rec, mon))
 
-        val maxMon = mon.maxOf { if (it < 0) -it else it }
+        val maxMon = peak(mon)
         assertTrue("monitor must carry mic when enabled: maxMon=$maxMon", maxMon in 8500..9500)
         assertTrue(mixer.monitorsMic())
     }
@@ -63,7 +73,7 @@ class MonitorRoutingTest {
         val rec = ShortArray(frames * 2)
         val mon = ShortArray(frames * 2)
         mixer.readInto(rec, mon)
-        val maxMon = mon.maxOf { if (it < 0) -it else it }
+        val maxMon = peak(mon)
         assertTrue("tts must stay monitored: maxMon=$maxMon", maxMon in 1900..2100)
     }
 
@@ -77,6 +87,6 @@ class MonitorRoutingTest {
         mixer.readInto(rec, mon)
         // Second read: ring drained -> silence (pop-once, no double counting).
         mixer.readInto(rec, mon)
-        assertEquals(0, mon.maxOf { if (it < 0) -it else it })
+        assertEquals(0, peak(mon))
     }
 }
