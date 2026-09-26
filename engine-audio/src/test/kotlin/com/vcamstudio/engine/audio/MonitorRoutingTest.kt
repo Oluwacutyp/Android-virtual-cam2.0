@@ -21,7 +21,10 @@ class MonitorRoutingTest {
     private fun peak(a: ShortArray): Int {
         var m = 0
         for (v in a) {
-            val av = if (v < 0) -v else v
+            // Int math: -v on a Short promotes to Int and the if-type would
+            // degenerate to Number & Comparable<*> — never assignable to Int.
+            val iv = v.toInt()
+            val av = if (iv < 0) -iv else iv
             if (av > m) m = av
         }
         return m
