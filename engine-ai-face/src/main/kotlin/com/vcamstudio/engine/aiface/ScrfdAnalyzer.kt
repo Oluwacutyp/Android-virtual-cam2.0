@@ -2,6 +2,7 @@ package com.vcamstudio.engine.aiface
 
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
+import timber.log.Timber
 
 /**
  * Round-39: the analyzer as a proper class (was a SAM lambda on

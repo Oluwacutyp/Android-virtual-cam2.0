@@ -35,13 +35,11 @@ jobs:
       - name: Setup Gradle (cache try)
         uses: gradle/actions/setup-gradle@v3
 
-      # Round-33: vendored ORT AAR from this repo's release (GitHub CDN).
-      - name: Fetch vendored ORT AAR
-        run: |
-          mkdir -p libs
-          curl -L --fail --retry 3 \
-            -o libs/ort.aar \
-            https://github.com/Oluwacutyp/Android-virtual-cam2.0/releases/download/vendor-ort-1.20.0/ort.aar
+      # Round-40 note: vendored AAR DISABLED for compilation — an AAR passed
+      # via files(...) contributes no classes to the compile classpath (run
+      # 36239951521: ai.onnxruntime.* unresolved). Maven ORT 1.20.0 is the
+      # compiling path; revisit vendoring with jar-extraction + natives if
+      # Maven egress ever proves slow.
 
       # Round-34 (owner mandate 3): cache-independent network probe. Not
       # wired into the build — it measures whether services.gradle.org can
