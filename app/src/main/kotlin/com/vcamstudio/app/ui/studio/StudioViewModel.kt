@@ -166,6 +166,15 @@ class StudioViewModel @Inject constructor(
      *  UI mirror; the mixer holds the effective value. */
     val monitorMicEnabled = MutableStateFlow(false)
 
+    /** Round 45 (owner): DEV "monitor media while recording" (persisted,
+     *  default OFF) — UI mirror; consulted synchronously at REC arm. */
+    val monitorMediaRecDev = MutableStateFlow(false)
+
+    /** Round 45: monitor enablement of MEDIA/MUSIC before the REC mute —
+     *  restored verbatim at disarm (and on the failed-start path). */
+    private var recMonitorPrevMediaEnabled = true
+    private var recMonitorPrevMusicEnabled = true
+
     private var scrfdFailureToasted = false
 
     fun downloadModel(id: String) = modelManager.download(id)
@@ -190,6 +199,11 @@ class StudioViewModel @Inject constructor(
         viewModelScope.launch { settings.setMonitorMic(enabled) }
         // mixer + AUDIO_MONITOR log happen in the settings collector —
         // DataStore is the single source of truth.
+    }
+
+    /** Round 45 (owner): DEV "monitor media while recording" (default OFF). */
+    fun setMonitorMediaRec(enabled: Boolean) {
+        viewModelScope.launch { settings.setMonitorMediaWhileRecording(enabled) }
     }
 
     /** Sentinel file: armed right before ORT is touched, cleared once the
@@ -362,6 +376,17 @@ class StudioViewModel @Inject constructor(
                 Timber.i("AUDIO_MONITOR bus=MIC enabled=%s (dev toggle)", v)
             }
         }
+        viewModelScope.launch {
+            settings.monitorMediaWhileRecording.collect { v ->
+                monitorMediaRecDev.value = v
+                Timber.i("AUDIO_MONITOR dev=rec-media value=%s", v)
+            }
+        }
+        // Round 45: a previous process could have died mid-recording and
+        // left MEDIA/MUSIC muted from the monitor. A fresh VM is never
+        // recording -> restore the defaults.
+        mixer.setBusEnabled(com.vcamstudio.engine.audio.AudioBusId.MEDIA, true)
+        mixer.setBusEnabled(com.vcamstudio.engine.audio.AudioBusId.MUSIC, true)
         audioOutJob = viewModelScope.launch(dispatchers.io) {
             val out = ShortArray(AudioMixer.FRAME_FRAMES * 2)
             val mon = ShortArray(AudioMixer.FRAME_FRAMES * 2)
@@ -867,6 +892,19 @@ class StudioViewModel @Inject constructor(
             return
         }
         mixer.reset()
+        // Round 45 (owner): while recording, MEDIA (and MUSIC — same pattern,
+        // Phase-3-ready) leave the MONITOR ONLY. The speaker->mic feedback
+        // path was double-stamping the video's audio into the file. The
+        // recorder still receives the full mix — it is fed before the split.
+        recMonitorPrevMediaEnabled = mixer.isBusEnabled(com.vcamstudio.engine.audio.AudioBusId.MEDIA)
+        recMonitorPrevMusicEnabled = mixer.isBusEnabled(com.vcamstudio.engine.audio.AudioBusId.MUSIC)
+        if (monitorMediaRecDev.value) {
+            Timber.i("AUDIO_REC_MONITOR media_enabled=true reason=arm")
+        } else {
+            mixer.setBusEnabled(com.vcamstudio.engine.audio.AudioBusId.MEDIA, false)
+            mixer.setBusEnabled(com.vcamstudio.engine.audio.AudioBusId.MUSIC, false)
+            Timber.i("AUDIO_REC_MONITOR media_enabled=false reason=arm")
+        }
         val started = recorder.start(
             target.output, scene.width, scene.height,
             onSurfaceReady = { surface ->
@@ -879,12 +917,19 @@ class StudioViewModel @Inject constructor(
             },
         )
         if (!started) {
+            mixer.setBusEnabled(com.vcamstudio.engine.audio.AudioBusId.MEDIA, recMonitorPrevMediaEnabled)
+            mixer.setBusEnabled(com.vcamstudio.engine.audio.AudioBusId.MUSIC, recMonitorPrevMusicEnabled)
+            Timber.i("AUDIO_REC_MONITOR media_enabled=%b reason=disarm", recMonitorPrevMediaEnabled)
             target.uri?.let { RecordingStore.discardPending(context, it) }
             toast.value = "Recorder busy"
         }
     }
 
     private fun stopRecording() {
+        // Round 45 (owner): disarm restores the pre-REC monitor state.
+        mixer.setBusEnabled(com.vcamstudio.engine.audio.AudioBusId.MEDIA, recMonitorPrevMediaEnabled)
+        mixer.setBusEnabled(com.vcamstudio.engine.audio.AudioBusId.MUSIC, recMonitorPrevMusicEnabled)
+        Timber.i("AUDIO_REC_MONITOR media_enabled=%b reason=disarm", recMonitorPrevMediaEnabled)
         recorder.stop { output ->
             engine.detachRecordingOutput()
             when (output) {

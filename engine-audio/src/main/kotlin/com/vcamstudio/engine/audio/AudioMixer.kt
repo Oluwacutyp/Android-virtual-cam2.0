@@ -74,20 +74,40 @@ class AudioMixer(
         _limiterEnabled.value = v
     }
 
-    // ---- Round 44 (r33 FIX B): monitor routing. The MASTER feed serves two
-    // consumers with different contracts: the RECORDER must contain every
-    // bus, while the SPEAKER MONITOR must never carry the MIC (owner's
-    // field echo) unless the DEV "monitor mic" toggle is on (headphones).
-    // TTS stays monitored — unchanged from pre-r44 behavior.
+    // ---- Round 44 (r33 FIX B) / Round 45 (owner): monitor routing. The
+    // MASTER feed serves two consumers with different contracts: the
+    // RECORDER must contain every bus (it sits BEFORE the monitor split),
+    // while the SPEAKER MONITOR carries only the buses enabled in the mask
+    // below. Defaults: MIC excluded (r33 FIX B — mic can never echo).
+    // Round 45: setBusEnabled() lets the record flow mute MEDIA (and MUSIC,
+    // same pattern, Phase-3-ready) from the monitor while recording — the
+    // speaker->mic feedback path double-stamped video audio into files.
 
     @Volatile
-    private var monitorMicEnabled = false
+    private var monitorMask: Int = defaultMonitorMask()
 
-    fun setMonitorMic(v: Boolean) {
-        monitorMicEnabled = v
+    private fun defaultMonitorMask(): Int {
+        var m = 0
+        for (b in AudioBusId.entries) m = m or (1 shl b.ordinal)
+        return m and (1 shl AudioBusId.MIC.ordinal).inv()
     }
 
-    fun monitorsMic(): Boolean = monitorMicEnabled
+    /** Monitor-only enable/disable. NEVER touches what the recorder gets. */
+    fun setBusEnabled(id: AudioBusId, enabled: Boolean) {
+        monitorMask = if (enabled) {
+            monitorMask or (1 shl id.ordinal)
+        } else {
+            monitorMask and (1 shl id.ordinal).inv()
+        }
+    }
+
+    fun isBusEnabled(id: AudioBusId): Boolean = monitorMask and (1 shl id.ordinal) != 0
+
+    fun setMonitorMic(v: Boolean) {
+        setBusEnabled(AudioBusId.MIC, v)
+    }
+
+    fun monitorsMic(): Boolean = isBusEnabled(AudioBusId.MIC)
 
 
     /** Producer side: interleaved PCM16, mono or stereo. */
@@ -151,7 +171,7 @@ class AudioMixer(
                 continue
             }
             val frame = bus.ring.pop(frameFrames) ?: continue
-            val inMonitor = monitorMicEnabled || bus.id != AudioBusId.MIC
+            val inMonitor = monitorMask and (1 shl bus.id.ordinal) != 0
             for (i in mix.indices) {
                 val s = frame[i] * gain
                 mix[i] += s

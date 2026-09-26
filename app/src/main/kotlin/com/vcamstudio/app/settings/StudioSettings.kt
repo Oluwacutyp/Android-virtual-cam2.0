@@ -67,4 +67,19 @@ class StudioSettings @Inject constructor(
     suspend fun setMonitorMic(enabled: Boolean) {
         context.dataStore.edit { it[monitorMicKey] = enabled }
     }
+
+    /**
+     * Round 45 (owner): DEV "monitor media while recording" — default OFF.
+     * When OFF (normal), arming the recording mutes MEDIA (and MUSIC, same
+     * pattern) from the MONITOR only — the speaker can't feed the mic the
+     * video's audio, which double-stamped recordings. Headphones users can
+     * enable it to hear the video while recording.
+     */
+    private val monitorMediaRecKey = booleanPreferencesKey("dev_monitor_media_rec")
+
+    val monitorMediaWhileRecording: Flow<Boolean> = context.dataStore.data.map { it[monitorMediaRecKey] ?: false }
+
+    suspend fun setMonitorMediaWhileRecording(enabled: Boolean) {
+        context.dataStore.edit { it[monitorMediaRecKey] = enabled }
+    }
 }

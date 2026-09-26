@@ -245,6 +245,8 @@ fun StudioScreen(
             onScrfdDevSession = vm::setScrfdDevSession,
             monitorMic = vm.monitorMicEnabled.collectAsStateWithLifecycle().value,
             onMonitorMic = vm::setMonitorMic,
+            monitorMediaRec = vm.monitorMediaRecDev.collectAsStateWithLifecycle().value,
+            onMonitorMediaRec = vm::setMonitorMediaRec,
             onDismiss = { vm.setSheet(StudioViewModel.Sheet.NONE) },
         )
         StudioViewModel.Sheet.SETTINGS -> SettingsSheet(

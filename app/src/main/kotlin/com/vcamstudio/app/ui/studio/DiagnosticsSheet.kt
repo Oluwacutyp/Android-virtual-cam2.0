@@ -59,6 +59,8 @@ fun DiagnosticsSheet(
     onScrfdDevSession: (Boolean) -> Unit,
     monitorMic: Boolean,
     onMonitorMic: (Boolean) -> Unit,
+    monitorMediaRec: Boolean,
+    onMonitorMediaRec: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
@@ -278,6 +280,27 @@ fun DiagnosticsSheet(
                         androidx.compose.material3.Switch(
                             checked = monitorMic,
                             onCheckedChange = onMonitorMic,
+                        )
+                    }
+                }
+            }
+            // Round 45 (owner): DEV "monitor media while recording" (default
+            // OFF) — while recording, MEDIA (and MUSIC) leave the monitor so
+            // the speaker can't feed the mic the video's audio. Headphones
+            // users can enable it to hear the video during recording.
+            if (isDebugBuild) {
+                item {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "DEV: monitor media while recording (default off)",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        androidx.compose.material3.Switch(
+                            checked = monitorMediaRec,
+                            onCheckedChange = onMonitorMediaRec,
                         )
                     }
                 }

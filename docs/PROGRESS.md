@@ -1789,3 +1789,36 @@ r39/r40 untouched; Kotlin/AGP/ORT versions untouched; ORT dependency stays;
 no model bundling; no new ORT guards. Sandbox restore incident #10 (git reset
 to initial commit between rounds) recovered via fetch + mixed reset — tree
 verified intact first.
+
+## Increment 41 — Round 45: media-bus echo in recordings closed at the monitor
+
+Field (owner): recordings with a video layer play the video's audio TWICE —
+direct + delayed 100-200 ms. Same feedback shape r33 FIX B closed for the Mic
+bus: MEDIA still reached the monitor, speaker -> mic -> recording's MIC bus.
+
+### Implementation
+- AudioMixer: r44's single monitorMic flag generalized to a @Volatile monitor
+  MASK over AudioBusId (default: every bus except MIC). setBusEnabled(id, on)
+  / isBusEnabled(id) — MONITOR-ONLY by contract (the recorder is fed before
+  the split and keeps the full mix). setMonitorMic/monitorsMic kept as MIC
+  wrappers (r44 contract + MonitorRoutingTest unchanged-and-passing).
+- REC arm (startRecording, right after mixer.reset(), BEFORE recorder.start):
+  capture prev monitor state of MEDIA + MUSIC; unless the DEV toggle is on,
+  mute both from the monitor; log AUDIO_REC_MONITOR media_enabled=false
+  reason=arm (true + reason=arm when the DEV toggle is on).
+- REC disarm (top of stopRecording): restore both, log AUDIO_REC_MONITOR
+  media_enabled=<restored> reason=disarm. Failed recorder.start restores too.
+  Fresh-VM init restores defaults (a process killed mid-recording must not
+  leave media muted forever).
+- DEV toggle "monitor media while recording" (default OFF, persisted
+  dev_monitor_media_rec): Diagnostics DEV section, DataStore-backed, consulted
+  synchronously at arm via the VM mirror flow.
+- MUSIC bus: identical arm/disarm treatment now, so the Phase-3 stub inherits
+  the correct behavior when it lands (mandate 4).
+- Tests: MonitorRoutingTest +2 — media rec-mute is monitor-only (monitor 0 /
+  record intact / restore works), MUSIC same pattern.
+
+### DO-NOTs honored
+SCRFD/DEV-toggle/ModelManager/ORT untouched; no ORT-crash "fix" (parking is
+the end-state); rotation/TRIANGLES/skip/blit untouched; r33 A+B untouched
+(readInto math identical, mask lookup replaces the single flag).

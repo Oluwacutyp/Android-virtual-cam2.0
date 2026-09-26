@@ -92,4 +92,38 @@ class MonitorRoutingTest {
         mixer.readInto(rec, mon)
         assertEquals(0, peak(mon))
     }
+
+    @Test
+    fun `round 45 - media rec-mute is monitor-only`() {
+        val mixer = AudioMixer()
+        val frames = AudioMixer.FRAME_FRAMES
+        mixer.offerPcm(AudioBusId.MEDIA, constPcm(frames, 1000), channels = 2)
+
+        // REC arm (owner mandate): media leaves the MONITOR only.
+        mixer.setBusEnabled(AudioBusId.MEDIA, false)
+        val rec = ShortArray(frames * 2)
+        val mon = ShortArray(frames * 2)
+        mixer.readInto(rec, mon)
+        assertEquals("muted media must not reach the monitor", 0, peak(mon))
+        assertEquals("recorder must still carry media", 1000, peak(rec))
+
+        // REC disarm: restore. (Fresh buffers — the ring was drained above.)
+        mixer.setBusEnabled(AudioBusId.MEDIA, true)
+        mixer.offerPcm(AudioBusId.MEDIA, constPcm(frames, 1000), channels = 2)
+        mixer.readInto(rec, mon)
+        assertEquals("restored media must reach the monitor again", 1000, peak(mon))
+    }
+
+    @Test
+    fun `round 45 - music follows the same pattern`() {
+        val mixer = AudioMixer()
+        val frames = AudioMixer.FRAME_FRAMES
+        mixer.offerPcm(AudioBusId.MUSIC, constPcm(frames, 2000), channels = 2)
+        mixer.setBusEnabled(AudioBusId.MUSIC, false)
+        val rec = ShortArray(frames * 2)
+        val mon = ShortArray(frames * 2)
+        mixer.readInto(rec, mon)
+        assertEquals(0, peak(mon))
+        assertEquals(2000, peak(rec))
+    }
 }
