@@ -3,7 +3,7 @@ package com.vcamstudio.engine.aiface
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
-import ai.onnxruntime.SessionOptions
+import ai.onnxruntime.OrtSession.SessionOptions
 import timber.log.Timber
 import java.nio.FloatBuffer
 
