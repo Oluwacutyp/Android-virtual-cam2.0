@@ -75,7 +75,12 @@ class FaceDetectionController : AutoCloseable {
                 return@execute
             }
             try {
+                // Round 43: post-download chain step markers — if START
+                // appears without OK in the crash ring, the session
+                // build (native ORT) is the suspect.
+                Timber.i("MODEL_DL_SESSION_CREATE_START path=%s nnapi=%s", modelPath, useNnapi)
                 detector = ScrfdDetector(modelPath, useNnapi)
+                Timber.i("MODEL_DL_SESSION_CREATE_OK path=%s", modelPath)
                 _phase.value = Phase.RUNNING
             } catch (t: Throwable) {
                 Timber.e(t, "ONNX_SESSION_FAIL model=%s", modelPath)

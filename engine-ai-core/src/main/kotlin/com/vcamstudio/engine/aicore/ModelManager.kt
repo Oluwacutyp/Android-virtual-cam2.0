@@ -168,9 +168,13 @@ class ModelManager(private val context: Context) {
             // ---- Round 42: post-100% tail. The field crash happened
             // somewhere in here; every step is now individually guarded
             // so none of them can throw out of the process. ----
+            // Round 43: each step opens with a MODEL_DL_* marker — the
+            // crash file's ring names the LAST step reached; the next
+            // one is the suspect.
 
             // Step 1: SHA-256 verify. A mismatch NEVER throws — delete
             // the partial, flag FAILED, return.
+            Timber.i("MODEL_DL_VERIFY_START name=%s bytes=%d", model.fileName, safeLength(partial))
             val got = Codecs.toHex(digest.digest())
             val expected = model.sha256Hex?.lowercase()
             if (expected != null && got != expected) {
@@ -186,6 +190,8 @@ class ModelManager(private val context: Context) {
                 Timber.w("MODEL_HASH_UNVERIFIED name=%s (no catalogue hash)", model.fileName)
             }
 
+            Timber.i("MODEL_DL_VERIFY_OK name=%s sha256=%s", model.fileName, got)
+
             // Step 2: VERIFIED marker — hash OK, file not yet in place.
             // If the process dies after this line, the promote step (or
             // the code reacting to the transition) is the suspect.
@@ -194,18 +200,21 @@ class ModelManager(private val context: Context) {
             // Step 3: promote .partial -> models/. Atomic where the
             // filesystem allows; NEVER throws (round 42); a failure
             // lands in FAILED, not on the floor.
+            Timber.i("MODEL_DL_MOVE_START name=%s", model.fileName)
             val dest = fileOf(model)
             if (!promote(partial, dest)) {
                 Timber.e("MODEL_PROMOTE_FAIL name=%s", model.fileName)
                 fail(model, "could not move the verified model into place")
                 return
             }
+            Timber.i("MODEL_DL_MOVE_OK name=%s bytes=%d", model.fileName, safeLength(dest))
 
             Timber.i(
                 "MODEL_DOWNLOAD_DONE name=%s bytes=%d sha256=%s",
                 model.fileName, safeLength(dest), got,
             )
             publish(model, State.READY, 100, safeLength(dest))
+            Timber.i("MODEL_DL_STATE_READY name=%s", model.fileName)
         } catch (t: Throwable) {
             Timber.e(t, "MODEL_DOWNLOAD_FAIL name=%s", model.fileName)
             fail(model, t.message ?: "download failed")

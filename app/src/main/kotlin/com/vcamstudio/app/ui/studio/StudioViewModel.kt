@@ -167,11 +167,15 @@ class StudioViewModel @Inject constructor(
         faceDetection.setNnapi(enabled)
     }
 
+    /** Never-throw (round 43): called from guarded collectors AND the UI —
+     *  an analyzer rebind failure must log, not crash the main thread. */
     private fun syncDetection() {
-        val scrfdReady = modelManager.isReady("scrfd_10g_bnkps")
-        cameraSource.setAnalysisAnalyzer(
-            if (scrfdReady && _hasCameraLayer.value) faceDetection.analyzer else null,
-        )
+        runCatching {
+            val scrfdReady = modelManager.isReady("scrfd_10g_bnkps")
+            cameraSource.setAnalysisAnalyzer(
+                if (scrfdReady && _hasCameraLayer.value) faceDetection.analyzer else null,
+            )
+        }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=syncDetection") }
     }
 
     private val videoControllers = LinkedHashMap<String, VideoLayerController>()

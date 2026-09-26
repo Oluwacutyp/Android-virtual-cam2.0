@@ -89,12 +89,21 @@ class CameraSource(
     fun setAnalysisAnalyzer(analyzer: ImageAnalysis.Analyzer?) {
         analysisAnalyzer = analyzer
         mainScope.launch {
-            val controls = lastControls ?: return@launch
-            val owner = lastLifecycleOwner ?: return@launch
-            val attach = lastAttach ?: return@launch
-            if ((analysis != null) != (analyzer != null)) {
-                Log.i(TAG, "ANALYSIS_REBIND analyzer=${analyzer != null}")
-                bindInternal(controls, owner, attach)
+            // Round 43: the READY transition lands here via syncDetection();
+            // this async continuation was the one post-download surface not
+            // covered by a guard (bindInternal's inner coroutine has its own
+            // try/catch, but the code before it did not). A rebind bug must
+            // log, never kill the process from the main thread.
+            runCatching {
+                val controls = lastControls ?: return@runCatching
+                val owner = lastLifecycleOwner ?: return@runCatching
+                val attach = lastAttach ?: return@runCatching
+                if ((analysis != null) != (analyzer != null)) {
+                    Log.i(TAG, "ANALYSIS_REBIND analyzer=${analyzer != null}")
+                    bindInternal(controls, owner, attach)
+                }
+            }.onFailure { t ->
+                Log.e(TAG, "ANALYSIS_REBIND_FAIL analyzer=${analyzer != null}", t)
             }
         }
     }

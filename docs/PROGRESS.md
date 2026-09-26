@@ -1664,3 +1664,64 @@ MODEL_PROMOTE_COPY_FAIL / MODEL_OBSERVE_FAIL / CACHE_TOMBSTONE (sweep|launch) /
 CRASH_LOGGER_INSTALL. Dump keys added: MODEL_SECTION > MODEL_STATES.
 Untouched (mandate): r39 analyzer class, r40 SessionOptions/import fixes, r41
 tests+lint, Kotlin/AGP/ORT versions, all CI green-path config.
+
+## Increment 39 — Round 43: crash log to public DCIM; whole post-download chain instrumented
+
+Field (owner, S22 Ultra, r42 build): crash STILL reproduces at download
+completion AND the r42 crash file is UNREADABLE — Android/data is gated to file
+managers on Android 11+. Net effect: the r42 net probably WROTE the trace; the
+owner just cannot open it. R43 makes the sink public and the chain loud.
+
+### FIX 1 — reachable sink: /sdcard/DCIM/VCamStudio/ (crash + launch.log)
+- Crash dumps: /sdcard/DCIM/VCamStudio/crashes/crash-<epochMs>.txt.
+  - API 29+: MediaStore.Files.getContentUri(VOLUME_EXTERNAL_PRIMARY) +
+    RELATIVE_PATH="DCIM/VCamStudio/crashes/" + IS_PENDING flow, via
+    ContentResolver — no permission. DEVIATION from the mandate's
+    "MediaStore.Video or MediaStore.Images": those collections validate mime
+    against media extensions and REJECT .txt on-device; MediaStore.Files is
+    the resolver-based collection that accepts text under DCIM (R+).
+  - API <= 28: direct file path under DCIM (WRITE_EXTERNAL_STORAGE already
+    declared maxSdkVersion=28 — the r31 recordings pattern; NOT changed this
+    round). Honest note: pre-29 also needs that permission granted at
+    runtime, which no UI does yet — those devices take the fallback.
+  - ANY failure: r42 app-specific fallback. Which sink won is IN the file
+    header (`sink=`) and logcat (CRASH_LOG_SINK).
+- launch.log: /sdcard/DCIM/VCamStudio/launch.log, one line per boot
+  (ts + versionName + versionCode + debug), append via openFileDescriptor
+  "wa" on the owned MediaStore row (API 29+), direct append pre-29.
+- CACHE_TOMBSTONE now: legacy-dir sweep + MediaStore 7-day sweep of the
+  crashes dir (DATE_MODIFIED cutoff) + a WRITETEST file at boot
+  (writetest-<ts>.txt, kept — file-manager proof WITHOUT a crash; swept
+  after 7 days) + the launch marker.
+- RingLog unchanged (400-line ring rides along in every crash file).
+
+### FIX 2 — whole post-download chain guarded + step-marked
+- MODEL_DL markers (crash ring names the LAST step reached; the missing _OK
+  is the suspect): MODEL_DL_VERIFY_START / MODEL_DL_VERIFY_OK (ModelManager
+  verify), MODEL_DL_MOVE_START / MODEL_DL_MOVE_OK (promote),
+  MODEL_DL_STATE_READY (after READY transition), MODEL_DL_SESSION_CREATE_START /
+  MODEL_DL_SESSION_CREATE_OK (FaceDetectionController.setModel — the
+  boot-adoption path marks the same lines, which covers the reopen crash).
+  Mandate listed "six" but enumerated seven — all seven implemented.
+- Guarded the last unguarded async continuation in the chain:
+  CameraSource.setAnalysisAnalyzer's main-scope rebind (READY ->
+  syncDetection -> rebind) is runCatching-wrapped (ANALYSIS_REBIND_FAIL);
+  bindInternal's inner coroutine already caught Throwable -> State.Failed.
+- syncDetection() itself is now never-throw (MODEL_OBSERVE_FAIL
+  src=syncDetection) — it is reachable from collectors and UI alike.
+- Compose: ModelsSheet's when-block and FaceDebugOverlay are pure rendering
+  (no side effects on recomposition) — verified; Compose-internal throws are
+  Java exceptions and land in the r42 net + DCIM file.
+- VM-clear-vs-download: ModelManager/FaceDetectionController are @Singleton
+  (AppModule) — the download executor outlives any ViewModel; r42 collector
+  guards cover the rest.
+
+### Verify (owner, next boot + next crash)
+Boot once: file manager -> DCIM/VCamStudio/ shows launch.log and
+crashes/writetest-<ts>.txt — reachability PROVEN without a crash. Then
+reproduce: crash-<ts>.txt appears in DCIM/VCamStudio/crashes/; its ring's
+last MODEL_DL_* line names the failing step; `sink=` confirms which path won.
+Untouched per mandate: r39/r40 fixes, unit tests, versions, CI config.
+NOTE (sandbox): local git state reset to the initial commit between rounds
+(restore incident #9); recovered via fetch + mixed reset to 8d49158 —
+working tree verified byte-identical before this round's edits.
