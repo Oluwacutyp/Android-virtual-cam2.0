@@ -42,8 +42,14 @@ class ScrfdDetector(
         runCatching { opts.setInterOpNumThreads(1) }
         // Disable the memory arena and memory pattern — both are optional
         // and have been linked to native aborts on some ARM hardware.
-        runCatching { opts.setEnableCpuMemArena(false) }
-        runCatching { opts.setEnableMemPattern(false) }
+        // 1.17.1 API note (CI-verified): setEnableCpuMemArena/setEnableMemPattern
+        // do NOT exist in this ORT version — addCPU(false) is the 1.17-era
+        // arena lever (verified in ORT v1.17.1 OrtSession.java), and the
+        // pattern goes through a session config entry (unknown keys are
+        // ignored harmlessly by ORT core; cannot abort).
+        runCatching { opts.addCPU(false) }
+        runCatching { opts.addConfigEntry("session.enable_cpu_mem_arena", "0") }
+        runCatching { opts.addConfigEntry("session.enable_mem_pattern", "0") }
         Timber.i("SCRFD_EP cpu-only arena=off memPattern=off")
 
         // r48 (owner CHANGE 3): defense wrap. A native abort escapes Kotlin
