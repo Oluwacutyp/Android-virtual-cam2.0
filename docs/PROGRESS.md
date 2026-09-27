@@ -2396,3 +2396,48 @@ d) ZERO-CODE, DEFINITIVE first: adb logcat -b events -d | grep -iE
   vcam-studio-debug-apk id 10933265023 (21271217 B). Next: owner re-test — the last
   AI_HEARTBEAT [+Nms] pins time-of-death; adb events logcat (menu item d)
   remains the definitive killer-name if available.
+
+### Round 50 item A0.4 — the A0.3 dump: TRANSPORT PROVEN + probe-thread silence isolated
+
+OWNER A0.3 DUMP = the biggest payout so far. THE TRANSPORT WORKS END-TO-END
+on device: AI_FRAMES_SUBMITTED=7, AI_RESULTS_RECEIVED=7, AI_IPC_RTT_MS=2,
+AI_FRAMES_DROPPED=0, SCRFD_RUNS=7, SCRFD_FPS=5.0 (the 5 Hz gate exact),
+SCRFD_STATE=RUNNING (A2 badge honest), FACE_BOX=none, studio HEALTHY
+58.8 fps dropped=0 recoveries=0. Heartbeats: ticks at +20ms / +1023ms /
++2026ms — the child lived 2+ seconds and DIED IN THE +2..3 s WINDOW (the
+kill moved from the 20-40 ms handshake window to seconds in: a PERIODIC
+sweep profile, consistent with an OEM battery manager scanning subprocesses,
+not a handshake-synchronized killer). LMKD triply excluded:
+BIND=4500MB, DEATH=4506MB, threshold=564, LOW=false, importance=100.
+
+NEW IN-CHILD ANOMALY the heartbeats exposed: AI_SETMODEL_RECV at +41ms,
+child alive and logging for 2+ s after — and AI_PROBE_WAKE NEVER appeared.
+The probe thread never woke from offerProbe's notify during the child's
+whole life. Code reviewed on HEAD: offerProbe/probeLoop are correct (same
+monitor, flag set before notify, wait loop rechecks) — no visible defect.
+Consequence: no session was ever built (no SCRFD_* lines); the 7 results
+are PRE-SESSION null-face frames (PRE=0/INFER=0) — correct protocol
+behavior for "no session yet", and exactly why even a surviving child
+would have shown no face.
+
+A0.4 patches (diagnostics + one badge-honesty fix):
+1. probeLoop/workerLoop: AI_PROBE_THREAD_UP / AI_WORKER_THREAD_UP markers +
+   whole-body try/catch(Throwable) -> AI_PROBE_THREAD_DIED /
+   AI_WORKER_THREAD_DIED with stack. An uncaught exception on these
+   threads goes to the DEFAULT handler (logcat only) and is INVISIBLE to
+   the durable log — a dead probe thread reads exactly like a missed
+   notify, which is the A0.3 signature. Next dump decides: thread died
+   (stack in dump) vs notify genuinely lost (UP present, OFFERED present,
+   no WAKE = scheduling-freeze class).
+2. offerProbe: AI_PROBE_OFFERED inside the monitor (SETMODEL_RECV only
+   proved the binder thread entered setModel).
+3. Badge honesty on death: noteChildDeath drops childPhase to 0 —
+   SCRFD_STATE no longer reads RUNNING after a dead child.
+
+DECISION STILL WITH OWNER (unchanged menu, sharper evidence): (a) :ai
+foreground service; (b) battery-optimization exemption; (c) cooldown-
+guarded rebind loop; (d) ZERO-CODE definitive killer-name:
+adb logcat -b events -d | grep -iE "lmkd|lowmemory|kill|am_proc_died".
+The +2..3 s periodic profile makes (a) or (c) the likely code remedies;
+(b)+(d) cost nothing to try first. Checkpoint A (cyan box) is one
+surviving child away — the transport itself is proven.

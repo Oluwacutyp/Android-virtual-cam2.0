@@ -266,6 +266,9 @@ object AiProcMonitor {
     /** Instant death signal (linkToDeath); the r47 /proc poll stays as backstop. */
     fun noteChildDeath(reason: String) {
         Log.w("vcam-ai", "AI_PROC_CHILD_DEATH $reason")
+        // r50-A0.4: drop the badge too — only onState changed it before, so
+        // SCRFD_STATE read RUNNING after a dead child (A0.3 dump).
+        _childPhase.value = 0
         noteDead(-1, reason)
     }
 

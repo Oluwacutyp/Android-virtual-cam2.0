@@ -152,10 +152,26 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
             probeTask = path
             probeTaskIsSet = true
             probeLock.notifyAll()
+            // r50-A0.4: proves the offer fully landed inside the monitor
+            // (SETMODEL_RECV only proves the binder thread ENTERED setModel).
+            Timber.i("AI_PROBE_OFFERED path=%s", path)
         }
     }
 
     private fun probeLoop() {
+        Timber.i("AI_PROBE_THREAD_UP")
+        try {
+            probeLoopBody()
+        } catch (t: Throwable) {
+            // r50-A0.4: an uncaught exception on this thread is INVISIBLE to
+            // the durable log (the default handler writes to logcat only) —
+            // a dead probe thread reads exactly like a missed notify (the
+            // A0.3 dump: 2 s of heartbeats + SETMODEL_RECV, no PROBE_WAKE).
+            Timber.e(t, "AI_PROBE_THREAD_DIED")
+        }
+    }
+
+    private fun probeLoopBody() {
         while (running) {
             val path: String?
             synchronized(probeLock) {
@@ -215,6 +231,16 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
     // ------------------------------------------------------------ inference (worker thread)
 
     private fun workerLoop() {
+        Timber.i("AI_WORKER_THREAD_UP")
+        try {
+            workerLoopBody()
+        } catch (t: Throwable) {
+            // r50-A0.4: same invisible-death gap as the probe thread.
+            Timber.e(t, "AI_WORKER_THREAD_DIED")
+        }
+    }
+
+    private fun workerLoopBody() {
         while (running) {
             val task: FrameTask = synchronized(pendingLock) {
                 while (pending == null && running) {
