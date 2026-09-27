@@ -135,7 +135,11 @@ class AiInferenceService : Service() {
 object AiChildLogTree : Timber.Tree() {
 
     private const val FILE_NAME = "ai_proc_child.log"
-    private const val MAX_BYTES = 32 * 1024
+    // r50-A0.3: 32 KB froze the file after ~15 min of 1 Hz heartbeats (the
+    // cap silently drops NEW lines once exceeded — later step lines would
+    // vanish from the dump). 256 KB = ~2 h of heartbeat history; the file
+    // is app-private and reset every onCreate.
+    private const val MAX_BYTES = 256 * 1024
     private val prio = charArrayOf('?', 'V', 'D', 'I', 'W', 'E', 'A')
 
     @Volatile private var file: File? = null

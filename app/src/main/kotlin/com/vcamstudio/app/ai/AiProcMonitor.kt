@@ -148,7 +148,10 @@ object AiProcMonitor {
                         return@Thread
                     }
                     "started" -> if (!pidAlive(rep.pid)) {
-                        noteDead(rep.pid, "child died without Java trace — native abort (isolated to :ai)")
+                        // r50-A0.3: "native abort" was an overclaim — the
+                        // A0.2 dump proved the child dies BEFORE touching
+                        // ORT (avail 3.6 GB, LOW=false: not LMKD either).
+                        noteDead(rep.pid, "child died without Java trace — cause unnamed (read AI_PROC_CHILD_LOG)")
                         return@Thread
                     }
                 }

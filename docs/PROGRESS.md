@@ -2335,3 +2335,60 @@ Checkpoint A remains gated on a SURVIVING child; B (threads) and C
 - 36320634775 (ff15b44, HEAD) GREEN — both jobs; artifact
   vcam-studio-debug-apk id 10932228419 (21270670 B). Next: owner re-test; the dump's
   AI_SYS_* + AI_CHILD_IMPORTANCE decide LMKD vs OEM-policy kill.
+
+### Round 50 item A0.3 — the A0.2 dump verdict (LMKD EXCLUDED) + exact time-of-death
+
+OWNER A0.2 DUMP VERDICT: LMKD is EXCLUDED by the numbers —
+AI_SYS_BIND_AVAIL_MB=3567, AI_SYS_DEATH_AVAIL_MB=3622, threshold=564,
+DEATH_LOW=false. A foreground child with 3.6 GB free is not an LMKD
+victim. Third consecutive kill in the same window (this run: last line
+[+20ms] AI_SETMODEL_RECV, no AI_PROBE_WAKE; window = microseconds of pure
+Java). AI_CHILD_IMPORTANCE=100 — FOREGROUND class (stronger than the
+predicted ~300 service class, because the activity binds with
+BIND_AUTO_CREATE) — and it STILL died. Per the A0.2 decision table this
+is the OEM/policy-killer branch: something kills a foreground-importance
+sub-process ~20-40 ms into the bind handshake, deterministically, across
+three builds with zero child-path behavior change. Stock Android has no
+mechanism that does this. Prime suspect remains an aggressive OEM battery
+manager (HiOS/XOS class).
+
+Watchdog (carry-forward data point, NOT acted on): recoveries 0 -> 1 this
+run; stall 6810ms thread=vcam-render; BUT the stack is
+MessageQueue.nativePollOnce (IDLE wait) and the recovery lands ~0.5 s
+after FIRST_PRESENT during startup — the stall window started BEFORE
+SURFACE_ATTACHED. Different signature from the earlier joinToString
+occurrence (busy string-building mid-run). Startup-gap hypothesis: the
+watchdog clock starts before the first surface exists. failedRecovers=0,
+58.8 fps after. REMAINS GATED per the carry-forward rule (climb gate met
+once: 0 -> 1; no round spent).
+
+A0.3 patches (diagnostics-only):
+1. AiDetectorBinder: 1 Hz heartbeat thread ("vcam-ai-hb", daemon) —
+   AI_HEARTBEAT up=%dms tick=%d every second into the durable child log.
+   Three dumps ended at the last LOG line; "last log" is not "time of
+   death" (a failed/blocked write would look identical). The next dump's
+   last heartbeat pins the kill to the second: death AT +20ms (synchronous
+   with the handshake) vs +Ns (something periodic) are different killers.
+2. AiChildLogTree MAX_BYTES 32 KB -> 256 KB: at 32 KB the cap silently
+   drops NEW lines once exceeded — 1 Hz heartbeats would freeze the file
+   after ~15 min and HIDE later step lines in a long healthy session.
+   256 KB = ~2 h heartbeat history; file is app-private, reset each
+   onCreate.
+3. AiProcMonitor probe-watch: the /proc-poll death text no longer claims
+   "native abort" (this dump's 3.6 GB avail PROVED that wording wrong);
+   both death paths (linkToDeath + /proc poll) now report "cause unnamed —
+   read AI_PROC_CHILD_LOG".
+
+OWNER DECISION MENU for the remedy (owner's call; NOT implemented — each
+is its own round):
+a) Foreground service in :ai (persistent notification) — strongest
+   protection; changes UX.
+b) Battery-optimization exemption — zero code, may not be respected by
+   aggressive OEM managers.
+c) Cooldown-guarded rebind loop in AiDetectorClient (e.g. retry every 5 s,
+   backoff, give the toggle a "recovered N times" line in the dump) —
+   tolerates the killer instead of stopping it.
+d) ZERO-CODE, DEFINITIVE first: adb logcat -b events -d | grep -iE
+   "lmkd|lowmemory|kill|am_proc_died" right after a repro names the killer
+   component directly; plus Settings -> battery / app-freeze checks for
+   VCam Studio.

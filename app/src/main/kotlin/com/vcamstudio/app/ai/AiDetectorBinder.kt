@@ -56,9 +56,28 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
     private val probeThread = Thread({ probeLoop() }, "vcam-ai-probe")
     private val workerThread = Thread({ workerLoop() }, "vcam-ai-infer")
 
+    // Round 50-A0.3: 1 Hz heartbeat into the durable child log — three
+    // dumps died with the last line at +16..+38 ms, but "last LOG line"
+    // is not "time of death" (a write could fail/block). The heartbeat
+    // makes time-of-death exact: the next dump's last [+Nms] heartbeat
+    // pins the kill to the second.
+    private val heartbeatThread = Thread({
+        var tick = 0
+        while (running) {
+            Timber.i("AI_HEARTBEAT up=%dms tick=%d", SystemClock.elapsedRealtime(), ++tick)
+            try {
+                Thread.sleep(1_000)
+            } catch (e: InterruptedException) {
+                break
+            }
+        }
+    }, "vcam-ai-hb")
+
     init {
         probeThread.start()
         workerThread.start()
+        heartbeatThread.isDaemon = true
+        heartbeatThread.start()
         Timber.i("AI_CHILD_STATE state=idle")
     }
 
@@ -304,6 +323,8 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
             pending = null
             pendingLock.notifyAll()
         }
+        runCatching { heartbeatThread.interrupt() }
+        runCatching { heartbeatThread.join(500) }
         runCatching { probeThread.join(1_000) }
         runCatching { workerThread.join(1_000) }
         closeDetector()
