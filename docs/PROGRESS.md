@@ -2289,6 +2289,6 @@ Updated next-dump table (child log tail -> verdict):
 - All lines present incl. ONNX_SESSION_OK but STATE=dead -> died AFTER a
   good session: look at the age deltas and AI_CHILD_MEM.
 - 36319668288 (9104f94, HEAD) GREEN — both jobs; artifact
-  vcam-studio-debug-apk id 10930458656. Awaiting the owner's re-test dump:
+  vcam-studio-debug-apk id 10932251825 (21,269,555 B). Awaiting the owner's re-test dump:
   per-line ages + SETMODEL_RECV/PROBE_WAKE decide kill-vs-class-load; the
   scene/camera-layer question (layers=0 this run) needs an answer too.
