@@ -63,8 +63,11 @@ class ScrfdPreprocessTest {
         val lb = ScrfdPreprocess.fill(src, 480, 640, 0, out)
         assertNotNull(lb)
         lb!!
-        assertEquals(640, lb.uprightW)
-        assertEquals(480, lb.uprightH)
+        // Rotation 0: upright dims equal SOURCE dims — a 480-wide,
+        // 640-tall frame is already portrait (the swapped 640x480 case is
+        // covered by the rot90 test below).
+        assertEquals(480, lb.uprightW)
+        assertEquals(640, lb.uprightH)
         assertEquals(1f, lb.scale, 1e-5f)
         assertEquals(80f, lb.padX, 1e-5f)
         assertEquals(0f, lb.padY, 1e-5f)

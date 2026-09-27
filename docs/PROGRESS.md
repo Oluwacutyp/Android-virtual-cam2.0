@@ -2100,3 +2100,12 @@ dead -> post AI_PROC_CHILD_LOG tail; SUBMITTED=0 -> analyzer gate false
   AtomicLong but used as an if-condition -> AtomicBoolean; (3)
   AiRing.readPayload was a block-bodied Int function whose synchronized
   expression was discarded -> added return. Fix next commit.
+- 36303339970 (381907e) FAIL :engine-ai-face:testDebugUnitTest — ONE test,
+  and it is a WRONG ASSERTION in my own ScrfdPreprocessTest (production code
+  correct): `letterbox 480x640 upright is portrait` fed source w=480 h=640
+  at rotation 0 and expected upright 640x480; rotation 0 means upright ==
+  source dims (480x640 IS portrait). Everything else green: all app/ai +
+  VM wiring COMPILED (test task ran = compilation passed), rot90/mid-grey/
+  pad/rejects/AiRing-adjacent tests passed; :app tests had not run yet.
+  Fix: assert uprightW=480, uprightH=640 + comment. First run where
+  AiRingTest will actually execute.
