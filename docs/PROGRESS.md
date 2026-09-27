@@ -2227,3 +2227,7 @@ dead child: items B (threads) and C (overlay polish) stay gated until a
 build both survives AND shows the A contract (FACE_BOX inside [0,1] +
 cyan box). A0 changes logging only — no behavior, no ORT calls added or
 removed, no CI/dependency changes; expected green.
+- 36308405455 (4fe357e, HEAD) GREEN — both jobs; artifact
+  vcam-studio-debug-apk id 10928457587. Waiting on the owner's A0 dump:
+  the child-log tail now names the death step (decision table above);
+  checkpoint A (cyan box) remains gated on a surviving child.
