@@ -2090,3 +2090,13 @@ dead -> post AI_PROC_CHILD_LOG tail; SUBMITTED=0 -> analyzer gate false
   `import com.vcamstudio.app.ai.IAiDetectorCallback;` — zero-risk under
   either compiler generation (newer aidl auto-imports same-package; explicit
   import stays legal).
+- 36302736795 (b15ba58) FAIL :app:compileDebugKotlin — the AIDL import fix
+  WORKED (task got past compileDebugAidl; 113 tasks executed; engine modules
+  + all cross-package references resolved, zero unresolved-reference errors).
+  Three new-code errors, all in app/ai: (1) AiDetectorClient used
+  android.util.Log with %-format varargs — Log has NO varargs overload (that
+  is Timber's signature) -> converted all 8 call sites to Timber (tag
+  dropped, Timber prepends its own); (2) AiProcMonitor.ipcBound was
+  AtomicLong but used as an if-condition -> AtomicBoolean; (3)
+  AiRing.readPayload was a block-bodied Int function whose synchronized
+  expression was discarded -> added return. Fix next commit.

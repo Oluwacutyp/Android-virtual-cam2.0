@@ -7,6 +7,7 @@ import android.util.Log
 import timber.log.Timber
 import java.io.File
 import java.nio.ByteBuffer
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -170,7 +171,7 @@ object AiProcMonitor {
     )
     val remoteResults: SharedFlow<RemoteResult> = _remoteResults
 
-    private val ipcBound = AtomicLong(0)
+    private val ipcBound = AtomicBoolean(false)
     private val framesSubmitted = AtomicLong(0)
     private val framesDropped = AtomicLong(0)
     private val resultsReceived = AtomicLong(0)
@@ -229,7 +230,7 @@ object AiProcMonitor {
     // -- callbacks from AiDetectorClient (main process, binder threads) --
 
     fun noteBound(b: Boolean) {
-        ipcBound.set(if (b) 1 else 0)
+        ipcBound.set(b)
         _bound.value = b
     }
 

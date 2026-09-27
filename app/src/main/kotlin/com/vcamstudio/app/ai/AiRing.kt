@@ -82,7 +82,7 @@ class AiRing private constructor(
 
     /** Returns the number of bytes copied (at most [length]). */
     fun readPayload(slot: Int, bytes: ByteArray, length: Int): Int {
-        synchronized(lock) {
+        return synchronized(lock) {
             val n = minOf(length, payloadBytes, map.getInt(slotBase(slot) + OFF_SIZE))
             map.position(payloadBase(slot))
             map.get(bytes, 0, n)

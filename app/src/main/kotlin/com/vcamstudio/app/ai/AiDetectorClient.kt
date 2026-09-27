@@ -5,7 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
-import android.util.Log
+import timber.log.Timber
 import com.vcamstudio.engine.aiface.FaceBox
 import java.io.File
 import java.nio.ByteBuffer
@@ -70,7 +70,7 @@ class AiDetectorClient(private val context: Context) {
     private val pending = ConcurrentHashMap<Long, Long>()
 
     private val deathRecipient = IBinder.DeathRecipient {
-        Log.e("vcam-ai", "AI_BINDER_DIED")
+        Timber.e("AI_BINDER_DIED")
         AiProcMonitor.noteBound(false)
         AiProcMonitor.noteChildDeath("binder died (native abort in :ai)")
         closeRings()
@@ -104,7 +104,7 @@ class AiDetectorClient(private val context: Context) {
         }
 
         override fun onState(state: Int, detail: String?) {
-            Log.i("vcam-ai", "AI_CHILD_STATE_REPORT state=%d detail=%s", state, detail)
+            Timber.i("AI_CHILD_STATE_REPORT state=%d detail=%s", state, detail)
             if (state == 3) AiProcMonitor.noteChildRunning()
         }
     }
@@ -113,7 +113,7 @@ class AiDetectorClient(private val context: Context) {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val b = binder ?: return
             val api = IAiDetector.Stub.asInterface(b)
-            Log.i("vcam-ai", "AI_CLIENT_BIND")
+            Timber.i("AI_CLIENT_BIND")
             runCatching { b.linkToDeath(deathRecipient, 0) }
             // Fresh rings per connect — a child restart must never see a
             // stale FULL slot from the previous incarnation.
@@ -121,7 +121,7 @@ class AiDetectorClient(private val context: Context) {
             val fr = runCatching { AiRing.create(frameFile, FRAME_SLOTS, FRAME_SLOT_BYTES) }.getOrNull()
             val br = runCatching { AiRing.create(boxFile, BOX_SLOTS, BOX_SLOT_BYTES) }.getOrNull()
             if (fr == null || br == null) {
-                Log.e("vcam-ai", "AI_FRAME_FAIL reason=ring-create")
+                Timber.e("AI_FRAME_FAIL reason=ring-create")
                 return
             }
             frameRing = fr
@@ -132,8 +132,8 @@ class AiDetectorClient(private val context: Context) {
                     frameFile.absolutePath, FRAME_SLOT_BYTES, FRAME_SLOTS,
                     boxFile.absolutePath, BOX_SLOT_BYTES, BOX_SLOTS,
                 )
-                Log.i(
-                    "vcam-ai", "AI_RING_ATTACH ok=%s frames=%dx%d boxes=%dx%d",
+                Timber.i(
+                    "AI_RING_ATTACH ok=%s frames=%dx%d boxes=%dx%d",
                     ok, FRAME_SLOTS, FRAME_SLOT_BYTES, BOX_SLOTS, BOX_SLOT_BYTES,
                 )
                 pendingModelPath?.let { api.setModel(it) }
@@ -141,7 +141,7 @@ class AiDetectorClient(private val context: Context) {
                 bound = true
                 AiProcMonitor.noteBound(true)
             } catch (t: Throwable) {
-                Log.e("vcam-ai", "AI_FRAME_FAIL reason=attach", t)
+                Timber.e(t, "AI_FRAME_FAIL reason=attach")
             }
         }
 
@@ -155,7 +155,7 @@ class AiDetectorClient(private val context: Context) {
     fun start() {
         val intent = Intent(context, AiInferenceService::class.java)
         runCatching { context.bindService(intent, conn, Context.BIND_AUTO_CREATE) }
-            .onFailure { Log.e("vcam-ai", "AI_CLIENT_BIND_FAIL", it) }
+            .onFailure { Timber.e(it, "AI_CLIENT_BIND_FAIL") }
     }
 
     fun setModelPath(path: String?) {
@@ -189,7 +189,7 @@ class AiDetectorClient(private val context: Context) {
             AiProcMonitor.noteFrameSubmitted()
             a.submitFrame(slot, width, height, rotationDeg, frameId)
         } catch (t: Throwable) {
-            Log.w("vcam-ai", "AI_FRAME_FAIL frameId=%d", frameId, t)
+            Timber.w(t, "AI_FRAME_FAIL frameId=%d", frameId)
             AiProcMonitor.noteFrameDropped()
         }
     }
