@@ -1961,3 +1961,118 @@ engine untouched, r33/r45 untouched, :ai structure unchanged.
 Expected next dump: AI_PROC_STATE=running (XNNPACK was the crash — done) or
 dead + AI_PROC_CHILD_LOG lines ending at SCRFD_MODEL_FILE/SCRFD_EP (abort
 inside createSession with CPU-only) — and if size < 16,000,000, re-download.
+
+## Increment 45 — Round 49: real SCRFD inference in :ai + ring/AIDL transport
+
+Mandate: r48 proved the :ai child survives createSession (owner device dump:
+ONNX_SESSION_OK ep=cpu). The remaining variable: REAL detection in the child —
+frames main->:ai, boxes :ai->main. r49 delivers the transport + inference
+pipeline + wiring; the r47 log-line contract is preserved byte-for-byte.
+
+### New files
+- app/src/main/kotlin/com/vcamstudio/app/ai/AiRing.kt — file-backed mmap slot
+  ring; ONE file, two MAP_SHARED mappings (coherent via page cache; NOT
+  SharedMemory [API 27+ vs minSdk 26], NOT MemoryFile FD [not SDK API]).
+  Layout LE: [0..64) header "AIRN" v1 + slotCount/slotBytes/payloadBytes;
+  [64..) slots = 64 B meta (state,seq,payloadSize,tag) + payload. publish()
+  bumps seq THEN writes state LAST (handoff word). create() truncates to 0
+  first. open() validates magic/version/geometry -> IllegalStateException
+  (message built with the file length captured BEFORE raf.close() — the known
+  r49 regression where length-after-close raised IOException("Stream
+  Closed")). One lock per ring.
+- app/src/main/aidl/com/vcamstudio/app/ai/IAiDetector.aidl — registerCallback
+  / unregisterCallback (oneway), attachRings (sync, returns Boolean),
+  setModel (oneway), submitFrame (oneway).
+- app/src/main/aidl/com/vcamstudio/app/ai/IAiDetectorCallback.aidl — oneway
+  onResult(frameId, boxSlot, hasFace, preprocessMs, inferMs) +
+  onState(0 idle / 1 model-missing / 2 session-failed / 3 running).
+- app/src/main/kotlin/com/vcamstudio/app/ai/AiDetectorClient.kt — main-side
+  IPC: creates ai_frames.ring 2x1,382,400 B payload + ai_boxes.ring 8x64 B in
+  filesDir (fresh per connect — a child restart never sees stale FULL slots);
+  bindService(BIND_AUTO_CREATE); on connect registerCallback -> attachRings
+  -> setModel(pending); 5 Hz submit gate; FREE slot -> payload+tag ->
+  publish(FULL) -> submitFrame; none free -> drop + count (never a binder
+  queue); onResult reads the box, releases the slot, RTT from a 4-entry
+  pending table; linkToDeath -> AI_BINDER_DIED (r47 30 s /proc poll stays as
+  backstop).
+- app/src/main/kotlin/com/vcamstudio/app/ai/AiFrameAnalyzer.kt — CLASS
+  implementing ImageAnalysis.Analyzer (never a SAM lambda — r39 hang). Only
+  compacts YUV_420_888 -> packed I420 via ScrfdPreprocess.compactI420 and
+  hands to AiProcMonitor.onFrame; closes the proxy on every path.
+- app/src/main/kotlin/com/vcamstudio/app/ai/AiDetectorBinder.kt — :ai-side
+  IAiDetector.Stub: session creation stays on "vcam-ai-probe"; ONE worker
+  "vcam-ai-infer", queue capacity 1 keep-only-latest. Per frame: copy payload
+  out -> release slot IMMEDIATELY -> ScrfdPreprocess.fill -> detectTop ->
+  write box (box offsets HAS_FACE 0 | X1 4 | Y1 8 | X2 12 | Y2 16 | SCORE
+  20f | TS 24L | FRAME_W 32 | FRAME_H 36 | PRE_MS 40 | INFER_MS 48 |
+  FRAME_ID 56L) -> onResult; all box slots unread -> recycle round-robin
+  (newest always lands). New child lines: AI_RING_OPEN, AI_INFER_SAMPLE
+  (every 10th), AI_CHILD_STATE. r47 lines kept: AI_PROC_SESSION_OK model=,
+  AI_PROC_SESSION_FAIL, report states started->ok|fail|stopped.
+- engine-ai-face/src/main/kotlin/com/vcamstudio/engine/aiface/
+  ScrfdPreprocess.kt — the ONE YUV->tensor implementation shared by the
+  parked main path and the live :ai child: compactI420 (YUV_420_888 ->
+  packed I420), fill (letterbox: scale=min(640/uprightW, 640/uprightH), grey
+  127.5 pad -> 0.0 after (v-127.5)/128, rotation folded into upright->sensor
+  sampling), toFaceBox (detection -> normalized upright FaceBox).
+- Tests: app/src/test/.../AiRingTest.kt (8) + engine-ai-face/src/test/.../
+  ScrfdPreprocessTest.kt (8). AiRingTest's centerpiece: TWO mappings of ONE
+  temp file (payload survives, box fields round-trip, seq/tag travel, 720p
+  I420 fits a slot, create() truncates stale content, open() rejects
+  mismatch and undersized files with IllegalStateException).
+
+### Changed files
+- app/build.gradle.kts — `aidl = true` in buildFeatures (the ONE permitted
+  build-config addition; without it AGP 8.5.2 emits no :app:compileDebugAidl
+  -> "Unresolved reference 'IAiDetector'").
+- AiInferenceService.kt — thin shell: onCreate keeps the AiChildLogTree
+  plant (guard + reset + AI_PROC_START pid=) BYTE-FOR-BYTE; onBind returns
+  the binder (reused across reconnects; a pre-bind model_path extra from the
+  r47 startService path is stashed and handed over at onBind);
+  onStartCommand forwards model_path -> binder.setModel; onDestroy ->
+  binder.shutdown() + report stopped. AiChildLogTree object itself is
+  byte-identical (verified by diff).
+- AiProcMonitor.kt — additions only: bind/unbind/isBound/setModelPath/
+  analyzer()/onFrame, bound: StateFlow<Boolean>, remoteResults: SharedFlow
+  <RemoteResult>, note{Bound,FrameSubmitted,FrameDropped,Result,ChildDeath,
+  ChildRunning}, and the dump block AI_IPC_BIND / AI_FRAMES_SUBMITTED /
+  AI_FRAMES_DROPPED / AI_RESULTS_RECEIVED / AI_IPC_RTT_MS / AI_PRE_MS /
+  AI_INFER_MS / AI_RING=frames=2x1382400 boxes=8x64. r47 probe/watch/report
+  machinery untouched.
+- FaceDetectionController.kt — setModel(non-null) now REFUSES with
+  SCRFD_SETMODEL_REFUSED (main must never build OrtEnvironment; null still
+  tears down + MODEL_MISSING); setNnapi stores the flag only (no main-process
+  session build); runFrame delegates to ScrfdPreprocess (compactI420 -> fill
+  -> detectTop -> toFaceBox; behavior unchanged); NEW reportRemoteResult
+  (box, preMs, inferMs) feeds the EXISTING stats surface so SCRFD_MS/FPS/
+  RUNS/FACE_BOX go real; box==null clears the box.
+- StudioViewModel.kt — wiring only, ALL through existing AiProcMonitor:
+  init -> DEV-toggle-on-at-boot => bind(context); scrfd READY => setModelPath
+  (absolute) else null; syncDetection() attaches the analyzer iff DEV on at
+  boot AND bound AND model READY AND camera layer on the active scene (else
+  null); remoteResults -> reportRemoteResult; bound flips -> re-sync;
+  stats.box==null -> clear _faceOverlay; onCleared -> unbind. STUDIOAPP.KT
+  UNTOUCHED (r48 CI constraint; no new app.ai top-level symbol is referenced
+  from any file outside app/ai — the VM only touches the r47-resolvable
+  AiProcMonitor object's members).
+
+### DO-NOTs honored
+No CI-pipeline or dependency changes (ORT 1.17.1, CPU-only, addCPU(false),
+no XNNPACK/NNAPI); no ORT construction in the main process (setModel refusal
++ log; native abort never caught); engine-render/capture/output/audio,
+TRIANGLES path, swap behavior, rotation untouched; ONE inference worker,
+queue capacity 1; AiChildLogTree stays inside AiInferenceService.kt;
+AiFrameAnalyzer is a class; ScrfdDetector.kt init FROZEN (r48 final);
+StudioApp.kt untouched.
+
+### Expected device behavior (owner's test)
+install -> Models: scrfd Ready -> DEV SCRFD ON -> force-close -> reopen ->
+dump. Sanity: no AI_IPC_* lines in the dump = still running the pre-r49 APK.
+Healthy: STATE=running, AI_IPC_BIND=bound, AI_FRAMES_SUBMITTED and
+AI_RESULTS_RECEIVED climbing together, AI_IPC_RTT_MS real (tens of ms),
+SCRFD_STATE=RUNNING, SCRFD_RUNS>0, SCRFD_MS ~ AI_PRE_MS+AI_INFER_MS,
+FACE_BOX=[x1,y1,x2,y2] score=..., cyan overlay tracking the face. Triage:
+dead -> post AI_PROC_CHILD_LOG tail; SUBMITTED=0 -> analyzer gate false
+(check bound/READY/camera-layer); RESULTS=0 with submits>0 -> no session in
+:ai (look for AI_PROC_SESSION_FAIL); AI_INFER_MS>~400 -> next variable is
+640->320 input, NOT the transport.

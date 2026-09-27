@@ -66,46 +66,29 @@ class FaceDetectionController : AutoCloseable {
 
     /** Installs (or removes, null) the SCRFD model; safe to call anytime. */
     fun setModel(modelPath: String?) {
-        _modelPath = modelPath
+        // Round 49: ORT must NEVER be constructed in the MAIN process — the
+        // session lives in the :ai child (AiInferenceService +
+        // AiDetectorBinder). A non-null install here would re-arm the
+        // r46/r47 native abort, so it is refused outright.
+        if (modelPath != null) {
+            Timber.w(
+                "SCRFD_SETMODEL_REFUSED path=%s (main-process ORT is forbidden since r49 — model goes to :ai)",
+                modelPath,
+            )
+            return
+        }
+        _modelPath = null
         executor.execute {
             detector?.let { runCatching { it.close() } }
             detector = null
-            if (modelPath == null) {
-                _phase.value = Phase.MODEL_MISSING
-                return@execute
-            }
-            try {
-                // Round 43: post-download chain step markers — if START
-                // appears without OK in the crash ring, the session
-                // build (native ORT) is the suspect.
-                Timber.i("MODEL_DL_SESSION_CREATE_START path=%s nnapi=%s", modelPath, useNnapi)
-                detector = ScrfdDetector(modelPath, useNnapi)
-                Timber.i("MODEL_DL_SESSION_CREATE_OK path=%s", modelPath)
-                _phase.value = Phase.RUNNING
-            } catch (t: Throwable) {
-                Timber.e(t, "ONNX_SESSION_FAIL model=%s", modelPath)
-                _phase.value = Phase.SESSION_FAILED
-            }
+            _phase.value = Phase.MODEL_MISSING
         }
     }
 
-    /** NNAPI dev toggle (default off): applies on the next session build. */
+    /** NNAPI dev toggle (default off): stored only — session builds happen in :ai. */
     fun setNnapi(enabled: Boolean) {
         useNnapi = enabled
-        executor.execute {
-            // Recreate with the current model to apply the delegate.
-            val path = _modelPath ?: return@execute
-            detector?.let { runCatching { it.close() } }
-            detector = null
-            try {
-                detector = ScrfdDetector(path, enabled)
-                _phase.value = Phase.RUNNING
-                Timber.i("ONNX_SESSION_REBUILT nnapi=%s", enabled)
-            } catch (t: Throwable) {
-                Timber.e(t, "ONNX_SESSION_FAIL nnapi=%s", enabled)
-                _phase.value = Phase.SESSION_FAILED
-            }
-        }
+        Timber.i("SCRFD_NNAPI_STORED nnapi=%s (no main-process session build since r49)", enabled)
     }
 
 @Volatile private var _modelPath: String? = null
@@ -135,7 +118,9 @@ class FaceDetectionController : AutoCloseable {
 
     /**
      * One frame: YUV -> rotated/letterboxed CHW tensor -> top detection in
-     * normalized upright-frame coordinates.
+     * normalized upright-frame coordinates. Round 49: the pixel math lives
+     * in [ScrfdPreprocess] — the one implementation shared with the :ai
+     * child path (behavior unchanged).
      */
     private fun runFrame(proxy: ImageProxy, detector: ScrfdDetector): FaceBox? {
         if (proxy.format != ImageFormat.YUV_420_888) return null
@@ -146,74 +131,38 @@ class FaceDetectionController : AutoCloseable {
         val yBuf = proxy.planes[0].buffer.duplicate().apply { rewind() }
         val uBuf = proxy.planes[1].buffer.duplicate().apply { rewind() }
         val vBuf = proxy.planes[2].buffer.duplicate().apply { rewind() }
-        val yRow = proxy.planes[0].rowStride
-        val yPix = proxy.planes[0].pixelStride
-        val uRow = proxy.planes[1].rowStride
-        val uPix = proxy.planes[1].pixelStride
-        val vRow = proxy.planes[2].rowStride
-        val vPix = proxy.planes[2].pixelStride
-
-        val uprightW = if (rotation == 90 || rotation == 270) h else w
-        val uprightH = if (rotation == 90 || rotation == 270) w else h
-        val scale = minOf(640f / uprightW, 640f / uprightH)
-        val drawW = uprightW * scale
-        val drawH = uprightH * scale
-        val padX = (640f - drawW) / 2f
-        val padY = (640f - drawH) / 2f
-
-        tensor.rewind()
-        // CHW: fill channel planes in one raster pass each. To avoid three
-        // YUV decodes we first rasterize RGB into scratch arrays, then
-        // deinterleave into CHW.
-        val rgb = IntArray(640 * 640)
-        for (oy in 0 until 640) {
-            val uyF = (oy - padY) / scale
-            for (ox in 0 until 640) {
-                val uxF = (ox - padX) / scale
-                val idx = oy * 640 + ox
-                if (uxF < 0 || uyF < 0 || uxF >= uprightW || uyF >= uprightH) {
-                    rgb[idx] = 0xFF7F7F7F.toInt() // pad gray 127.5
-                    continue
-                }
-                // upright -> sensor (nearest)
-                val ux = uxF.toInt().coerceIn(0, uprightW - 1)
-                val uy = uyF.toInt().coerceIn(0, uprightH - 1)
-                val sx: Int
-                val sy: Int
-                when (rotation) {
-                    90 -> { sx = uy; sy = h - 1 - ux }
-                    180 -> { sx = w - 1 - ux; sy = h - 1 - uy }
-                    270 -> { sx = w - 1 - uy; sy = ux }
-                    else -> { sx = ux; sy = uy }
-                }
-                val y = (yBuf.get(sy * yRow + sx * yPix).toInt() and 0xFF)
-                val uvOff = (sy shr 1) * uRow + (sx shr 1) * uPix
-                val u = (if (uvOff < uBuf.capacity()) uBuf.get(uvOff).toInt() and 0xFF else 128) - 128
-                val vv = (if (uvOff < vBuf.capacity()) vBuf.get(uvOff).toInt() and 0xFF else 128) - 128
-                var r = y + 1.370705f * vv
-                var g = y - 0.698001f * vv - 0.337633f * u
-                var b = y + 1.732446f * u
-                r = if (r < 0) 0f else if (r > 255f) 255f else r
-                g = if (g < 0) 0f else if (g > 255f) 255f else g
-                b = if (b < 0) 0f else if (b > 255f) 255f else b
-                rgb[idx] = (r.toInt() shl 16) or (g.toInt() shl 8) or b.toInt()
-            }
-        }
-        val plane = 640 * 640
-        for (i in 0 until plane) {
-            val px = rgb[i]
-            tensor.put(i, ((px shr 16 and 0xFF) - 127.5f) / 128f)
-            tensor.put(plane + i, ((px shr 8 and 0xFF) - 127.5f) / 128f)
-            tensor.put(2 * plane + i, ((px and 0xFF) - 127.5f) / 128f)
-        }
-
+        i420Scratch.clear()
+        val ok = ScrfdPreprocess.compactI420(
+            yBuf, proxy.planes[0].rowStride, proxy.planes[0].pixelStride,
+            uBuf, proxy.planes[1].rowStride, proxy.planes[1].pixelStride,
+            vBuf, proxy.planes[2].rowStride, proxy.planes[2].pixelStride,
+            w, h, i420Scratch,
+        )
+        if (!ok) return null
+        i420Scratch.position(0)
+        val letterbox = ScrfdPreprocess.fill(i420Scratch, w, h, rotation, tensor)
+            ?: return null
         val top = detector.detectTop(tensor) ?: return null
-        // 640 letterbox coords -> normalized upright frame.
-        val x1 = ((top.x1 - padX) / scale / uprightW).coerceIn(0f, 1f)
-        val y1 = ((top.y1 - padY) / scale / uprightH).coerceIn(0f, 1f)
-        val x2 = ((top.x2 - padX) / scale / uprightW).coerceIn(0f, 1f)
-        val y2 = ((top.y2 - padY) / scale / uprightH).coerceIn(0f, 1f)
-        return FaceBox(x1, y1, x2, y2, top.score, System.currentTimeMillis(), uprightW, uprightH)
+        return ScrfdPreprocess.toFaceBox(top, letterbox, System.currentTimeMillis())
+    }
+
+    /** Packed-I420 scratch for the parked local path (alloc once). */
+    private val i420Scratch: ByteBuffer =
+        ByteBuffer.allocateDirect(ScrfdPreprocess.i420Size(1920, 1080))
+            .order(ByteOrder.nativeOrder())
+
+    /**
+     * Round 49: a result that came back from the :ai child
+     * (AiDetectorClient -> AiProcMonitor.remoteResults -> VM -> here).
+     * Feeds the EXISTING stats surface so the owner's dump lines
+     * (SCRFD_MS / SCRFD_FPS / SCRFD_RUNS / FACE_BOX) go real. box==null
+     * means the child RAN and found no face — the overlay box clears. A
+     * skipped/dropped frame never reaches this.
+     */
+    fun reportRemoteResult(box: FaceBox?, preprocessMs: Long, inferMs: Long) {
+        val now = System.currentTimeMillis()
+        _stats.value = _stats.value.copy(box = box)
+        recordRun(now, preprocessMs + inferMs)
     }
 
     private fun publish(box: FaceBox?, now: Long) {

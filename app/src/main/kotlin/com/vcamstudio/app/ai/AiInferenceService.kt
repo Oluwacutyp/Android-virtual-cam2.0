@@ -10,7 +10,9 @@ import timber.log.Timber
 import java.io.File
 
 /**
- * Round 47 (owner mandate): ORT lives here — the `:ai` child process.
+ * Round 49: thin shell around [AiDetectorBinder] — ORT lives in the `:ai`
+ * child process, session creation on its own "vcam-ai-probe" thread inside
+ * the binder (r47 evolution: probe -> hold alive -> r49 real inference).
  *
  * OrtEnvironment.createSession has natively killed two ORT versions with
  * the same signature (no Kotlin stack trace, no crash file, immediate
@@ -18,26 +20,36 @@ import java.io.File
  * process it runs in and nothing can catch it from Kotlin — so the
  * mandate's answer: make sure it is never the main process.
  *
- * Protocol (with AiProcMonitor, via the shared app-private filesDir):
- *  - main writes ai_proc_probe.tmp (main pid) and calls startService
- *    with the "model_path" extra;
+ * Protocol (with AiProcMonitor / AiDetectorClient):
+ *  - main binds (BIND_AUTO_CREATE) and attachRings hands over two mmap
+ *    rings (frames main->:ai, boxes :ai->main); payloads never cross
+ *    binder;
+ *  - onStartCommand forwards the "model_path" extra to the binder
+ *    (startService path kept working);
  *  - this service reports pid/state/model/ts into ai_proc_state.tmp at
- *    started -> ok | fail | stopped;
- *  - the main process polls the report + /proc liveness for 30 s. A
- *    native abort HERE kills only THIS process.
- *
- * The session is created on a worker thread ("vcam-ai-probe") — a
- * multi-second createSession must not risk a service ANR. The detector
- * is HELD ALIVE (mandate: "hold the session alive so we can observe the
- * crash"); real inference wiring is round 48; closed in onDestroy.
+ *    started -> ok | fail | stopped (r47 lines byte-for-byte);
+ *  - the main process polls the report + /proc liveness for 30 s (backstop;
+ *    instant death notice now comes via linkToDeath). A native abort HERE
+ *    kills only THIS process.
  */
 class AiInferenceService : Service() {
 
-    private var detector: com.vcamstudio.engine.aiface.ScrfdDetector? = null
+    private var binder: AiDetectorBinder? = null
 
-    @Volatile private var lastModelPath: String? = null
+    /** model_path extra that arrived before the first bind (r47 probe order). */
+    @Volatile private var pendingStartModel: String? = null
+    @Volatile private var lastStartModelPath: String? = null
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onBind(intent: Intent?): IBinder {
+        // Reuse the binder across reconnects — the session outlives a
+        // main-process unbind/bind cycle.
+        val b = binder ?: AiDetectorBinder(this).also { binder = it }
+        pendingStartModel?.let { m ->
+            b.setModel(m)
+            pendingStartModel = null
+        }
+        return b
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -56,27 +68,19 @@ class AiInferenceService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val modelPath = intent?.getStringExtra("model_path") ?: return START_NOT_STICKY
-        lastModelPath = modelPath
-        Thread({
-            try {
-                // The call that used to kill the whole app — behind a
-                // thread the main process can't observe crashing. If ORT
-                // aborts natively, only this process dies.
-                detector = com.vcamstudio.engine.aiface.ScrfdDetector(modelPath)
-                Timber.i("AI_PROC_SESSION_OK model=%s", modelPath)
-                writeReport("ok", null)
-            } catch (t: Throwable) {
-                Timber.e(t, "AI_PROC_SESSION_FAIL")
-                writeReport("fail", t.message)
-            }
-        }, "vcam-ai-probe").start()
+        // r49: the binder owns session creation (its vcam-ai-probe thread);
+        // the service only forwards the request. If the extra beats the
+        // first bind, stash it for onBind.
+        lastStartModelPath = modelPath
+        val b = binder
+        if (b != null) b.setModel(modelPath) else pendingStartModel = modelPath
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
         // Clean teardown only — a native death never reaches this.
-        runCatching { detector?.close() }
-        detector = null
+        binder?.shutdown()
+        binder = null
         writeReport("stopped", null)
         super.onDestroy()
     }
@@ -86,13 +90,15 @@ class AiInferenceService : Service() {
      * Format: key=value lines; `ts` lets the watcher discard stale
      * reports from previous probes.
      */
-    private fun writeReport(state: String, detail: String?) {
+    internal fun writeReport(state: String, detail: String?) {
         runCatching {
             File(filesDir, AiProcMonitor.REPORT_FILE).writeText(
                 buildString {
                     append("pid=").append(Process.myPid()).append('\n')
                     append("state=").append(state).append('\n')
-                    append("model=").append(lastModelPath ?: "-").append('\n')
+                    append("model=").append(
+                        binder?.lastRequestedModelPath() ?: lastStartModelPath ?: "-",
+                    ).append('\n')
                     append("ts=").append(System.currentTimeMillis()).append('\n')
                     detail?.let { append("detail=").append(it).append('\n') }
                 },

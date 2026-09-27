@@ -3,10 +3,16 @@ package com.vcamstudio.app.ai
 import android.content.Context
 import android.content.Intent
 import android.os.Process
+import android.util.Log
 import timber.log.Timber
 import java.io.File
+import java.nio.ByteBuffer
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import com.vcamstudio.engine.aiface.FaceBox
 
 /**
  * Round 47 (owner mandate): ORT process-isolation watchdog — MAIN process.
@@ -60,13 +66,26 @@ object AiProcMonitor {
     private val _deathEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 4)
     val deathEvents: SharedFlow<Unit> = _deathEvents
 
-    /** Diagnostics block (owner mandate 5 + r48 child-log tail). */
+    /** Diagnostics block (owner mandate 5 + r48 child-log tail + r49 IPC). */
     fun dumpSection(): String = buildString {
         append("AI_PROC_STATE=").append(state.name.lowercase())
         append("\nAI_PROC_PID=").append(if (pid > 0) pid.toString() else "-")
         append("\nAI_PROC_LAST=").append(lastEventMs)
         append("\nAI_PROC_MODEL=").append(modelPath ?: "-")
         detail?.let { append("\nAI_PROC_DETAIL=").append(it) }
+        // Round 49: IPC health — bind state, frame/results counters, last
+        // measured latencies and ring geometry (mandate 2.9).
+        append("\nAI_IPC_BIND=").append(if (ipcBound.get()) "bound" else "unbound")
+        append("\nAI_FRAMES_SUBMITTED=").append(framesSubmitted.get())
+        append("\nAI_FRAMES_DROPPED=").append(framesDropped.get())
+        append("\nAI_RESULTS_RECEIVED=").append(resultsReceived.get())
+        append("\nAI_IPC_RTT_MS=").append(lastRttMs.get())
+        append("\nAI_PRE_MS=").append(lastPreMs.get())
+        append("\nAI_INFER_MS=").append(lastInferMs.get())
+        append("\nAI_RING=frames=")
+        append(AiDetectorClient.FRAME_SLOTS).append('x').append(AiDetectorClient.FRAME_PAYLOAD_BYTES)
+        append(" boxes=")
+        append(AiDetectorClient.BOX_SLOTS).append('x').append(AiDetectorClient.BOX_PAYLOAD_BYTES)
         // Round 48: the :ai child's durable step lines (SCRFD_MODEL_FILE,
         // SCRFD_EP, ONNX_SESSION_OK / SCRFD_CREATE_FAIL ...) — written to
         // disk BEFORE ORT is touched, so they survive the child's native
@@ -126,6 +145,122 @@ object AiProcMonitor {
             // Window over: surviving the observation window counts as running.
             if (lastKnownPid > 0 && pidAlive(lastKnownPid)) noteRunning(lastKnownPid)
         }, "vcam-ai-probe-watch").start()
+    }
+
+    // ============================================================ r49: IPC
+
+    /** One inference result that came back from the :ai child. */
+    data class RemoteResult(
+        val frameId: Long,
+        val box: FaceBox?,
+        val preprocessMs: Long,
+        val inferMs: Long,
+        val rttMs: Long,
+    )
+
+    private val _bound = MutableStateFlow(false)
+
+    /** True while the main process holds a live IAiDetector binder. */
+    val bound: StateFlow<Boolean> = _bound
+
+    /** Results demuxed by [AiDetectorClient] — the VM collects these. */
+    private val _remoteResults = MutableSharedFlow<RemoteResult>(
+        extraBufferCapacity = 16,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+    )
+    val remoteResults: SharedFlow<RemoteResult> = _remoteResults
+
+    private val ipcBound = AtomicLong(0)
+    private val framesSubmitted = AtomicLong(0)
+    private val framesDropped = AtomicLong(0)
+    private val resultsReceived = AtomicLong(0)
+    private val lastRttMs = AtomicLong(-1)
+    private val lastPreMs = AtomicLong(-1)
+    private val lastInferMs = AtomicLong(-1)
+
+    @Volatile private var client: AiDetectorClient? = null
+
+    fun isBound(): Boolean = _bound.value
+
+    /**
+     * Create the client and bind to [AiInferenceService] (BIND_AUTO_CREATE —
+     * starts :ai on demand). Dev-toggle-on-at-boot only; nothing here touches
+     * ORT.
+     */
+    fun bind(context: Context) {
+        val app = context.applicationContext
+        appContext = app
+        if (client != null) return
+        client = AiDetectorClient(app).also { it.start() }
+    }
+
+    /** Release the binding (the service may stay alive via the other bind). */
+    fun unbind() {
+        client?.shutdown()
+        client = null
+        analyzerInstance = null
+    }
+
+    fun setModelPath(path: String?) {
+        client?.setModelPath(path)
+        if (path != null) modelPath = path
+    }
+
+    /**
+     * The ImageAnalysis.Analyzer for the camera pipeline (a class, never a
+     * SAM lambda — r39 compiler hang). Created once per client and cached;
+     * returns null while unbound: the VM attaches it only when the whole
+     * chain is up.
+     */
+    @Volatile private var analyzerInstance: AiFrameAnalyzer? = null
+
+    fun analyzer(): AiFrameAnalyzer? {
+        client ?: return null
+        return analyzerInstance ?: AiFrameAnalyzer { payload, w, h, rot, frameId, len ->
+            onFrame(payload, w, h, rot, frameId, len)
+        }.also { analyzerInstance = it }
+    }
+
+    /** Analyzer sink -> client submit (5 Hz gate + ring publish inside). */
+    fun onFrame(payload: ByteBuffer, width: Int, height: Int, rotationDeg: Int, frameId: Long, length: Int) {
+        client?.submit(payload, width, height, rotationDeg, frameId, length)
+    }
+
+    // -- callbacks from AiDetectorClient (main process, binder threads) --
+
+    fun noteBound(b: Boolean) {
+        ipcBound.set(if (b) 1 else 0)
+        _bound.value = b
+    }
+
+    fun noteFrameSubmitted() {
+        framesSubmitted.incrementAndGet()
+    }
+
+    fun noteFrameDropped() {
+        framesDropped.incrementAndGet()
+    }
+
+    fun noteResult(frameId: Long, box: FaceBox?, preMs: Long, inferMs: Long, rttMs: Long) {
+        resultsReceived.incrementAndGet()
+        lastRttMs.set(rttMs)
+        lastPreMs.set(preMs)
+        lastInferMs.set(inferMs)
+        _remoteResults.tryEmit(RemoteResult(frameId, box, preMs, inferMs, rttMs))
+    }
+
+    /** Instant death signal (linkToDeath); the r47 /proc poll stays as backstop. */
+    fun noteChildDeath(reason: String) {
+        Log.w("vcam-ai", "AI_PROC_CHILD_DEATH $reason")
+        noteDead(-1, reason)
+    }
+
+    /** Child reported state=running over the callback channel. */
+    fun noteChildRunning() {
+        // Mirror the r47 file-report state so STATE=running appears even
+        // before the poll window closes.
+        state = State.RUNNING
+        lastEventMs = System.currentTimeMillis()
     }
 
     // ------------------------------------------------------------ internals

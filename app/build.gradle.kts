@@ -85,6 +85,7 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+        aidl = true // round 49: AIDL control channel for :ai
     }
     packaging {
         resources {

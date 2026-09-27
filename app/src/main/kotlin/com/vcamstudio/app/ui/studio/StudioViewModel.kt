@@ -208,15 +208,19 @@ class StudioViewModel @Inject constructor(
     /** Never-throw (round 43): called from guarded collectors AND the UI —
      *  an analyzer rebind failure must log, not crash the main thread.
      *  Round 44: the analyzer additionally requires the DEV session toggle —
-     *  with it off, NOTHING loads the model (owner decisions 1+2). */
+     *  with it off, NOTHING loads the model (owner decisions 1+2).
+     *  Round 49: the analyzer attaches only when the WHOLE chain is up —
+     *  DEV on at boot AND bound to :ai AND model READY AND a camera layer
+     *  on the active scene. The analyzer only COMPACTS YUV in this
+     *  process; preprocessing + inference live in :ai. */
     private fun syncDetection() {
         runCatching {
-            // Round 47: the analyzer would run ScrfdDetector IN THIS
-            // PROCESS — the call that natively aborts inside
-            // libonnxruntime.so. It stays DETACHED until inference moves
-            // to the :ai child process (round 48); detection is parked,
-            // the studio is unaffected.
-            cameraSource.setAnalysisAnalyzer(null)
+            val chainUp = scrfdSessionDev.value &&
+                com.vcamstudio.app.ai.AiProcMonitor.isBound() &&
+                modelManager.isReady("scrfd_10g_bnkps") &&
+                _hasCameraLayer.value
+            val analyzer = if (chainUp) com.vcamstudio.app.ai.AiProcMonitor.analyzer() else null
+            cameraSource.setAnalysisAnalyzer(analyzer)
         }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=syncDetection") }
     }
 
@@ -384,6 +388,13 @@ class StudioViewModel @Inject constructor(
         viewModelScope.launch {
             val scrfdDevAtBoot = runCatching { settings.scrfdSessionEnabled.first() }.getOrDefault(false)
             scrfdSessionDev.value = scrfdDevAtBoot
+            // Round 49: DEV toggle on at boot -> bind to the :ai child now
+            // (BIND_AUTO_CREATE; AiInferenceService starts on demand). The
+            // toggle semantics are unchanged — "requires restart".
+            if (scrfdDevAtBoot) {
+                runCatching { com.vcamstudio.app.ai.AiProcMonitor.bind(context) }
+                    .onFailure { t -> Timber.e(t, "AI_CLIENT_BIND_FAIL src=vm-init") }
+            }
             var lastScrfdReady = false
             modelManager.states.collect {
                 // Act on READY transitions only — progress ticks arrive ~1/s
@@ -394,10 +405,19 @@ class StudioViewModel @Inject constructor(
                         lastScrfdReady = ready
                         if (!ready) {
                             faceDetection.setModel(null)
+                            com.vcamstudio.app.ai.AiProcMonitor.setModelPath(null)
+                        } else {
+                            // Round 49: model on disk -> hand the ABSOLUTE
+                            // path to :ai over the binder (never build a
+                            // session in THIS process).
+                            modelManager.readyFile("scrfd_10g_bnkps")?.let { f ->
+                                com.vcamstudio.app.ai.AiProcMonitor.setModelPath(f.absolutePath)
+                            }
                         }
                         // ready == true: r44 MODEL_DOWNLOADED semantics —
-                        // the file sits on disk; the :ai probe (if armed)
-                        // already picked it up at boot.
+                        // the file sits on disk; r49 forwards it to the
+                        // child over the binder instead of relying on the
+                        // boot probe only.
                     }
                     syncDetection()
                 }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=states") }
@@ -414,6 +434,24 @@ class StudioViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
+            // Round 49: bind state flips (connect / death / unbind) ->
+            // re-run the analyzer gate.
+            com.vcamstudio.app.ai.AiProcMonitor.bound.collect {
+                runCatching {
+                    syncDetection()
+                }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=bound") }
+            }
+        }
+        viewModelScope.launch {
+            // Round 49: results from the :ai child -> the EXISTING stats
+            // surface (SCRFD_MS/FPS/RUNS/FACE_BOX go real).
+            com.vcamstudio.app.ai.AiProcMonitor.remoteResults.collect { r ->
+                runCatching {
+                    faceDetection.reportRemoteResult(r.box, r.preprocessMs, r.inferMs)
+                }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=remoteResults") }
+            }
+        }
+        viewModelScope.launch {
             kotlinx.coroutines.flow.combine(scenes, activeSceneId) { s, id ->
                 s.firstOrNull { it.id == id }?.layers?.any { it is LayerDefinition.Camera } ?: false
             }.collect {
@@ -426,7 +464,12 @@ class StudioViewModel @Inject constructor(
         viewModelScope.launch {
             faceDetection.stats.collect { stats ->
                 runCatching {
-                    val box = stats.box ?: return@runCatching
+                    // Round 49: box==null (ran, no face) -> clear the overlay.
+                    val box = stats.box
+                    if (box == null) {
+                        _faceOverlay.value = null
+                        return@runCatching
+                    }
                     val mirrored = cameraSource.isFrontCamera()
                     _faceOverlay.value = if (mirrored) {
                         box.copy(x1 = 1f - box.x2, x2 = 1f - box.x1)
@@ -1326,6 +1369,9 @@ class StudioViewModel @Inject constructor(
     private fun newId(prefix: String) = "$prefix-${UUID.randomUUID().toString().take(8)}"
 
     override fun onCleared() {
+        // Round 49: release the :ai binder with the VM (BIND_AUTO_CREATE
+        // lets the child linger if the service still holds a start).
+        runCatching { com.vcamstudio.app.ai.AiProcMonitor.unbind() }
         audioOutJob?.cancel()
         masterMonitor.release()
         engine.onExternalSourceReady = null
