@@ -2392,3 +2392,7 @@ d) ZERO-CODE, DEFINITIVE first: adb logcat -b events -d | grep -iE
    "lmkd|lowmemory|kill|am_proc_died" right after a repro names the killer
    component directly; plus Settings -> battery / app-freeze checks for
    VCam Studio.
+- 36321992512 (73bd766, HEAD) GREEN — both jobs; artifact
+  vcam-studio-debug-apk id 10933265023 (21271217 B). Next: owner re-test — the last
+  AI_HEARTBEAT [+Nms] pins time-of-death; adb events logcat (menu item d)
+  remains the definitive killer-name if available.
