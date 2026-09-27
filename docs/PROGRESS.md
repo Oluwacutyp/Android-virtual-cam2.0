@@ -2441,3 +2441,9 @@ adb logcat -b events -d | grep -iE "lmkd|lowmemory|kill|am_proc_died".
 The +2..3 s periodic profile makes (a) or (c) the likely code remedies;
 (b)+(d) cost nothing to try first. Checkpoint A (cyan box) is one
 surviving child away — the transport itself is proven.
+
+### Ledger
+
+| Round | Commit | CI run | Result | Artifact (vcam-studio-debug-apk) |
+|---|---|---|---|---|
+| r50 A0.4 | 632f59e | 36326975052 | GREEN 7m11s | id 10934163397 (21,271,516 B) |
