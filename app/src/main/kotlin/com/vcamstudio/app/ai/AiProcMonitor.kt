@@ -1,5 +1,6 @@
 package com.vcamstudio.app.ai
 
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.os.Process
@@ -87,6 +88,15 @@ object AiProcMonitor {
         append(AiDetectorClient.FRAME_SLOTS).append('x').append(AiDetectorClient.FRAME_PAYLOAD_BYTES)
         append(" boxes=")
         append(AiDetectorClient.BOX_SLOTS).append('x').append(AiDetectorClient.BOX_PAYLOAD_BYTES)
+        // Round 50-A0.2: death context — system memory at bind/death and
+        // the child's scheduler importance while bound. Separates LMKD
+        // (avail < threshold at death) from an OEM/policy kill (plenty of
+        // RAM, importance was SERVICE-class and the child died anyway).
+        append("\nAI_SYS_BIND_AVAIL_MB=").append(sysBindAvailMb)
+        append("\nAI_SYS_DEATH_AVAIL_MB=").append(sysDeathAvailMb)
+        append("\nAI_SYS_THRESHOLD_MB=").append(sysThresholdMb)
+        append("\nAI_SYS_DEATH_LOW=").append(sysDeathLow)
+        append("\nAI_CHILD_IMPORTANCE=").append(childImportance)
         // Round 48: the :ai child's durable step lines (SCRFD_MODEL_FILE,
         // SCRFD_EP, ONNX_SESSION_OK / SCRFD_CREATE_FAIL ...) — written to
         // disk BEFORE ORT is touched, so they survive the child's native
@@ -276,6 +286,59 @@ object AiProcMonitor {
     fun noteChildState(childState: Int) {
         _childPhase.value = childState
         if (childState == 3) noteChildRunning()
+    }
+
+    // ============================================================ r50-A0.2: death context
+
+    /** System memory at bind — LMKD discrimination (no permissions needed). */
+    @Volatile private var sysBindAvailMb: Long = -1
+    @Volatile private var sysDeathAvailMb: Long = -1
+    @Volatile private var sysThresholdMb: Long = -1
+    @Volatile private var sysDeathLow: Boolean = false
+
+    /**
+     * The child's scheduler importance while bound — RunningAppProcessInfo
+     * lists the CALLING app's own processes (same uid), so the :ai child is
+     * visible by name. Values: 100 foreground, 200 visible, 300 service,
+     * 400 cached, 1000 gone. A bound-by-foreground child should read ~300;
+     * a death at 300 with plenty of RAM points at an OEM/policy killer.
+     */
+    @Volatile private var childImportance: Int = -1
+
+    /** Called once from onServiceConnected (child exists, still alive). */
+    fun noteBindContext(context: Context) {
+        runCatching {
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val mi = ActivityManager.MemoryInfo()
+            am.getMemoryInfo(mi)
+            sysBindAvailMb = mi.availMem / 1_048_576L
+            sysThresholdMb = mi.threshold / 1_048_576L
+            am.runningAppProcesses
+                ?.firstOrNull { it.processName.endsWith(":ai") }
+                ?.let {
+                    childImportance = it.importance
+                    Timber.i(
+                        "AI_CHILD_IMPORTANCE importance=%d proc=%s bindAvail=%dMB",
+                        it.importance, it.processName, sysBindAvailMb,
+                    )
+                }
+        }
+    }
+
+    /** Called from the death recipient — the LAST sysmem reading. */
+    fun noteDeathContext() {
+        runCatching {
+            val ctx = appContext ?: return
+            val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val mi = ActivityManager.MemoryInfo()
+            am.getMemoryInfo(mi)
+            sysDeathAvailMb = mi.availMem / 1_048_576L
+            sysDeathLow = mi.lowMemory
+            Timber.w(
+                "AI_DEATH_SYSMEM avail=%dMB threshold=%dMB low=%s importanceAtBind=%d",
+                sysDeathAvailMb, sysThresholdMb, sysDeathLow, childImportance,
+            )
+        }
     }
 
     // ------------------------------------------------------------ internals

@@ -2292,3 +2292,43 @@ Updated next-dump table (child log tail -> verdict):
   vcam-studio-debug-apk id 10932251825 (21,269,555 B). Awaiting the owner's re-test dump:
   per-line ages + SETMODEL_RECV/PROBE_WAKE decide kill-vs-class-load; the
   scene/camera-layer question (layers=0 this run) needs an answer too.
+
+### Round 50 item A0.2 — the A0.1 dump verdict + kill-context instrumentation
+
+OWNER A0.1 DUMP VERDICT (deepest bracket yet): the child died at +38 ms of
+child life, last line AI_SETMODEL_RECV, BEFORE AI_PROBE_WAKE — a window of
+microseconds of pure Java (notifyAll + one file append). Second
+consecutive death before ORT is touched, at a CONSISTENT child age
+(+28 ms -> dead in A0; +38 ms -> dead in A0.1; dumps ~16.5 min apart), on
+a code path the r49 build SURVIVED (ONNX_SESSION_OK, 221 frames, 70
+results on this same device). Conclusion stands and strengthens: external
+kill, NOT native abort, NOT our child code. The regular ~30-40 ms age
+suggests something reaps the child deterministically shortly after the
+bind handshake — OEM/background-process killers (Tecno/Infinix HiOS/XOS
+class) are the prime suspects; LMKD needs the memory numbers to confirm
+or exclude. Also RESOLVED from the same dump: the previous empty-scene
+concern was protocol, not a restore bug (this run: layers=1, camera
+source created, preview 1028x1675, 62.5 fps, HEALTHY, presented=881).
+
+A0.2 patches (main-process diagnostics only, no behavior change):
+1. AiProcMonitor.noteBindContext (from onServiceConnected): AI_SYS_BIND_
+   AVAIL_MB, AI_SYS_THRESHOLD_MB, AI_CHILD_IMPORTANCE (RunningAppProcess
+   info of the :ai process — same-uid listing; ~300 = service-class while
+   bound; 100 fg / 200 vis / 300 svc / 400 cached / 1000 gone).
+2. AiProcMonitor.noteDeathContext (from the death recipient, BEFORE the
+   death event): AI_SYS_DEATH_AVAIL_MB, AI_SYS_DEATH_LOW +
+   AI_DEATH_SYSMEM log line.
+3. onServiceDisconnected now logs AI_SERVICE_DISCONNECTED (was silent).
+New dump fields only — names untouched.
+
+Next-dump decision table (system side):
+- AI_SYS_DEATH_AVAIL_MB < AI_SYS_THRESHOLD_MB (or DEATH_LOW=true) -> LMKD.
+- Plentiful RAM + AI_CHILD_IMPORTANCE ~300 + still dead -> OEM/policy
+  killer. Remedy directions (owner's call, NOT this round): foreground
+  service in :ai (persistent notification), battery-optimization
+  exemption, or a cooldown-guarded rebind loop.
+- DEFINITIVE (if owner has adb): `adb logcat -b events -d | grep -iE
+  "lmkd|lowmemory|kill|am_proc_died"` right after a repro names the
+  killer directly.
+Checkpoint A remains gated on a SURVIVING child; B (threads) and C
+(overlay polish) remain gated behind A per mandate 6.

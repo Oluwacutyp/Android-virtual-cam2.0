@@ -72,10 +72,11 @@ class AiDetectorClient(private val context: Context) {
     private val deathRecipient = IBinder.DeathRecipient {
         Timber.e("AI_BINDER_DIED")
         AiProcMonitor.noteBound(false)
-        // Round 50-A0.1: linkToDeath fires for ANY child death (native
-        // abort, LMK kill, crash) and cannot name the cause — the r50-A0
-        // dump proved the "native abort" label wrong (the child died
-        // before touching ORT at all). The child log tail decides.
+        // Round 50-A0.2: capture the last system-memory reading BEFORE the
+        // death event — LMKD vs policy-kill discrimination.
+        AiProcMonitor.noteDeathContext()
+        // linkToDeath fires for ANY child death (native abort, LMK kill,
+        // crash) and cannot name the cause — the child log tail decides.
         AiProcMonitor.noteChildDeath("binder died (cause unnamed — read AI_PROC_CHILD_LOG)")
         closeRings()
     }
@@ -147,12 +148,18 @@ class AiDetectorClient(private val context: Context) {
                 this@AiDetectorClient.api = api
                 bound = true
                 AiProcMonitor.noteBound(true)
+                // Round 50-A0.2: snapshot system memory + the child's
+                // scheduler importance now (alive, bound).
+                AiProcMonitor.noteBindContext(context)
             } catch (t: Throwable) {
                 Timber.e(t, "AI_FRAME_FAIL reason=attach")
             }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
+            // Round 50-A0.2: this was silent — the dump showed deaths with
+            // no disconnect trace at all.
+            Timber.w("AI_SERVICE_DISCONNECTED")
             bound = false
             api = null
             AiProcMonitor.noteBound(false)
