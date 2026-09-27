@@ -39,6 +39,9 @@ class AiInferenceService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        // Round 48: start a fresh durable child log BEFORE any step line —
+        // the main process's dump reads this file after a native abort.
+        AiChildFileLog.reset(this)
         Timber.i("AI_PROC_START pid=%d", Process.myPid())
         writeReport("started", null)
     }

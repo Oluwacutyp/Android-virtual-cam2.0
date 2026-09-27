@@ -1894,3 +1894,40 @@ No new ORT versions (1.17.1 stays); main-process engine/render/capture/
 output/audio untouched; no Kotlin catch attempted around the native abort;
 no dependency changes. Restore incident #12 mid-round recovered via fetch +
 mixed reset (diff verified = exactly the r47 changeset before commit).
+
+## Increment 44 — Round 48: SCRFD native crash — CPU-only EP + model-file proof
+
+r47 verdict (owner dump): AI_PROC_STATE=dead, DETAIL=child died without Java
+trace — native abort, main process healthy. Isolation works; the crash lives in
+ScrfdDetector init. r48 narrows variables (owner mandate, three changes, all in
+ScrfdDetector.kt):
+
+- CHANGE 1: SCRFD_MODEL_FILE exists=<bool> size=<bytes> logged BEFORE
+  createSession — proves the on-disk file (expected ~16,923,827 B; a truncated
+  ONNX protobuf aborts natively at parse). Placement note: top of init (the
+  mandate said "just before createSession" — earlier is strictly safer and
+  still before the call).
+- CHANGE 2: CPU-ONLY EP — addXnnpack/addNnapi GONE; intra=2, inter=1,
+  setEnableCpuMemArena(false), setEnableMemPattern(false);
+  SCRFD_EP cpu-only arena=off memPattern=off. useNnapi stays in the signature,
+  ignored (API compatibility).
+- CHANGE 3: defense try/catch around createSession -> SCRFD_CREATE_FAIL +
+  rethrow (native aborts escape it; a catchable one now leaves the log).
+
+Observability bridge (required for the mandated dump lines to exist at all):
+the child's RAM ring dies with its native abort, so SCRFD_* lines could never
+reach the main process's dump. NEW app/ai/AiChildFileLog.kt — file-backed
+Timber tree planted in :ai only (StudioApp proc-name branch); truncated at
+probe start (service onCreate); 32 KB cap. AiProcMonitor stores appContext at
+probe() and dumpSection appends the last 24 lines as AI_PROC_CHILD_LOG=...
+ModelManager: adopted files now report their REAL downloadedBytes — the r47
+dump's "bytes=0" on the READY scrfd row was an init-adoption artifact, NOT
+truncation evidence (SCRFD_MODEL_FILE is the authoritative check).
+
+Expected next dump: AI_PROC_STATE=running (XNNPACK was the crash — done) or
+dead + AI_PROC_CHILD_LOG showing SCRFD_MODEL_FILE size + SCRFD_EP as the last
+lines (abort inside createSession with CPU-only) — and if size < 16,000,000,
+the file is corrupt: fix is re-download + re-verify, not ORT.
+
+DO-NOTs honored: no XNNPACK reverts, no ORT version change, main-process
+engine untouched, r33/r45 untouched, :ai structure unchanged.

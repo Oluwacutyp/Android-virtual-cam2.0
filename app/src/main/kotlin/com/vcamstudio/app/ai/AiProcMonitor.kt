@@ -54,18 +54,29 @@ object AiProcMonitor {
     @Volatile private var modelPath: String? = null
     @Volatile private var detail: String? = null
     @Volatile private var probeStartMs: Long = 0L
+    @Volatile private var appContext: Context? = null
 
     /** Fires once per observed child death — the VM turns it into a toast. */
     private val _deathEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 4)
     val deathEvents: SharedFlow<Unit> = _deathEvents
 
-    /** Diagnostics block (owner mandate 5). */
+    /** Diagnostics block (owner mandate 5 + r48 child-log tail). */
     fun dumpSection(): String = buildString {
         append("AI_PROC_STATE=").append(state.name.lowercase())
         append("\nAI_PROC_PID=").append(if (pid > 0) pid.toString() else "-")
         append("\nAI_PROC_LAST=").append(lastEventMs)
         append("\nAI_PROC_MODEL=").append(modelPath ?: "-")
         detail?.let { append("\nAI_PROC_DETAIL=").append(it) }
+        // Round 48: the :ai child's durable step lines (SCRFD_MODEL_FILE,
+        // SCRFD_EP, ONNX_SESSION_OK / SCRFD_CREATE_FAIL ...) — written to
+        // disk BEFORE ORT is touched, so they survive the child's native
+        // abort and name the exact step that died.
+        val ctx = appContext
+        if (ctx != null) {
+            for (line in AiChildFileLog.tail(ctx, 24)) {
+                append("\nAI_PROC_CHILD_LOG=").append(line)
+            }
+        }
     }
 
     /**
@@ -75,6 +86,7 @@ object AiProcMonitor {
      */
     fun probe(context: Context, model: String) {
         val app = context.applicationContext
+        appContext = app
         noteProbeStart(model)
         Thread({
             runCatching {

@@ -8,11 +8,11 @@ import timber.log.Timber
 import java.nio.FloatBuffer
 
 /**
- * Phase 2: SCRFD on ONNX Runtime Mobile. XNNPACK delegate by default
- * (owner mandate); NNAPI is an opt-in dev toggle ([useNnapi]) — applied at
- * session creation. The caller owns preprocessing (1x3x640x640 float32,
- * letterboxed, (x/255 - 0.5) / 0.125... i.e. (x - 127.5) / 128 per
- * insightface SCRFD) and postprocessing ([ScrfdPostprocess]).
+ * Phase 2: SCRFD on ONNX Runtime Mobile. Round 48 (owner): CPU-ONLY
+ * execution provider — XNNPACK (former default) and NNAPI are retired as
+ * candidate native-abort sites; arena + memory pattern off. The caller
+ * owns preprocessing (1x3x640x640 float32, letterboxed, (x - 127.5) / 128
+ * per insightface SCRFD) and postprocessing ([ScrfdPostprocess]).
  */
 class ScrfdDetector(
     modelPath: String,
@@ -24,22 +24,38 @@ class ScrfdDetector(
     private val inputName: String
 
     init {
+        // r48 (owner CHANGE 1): prove the file on disk before ORT parses it.
+        // ~16.9 MB expected for scrfd_10g_bnkps.onnx; a truncated ONNX
+        // protobuf aborts natively at parse time. Logged BEFORE
+        // createSession so it survives (via the :ai child file log) even if
+        // the abort happens inside createSession.
+        val f = java.io.File(modelPath)
+        Timber.i("SCRFD_MODEL_FILE exists=%s size=%d", f.exists(), if (f.exists()) f.length() else -1L)
+
         val opts = SessionOptions()
-        var ep = if (useNnapi) "nnapi" else "xnnpack"
-        try {
-            if (useNnapi) {
-                opts.addNnapi()
-            } else {
-                opts.addXnnpack(mapOf("intra_op_num_threads" to "2"))
-            }
+        // r48 (owner CHANGE 2): force CPU-only. No XNNPACK, no NNAPI. Both
+        // are candidate native-abort sites on Adreno/ARM SoCs (XNNPACK has
+        // known aborts on some big.LITTLE configurations). The [useNnapi]
+        // parameter stays in the signature for API compatibility but is
+        // IGNORED this round.
+        runCatching { opts.setIntraOpNumThreads(2) }
+        runCatching { opts.setInterOpNumThreads(1) }
+        // Disable the memory arena and memory pattern — both are optional
+        // and have been linked to native aborts on some ARM hardware.
+        runCatching { opts.setEnableCpuMemArena(false) }
+        runCatching { opts.setEnableMemPattern(false) }
+        Timber.i("SCRFD_EP cpu-only arena=off memPattern=off")
+
+        // r48 (owner CHANGE 3): defense wrap. A native abort escapes Kotlin
+        // try/catch — but if this ever becomes catchable, we want the log.
+        session = try {
+            env.createSession(modelPath, opts)
         } catch (t: Throwable) {
-            Timber.e(t, "ONNX_EP_FAIL requested=%s -> default CPU", ep)
-            ep = "cpu"
+            Timber.e(t, "SCRFD_CREATE_FAIL path=%s", modelPath)
+            throw t
         }
-        if (ep == "cpu") runCatching { opts.setIntraOpNumThreads(2) }
-        session = env.createSession(modelPath, opts)
         inputName = session.inputNames.iterator().next()
-        Timber.i("ONNX_SESSION_OK ep=%s input=%s", ep, inputName)
+        Timber.i("ONNX_SESSION_OK ep=cpu input=%s", inputName)
     }
 
     /**

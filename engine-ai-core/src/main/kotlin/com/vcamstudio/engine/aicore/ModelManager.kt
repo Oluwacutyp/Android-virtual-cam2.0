@@ -62,6 +62,10 @@ class ModelManager(private val context: Context) {
             m.id to ModelState(
                 model = m,
                 state = if (exists) State.READY else State.NOT_DOWNLOADED,
+                // r48: adopted files report their REAL size — "bytes=0" on
+                // an adopted row was an init-path artifact, not evidence of
+                // truncation (SCRFD_MODEL_FILE is the authoritative check).
+                downloadedBytes = if (exists) safeLength(fileOf(m)) else 0L,
                 message = if (m.url.isBlank()) "No verified mirror yet" else null,
             )
         }
