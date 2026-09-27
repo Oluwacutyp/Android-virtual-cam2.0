@@ -2109,3 +2109,23 @@ dead -> post AI_PROC_CHILD_LOG tail; SUBMITTED=0 -> analyzer gate false
   pad/rejects/AiRing-adjacent tests passed; :app tests had not run yet.
   Fix: assert uprightW=480, uprightH=640 + comment. First run where
   AiRingTest will actually execute.
+- 36303795548 (7fb2200, HEAD) GREEN — both jobs; artifact
+  vcam-studio-debug-apk id 10926438377 (21,267,865 B; +26,323 B over r48 =
+  app/ai classes + AIDL stubs), probe-wedge id 10926875738. Test total now
+  90 (74 prior + 8 AiRingTest + 8 ScrfdPreprocessTest) — the r49 mandate's
+  "82" figure under-counted by assuming one new suite.
+
+### r49 device-verify protocol (owner)
+install the CI APK -> Models: scrfd Ready -> DEV SCRFD ON -> force-close ->
+reopen -> Diagnostics dump. Sanity: NO AI_IPC_* lines = still the pre-r49
+APK. Healthy: STATE=running, AI_IPC_BIND=bound, AI_FRAMES_SUBMITTED and
+AI_RESULTS_RECEIVED climbing together, AI_IPC_RTT_MS real (tens of ms),
+SCRFD_STATE=RUNNING, SCRFD_RUNS>0, SCRFD_MS ~ AI_PRE_MS+AI_INFER_MS,
+FACE_BOX=[x1,y1,x2,y2] score=..., cyan overlay tracking the face. Child log
+expectations (AI_PROC_CHILD_LOG): AI_RING_OPEN frames=2x1382464
+boxes=8x128... (slot bytes = meta+payload), AI_INFER_SAMPLE every 10th
+frame, AI_CHILD_STATE state=running. Triage: dead -> post
+AI_PROC_CHILD_LOG tail; SUBMITTED=0 -> analyzer gate false (check
+bound/READY/camera-layer); RESULTS=0 with submits>0 -> no session in :ai
+(AI_PROC_SESSION_FAIL); AI_INFER_MS>~400 -> next variable is 640->320
+input, NOT the transport.
