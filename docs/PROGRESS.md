@@ -2332,3 +2332,6 @@ Next-dump decision table (system side):
   killer directly.
 Checkpoint A remains gated on a SURVIVING child; B (threads) and C
 (overlay polish) remain gated behind A per mandate 6.
+- 36320634775 (ff15b44, HEAD) GREEN — both jobs; artifact
+  vcam-studio-debug-apk id 10932228419 (21270670 B). Next: owner re-test; the dump's
+  AI_SYS_* + AI_CHILD_IMPORTANCE decide LMKD vs OEM-policy kill.
