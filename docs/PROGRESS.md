@@ -2076,3 +2076,17 @@ dead -> post AI_PROC_CHILD_LOG tail; SUBMITTED=0 -> analyzer gate false
 (check bound/READY/camera-layer); RESULTS=0 with submits>0 -> no session in
 :ai (look for AI_PROC_SESSION_FAIL); AI_INFER_MS>~400 -> next variable is
 640->320 input, NOT the transport.
+
+### r49 CI ledger
+- 36301385974 (f6b79ef) FAIL :app:compileDebugAidl (1m39s) — aidl (build-tools
+  34.0.0) rejected app/src/main/aidl/com/vcamstudio/app/ai/IAiDetector.aidl;
+  the ProcessException shows the tool ran and exited non-zero (its own
+  diagnostic prints in the step log above the "What went wrong" block — the
+  commit-comment greps do not capture aidl diagnostics). Diagnosis: the file
+  referenced IAiDetectorCallback with NO import — the legacy aidl resolves
+  cross-file interface types only via explicit imports, even same-package
+  (cf. the classic SDK RemoteServiceController IRemoteService.aidl importing
+  IRemoteServiceCallback from the same package). Fix f7bb9xx: add
+  `import com.vcamstudio.app.ai.IAiDetectorCallback;` — zero-risk under
+  either compiler generation (newer aidl auto-imports same-package; explicit
+  import stays legal).
