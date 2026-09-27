@@ -2,6 +2,7 @@ package com.vcamstudio.app.ui.studio
 
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -50,6 +51,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.util.UUID
@@ -143,6 +146,14 @@ class StudioViewModel @Inject constructor(
     /** Face box (upright-frame normalized, front-mirror applied) for the debug overlay. */
     private val _faceOverlay = MutableStateFlow<com.vcamstudio.engine.aiface.FaceBox?>(null)
     val faceOverlay: StateFlow<com.vcamstudio.engine.aiface.FaceBox?> = _faceOverlay.asStateFlow()
+
+    // r51-C: EMA state lives in UPRIGHT (pre-mirror) space so the mirror is
+    // applied exactly once, downstream. overlaySetAtMs/Mirrored feed C4's
+    // FACE_OVERLAY dump line; expiryJob implements C2 (clear after 1500 ms).
+    private var smoothedBox: com.vcamstudio.engine.aiface.FaceBox? = null
+    @Volatile private var overlaySetAtMs = -1L
+    @Volatile private var overlayMirrored = false
+    private var overlayExpiryJob: Job? = null
 
     val scrfdPhase: StateFlow<com.vcamstudio.engine.aiface.FaceDetectionController.Phase> =
         faceDetection.phase
@@ -482,17 +493,21 @@ class StudioViewModel @Inject constructor(
             faceDetection.stats.collect { stats ->
                 runCatching {
                     // Round 49: box==null (ran, no face) -> clear the overlay.
+                    // r51-C1: also reset EMA state — a reappearance never
+                    // interpolates across a detection gap.
                     val box = stats.box
                     if (box == null) {
-                        _faceOverlay.value = null
+                        smoothedBox = null
+                        setFaceOverlay(null, mirrored = false)
                         return@runCatching
                     }
+                    // r51-C1: smooth in upright space BEFORE the front mirror.
+                    val ema = FaceOverlayMath.smooth(smoothedBox, box)
+                    smoothedBox = ema
                     val mirrored = cameraSource.isFrontCamera()
-                    _faceOverlay.value = if (mirrored) {
-                        box.copy(x1 = 1f - box.x2, x2 = 1f - box.x1)
-                    } else {
-                        box
-                    }
+                    // Mirror x exactly once, after smoothing.
+                    val shown = if (mirrored) FaceOverlayMath.mirrorX(ema) else ema
+                    setFaceOverlay(shown, mirrored = mirrored)
                 }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=stats") }
             }
         }
@@ -1091,12 +1106,46 @@ class StudioViewModel @Inject constructor(
         engine.requestRecovery("manual test from diagnostics")
     }
 
+    /**
+     * r51-C2: the overlay clears 1500 ms after the last box even if the
+     * null-clear path in the stats collector never fires (results stop
+     * arriving entirely). Runs on the main dispatcher; results also arrive
+     * on main, so the cancel-then-set here cannot interleave a stale expiry.
+     */
+    private fun setFaceOverlay(box: com.vcamstudio.engine.aiface.FaceBox?, mirrored: Boolean) {
+        overlayExpiryJob?.cancel()
+        overlayExpiryJob = null
+        if (box == null) {
+            overlaySetAtMs = -1L
+            _faceOverlay.value = null
+            return
+        }
+        overlaySetAtMs = SystemClock.elapsedRealtime()
+        overlayMirrored = mirrored
+        _faceOverlay.value = box
+        overlayExpiryJob = viewModelScope.launch {
+            delay(1500)
+            _faceOverlay.value = null
+        }
+    }
+
+    /** r51-C4: overlay provenance for the owner's dump. */
+    private fun faceOverlayDumpLine(): String {
+        val b = _faceOverlay.value ?: return "FACE_OVERLAY=none"
+        val age = if (overlaySetAtMs > 0) SystemClock.elapsedRealtime() - overlaySetAtMs else -1L
+        return "FACE_OVERLAY=age=${age}ms mirrored=$overlayMirrored " +
+            "upright=${b.frameWidth}x${b.frameHeight} " +
+            "box=[%.3f,%.3f,%.3f,%.3f]".format(b.x1, b.y1, b.x2, b.y2) +
+            " score=%.3f".format(b.score)
+    }
+
     fun diagnosticsDump(): String =
         engine.dump() +
             // Round 44: SCRFD stats are conditional on the DEV session toggle
             // (owner decision 2); MODEL_SECTION always reports.
             (if (scrfdSessionDev.value) {
-                "\n\nSCRFD_SECTION\n  " + faceDetection.dumpSection().replace("\n", "\n  ")
+                "\n\nSCRFD_SECTION\n  " + faceDetection.dumpSection().replace("\n", "\n  ") +
+                    "\n  " + faceOverlayDumpLine()
             } else {
                 ""
             }) +

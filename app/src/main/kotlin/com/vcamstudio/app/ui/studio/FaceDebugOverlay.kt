@@ -97,24 +97,29 @@ fun FaceDebugOverlay(
             )
         }
 
+        // r51-C3: density-correct styling (was raw px: 5f stroke, 10f radius,
+        // 36f text — device-dependent thickness).
+        val strokePx = 3.dp.toPx()
+        val radiusPx = 8.dp.toPx()
+        val textPx = 14.dp.toPx()
         drawRoundRect(
             color = SCRFD_CYAN,
             topLeft = Offset(rect.left, rect.top),
             size = Size(rect.width, rect.height),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(10f, 10f),
-            style = Stroke(width = 5f),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(radiusPx, radiusPx),
+            style = Stroke(width = strokePx),
         )
         drawIntoCanvas { canvas ->
             val paint = android.graphics.Paint().apply {
                 color = android.graphics.Color.rgb(0x22, 0xD3, 0xEE)
-                textSize = 36f
+                textSize = textPx
                 isAntiAlias = true
-                setShadowLayer(6f, 0f, 0f, android.graphics.Color.BLACK)
+                setShadowLayer(2.dp.toPx(), 0f, 0f, android.graphics.Color.BLACK)
             }
             canvas.nativeCanvas.drawText(
                 "%.0f%%".format(box.score * 100),
                 rect.left,
-                (rect.top - 12f).coerceAtLeast(36f),
+                (rect.top - 4.dp.toPx()).coerceAtLeast(textPx),
                 paint,
             )
         }

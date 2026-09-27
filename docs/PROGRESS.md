@@ -2447,3 +2447,46 @@ surviving child away — the transport itself is proven.
 | Round | Commit | CI run | Result | Artifact (vcam-studio-debug-apk) |
 |---|---|---|---|---|
 | r50 A0.4 | 632f59e | 36326975052 | GREEN 7m11s | id 10934163397 (21,271,516 B) |
+
+### Round 51 — dump-5: CHILD SURVIVED + FIRST DETECTION (checkpoint A PASS) → B+C implemented (owner: "Implement all too")
+
+DUMP-5 (A0.4 build, artifact 10934163397) = THE MILESTONE. The child process
+SURVIVED the whole session: heartbeats tick=53..73 (+52 s..+72 s of child
+life, 1 Hz exact), AI_PROC_STATE=running PID=21996, no death line. The
+A0.4 build's only changes were diagnostics — so the +2-3 s killer is
+NONDETERMINISTIC (an OEM sweep that fires some sessions, not others). The
+remedy menu (a FGS / b battery exemption / c rebind / d adb events logcat)
+STANDS; the child died in dumps 1-4 and lived in dump-5 with identical code
+paths for survival.
+
+FIRST END-TO-END DETECTION: FACE_BOX=[0.000,1.000,0.178,1.000] score=0.639
+— normalized upright [0,1] with A1 clamps visibly working (x1 clamped to
+0.000, y1/y2 at the bottom edge: a face exiting the frame bottom-left).
+SCRFD_RUNS=81, SCRFD_MS=844.60, PRE=113 INFER=726 (3 AI_INFER_SAMPLEs all
+face=true), SCRFD_STATE=RUNNING, studio HEALTHY 58.8 fps dropped=3
+recoveries=0, golden orientation unchanged (ST_CLASS rot=90 mirror=none,
+NET=ANTI_DIAG_MIRROR, bisect=5). Accounting note: SUBMITTED=305 vs
+RUNS=81 with DROPPED=0 — the 224 gap is keep-only-latest coalescing,
+which B3's new counter now measures directly. RTT=-1 (no fresh round-trip
+sample in window; results provably flowed — 81 received).
+
+R51 SCOPE (owner instruction "Implement all too" — gate lifted: survives +
+FACE_BOX subset [0,1]):
+- B1: ScrfdDetector INTRA_OP_THREADS 2->4 (INTER_OP stays 1) + SCRFD_THREADS
+  log. Baseline to beat: INFER 726 / SCRFD_MS 844.6. Checkpoint: no win,
+  child death, or fps drop -> revert to 2.
+- B2 (measure-only): ONNX_INPUT_SHAPE line via session.inputInfo (symbolic
+  vs fixed 640 decides any future 320 round).
+- B3: framesCoalesced counter + ` coalesced=%d` on AI_INFER_SAMPLE +
+  AI_PRE_AVG_MS / AI_INFER_AVG_MS (mean of last 20 frames).
+- C1: EMA in StudioViewModel stats.collect BEFORE the front mirror — 0.45
+  fresh + 0.55 prev per coord, upright space, NO smoothing on null->box
+  (state resets); pure math extracted to FaceOverlayMath (unit-tested).
+- C2: overlay clears 1500 ms after the last box even if results stop
+  arriving (expiry job, main dispatcher).
+- C3: overlay styling density-correct — stroke 3.dp, radius 8.dp, label
+  14.dp (was raw px 5/10/36); NN% label already existed, kept.
+- C4: FACE_OVERLAY=age=<ms> mirrored=<bool> upright=<w>x<h> box=[…] score
+  line in diagnosticsDump SCRFD_SECTION.
+6 new unit tests (EMA appear/smooth/fields, mirror once, double-mirror
+identity WITHIN TOLERANCE — 1f-(1f-x) is not bit-exact x, convex hull).

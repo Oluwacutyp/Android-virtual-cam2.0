@@ -50,6 +50,14 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
     private val pendingLock = java.lang.Object()
     private var pending: FrameTask? = null
 
+    // r51-B3: keep-only-latest overwrites (single binder-thread writer,
+    // worker only reads). Reconciles SUBMITTED vs RUNS in the dump — the
+    // A0.3 numbers (305 submitted, 81 runs, dropped=0) are coalescings.
+    @Volatile private var framesCoalesced = 0L
+    /** Last 20 pre/infer durations (worker thread only) — AI_*_AVG_MS. */
+    private val recentPreMs = ArrayDeque<Long>()
+    private val recentInferMs = ArrayDeque<Long>()
+
     private var boxCursor = 0
     private var framesDone = 0L
 
@@ -135,7 +143,10 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
         synchronized(pendingLock) {
             // Keep-only-latest: drop the older frame and release its slot so
             // main never starves.
-            pending?.let { old -> frameRing?.release(old.slot) }
+            pending?.let { old ->
+                frameRing?.release(old.slot)
+                framesCoalesced++
+            }
             pending = FrameTask(slot, width, height, rotationDeg, frameId)
             pendingLock.notifyAll()
         }
@@ -286,11 +297,17 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
             preMs = t1 - t0
         }
         framesDone++
+        if (recentPreMs.size >= 20) recentPreMs.removeFirst()
+        recentPreMs.addLast(preMs)
+        if (recentInferMs.size >= 20) recentInferMs.removeFirst()
+        recentInferMs.addLast(inferMs)
         if (framesDone % 10L == 0L) {
             Timber.i(
-                "AI_INFER_SAMPLE pre=%dms infer=%dms face=%s queued=%d",
-                preMs, inferMs, (detection != null).toString(), queuedCount(),
+                "AI_INFER_SAMPLE pre=%dms infer=%dms face=%s queued=%d coalesced=%d",
+                preMs, inferMs, (detection != null).toString(), queuedCount(), framesCoalesced,
             )
+            Timber.i("AI_PRE_AVG_MS=%d n=%d", recentPreMs.average().toLong(), recentPreMs.size)
+            Timber.i("AI_INFER_AVG_MS=%d n=%d", recentInferMs.average().toLong(), recentInferMs.size)
         }
 
         // Box ring: prefer a FREE slot; recycle round-robin when all unread —

@@ -19,6 +19,15 @@ class ScrfdDetector(
     useNnapi: Boolean = false,
 ) : AutoCloseable {
 
+    companion object {
+        // r51-B1 (one variable vs the dump-5 baseline PRE=113 + INFER=726ms
+        // at intra=2): intra 2 -> 4. Checkpoint for the next dump: if
+        // AI_INFER_AVG_MS does not beat the 2-thread baseline, or the child
+        // dies / SCRFD_FPS drops -> revert to 2.
+        const val INTRA_OP_THREADS = 4
+        const val INTER_OP_THREADS = 1
+    }
+
     // Round 50-A0: property initializers and init blocks run in SOURCE ORDER,
     // so this block runs BEFORE `env` below. r48 planted the step logs in an
     // init block that came after `env`, so the very first ORT touch
@@ -47,8 +56,8 @@ class ScrfdDetector(
         // known aborts on some big.LITTLE configurations). The [useNnapi]
         // parameter stays in the signature for API compatibility but is
         // IGNORED this round.
-        runCatching { opts.setIntraOpNumThreads(2) }
-        runCatching { opts.setInterOpNumThreads(1) }
+        runCatching { opts.setIntraOpNumThreads(INTRA_OP_THREADS) }
+        runCatching { opts.setInterOpNumThreads(INTER_OP_THREADS) }
         // Disable the memory arena and memory pattern — both are optional
         // and have been linked to native aborts on some ARM hardware.
         // 1.17.1 API note (CI-verified): setEnableCpuMemArena/setEnableMemPattern
@@ -60,6 +69,10 @@ class ScrfdDetector(
         runCatching { opts.addConfigEntry("session.enable_cpu_mem_arena", "0") }
         runCatching { opts.addConfigEntry("session.enable_mem_pattern", "0") }
         Timber.i("SCRFD_EP cpu-only arena=off memPattern=off")
+        Timber.i(
+            "SCRFD_THREADS intra=%d inter=%d",
+            INTRA_OP_THREADS, INTER_OP_THREADS,
+        )
 
         // r48 (owner CHANGE 3): defense wrap. A native abort escapes Kotlin
         // try/catch — but if this ever becomes catchable, we want the log.
@@ -71,6 +84,11 @@ class ScrfdDetector(
         }
         inputName = session.inputNames.iterator().next()
         Timber.i("ONNX_SESSION_OK ep=cpu input=%s", inputName)
+        // r51-B2 (measure-only): report the model's input shape — symbolic
+        // vs fixed 640 is the decision input for any future 320-input round
+        // (no shape change is made here).
+        val inShape = (session.inputInfo[inputName]?.info as? ai.onnxruntime.TensorInfo)?.shape
+        Timber.i("ONNX_INPUT_SHAPE shape=%s", inShape?.contentToString() ?: "unknown")
     }
 
     /**
