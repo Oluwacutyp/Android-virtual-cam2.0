@@ -2188,3 +2188,7 @@ geometry (2x1382400 / 8x64), AIDL interface, and dump field names
 untouched (no new dump fields in A); ScrfdDetector.kt init FROZEN;
 StudioApp.kt untouched; no input-shape change (B2 measurement comes with
 item B); no smoothing yet (item C).
+- 36307201599 (5b6e4f3, HEAD) GREEN first-try — both jobs; artifact
+  vcam-studio-debug-apk id 10927852313 (21,268,510 B). Awaiting the owner's
+  checkpoint-A dump/screenshot before item B (threads) and C (overlay
+  polish).
