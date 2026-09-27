@@ -1931,3 +1931,33 @@ the file is corrupt: fix is re-download + re-verify, not ORT.
 
 DO-NOTs honored: no XNNPACK reverts, no ORT version change, main-process
 engine untouched, r33/r45 untouched, :ai structure unchanged.
+
+### r48 CI ledger (4 runs) + the K2 resolution anomaly
+- 36294970948 (cf73e0e) FAIL: setEnableCpuMemArena/setEnableMemPattern do not
+  exist in ORT 1.17.1 (they are later-API methods). Verified against ORT
+  v1.17.1 OrtSession.java on GitHub: addCPU(boolean useArena) +
+  addConfigEntry(String,String) exist -> addCPU(false) (arena) + config keys
+  session.enable_cpu_mem_arena/session.enable_mem_pattern (unknown keys are
+  ignored harmlessly by ORT core). fe469a8.
+- 36295137527 (fe469a8) FAIL: Unresolved reference 'AiChildFileLog' from
+  StudioApp ONLY — byte-level verification of the committed blobs (package,
+  object name, import) was clean; probe-wedge green proved checkout integrity;
+  the SAME symbol resolved from same-package AiProcMonitor.kt (no error).
+- 36295436189 (e28892e) FAIL: fully-qualified reference ALSO unresolved;
+  AiProcMonitor's reference to the relocated symbol still resolved.
+  PATTERN: any new symbol added to package com.vcamstudio.app.ai in r48 is
+  invisible to StudioApp's cross-package references (import AND FQN), while
+  r47's symbols from the same package import fine and same-package
+  references resolve. Cause UNKNOWN (K2 anomaly suspected); documented, not
+  guessed.
+- 36295649054 (b205568) GREEN: routed around — StudioApp carries ZERO
+  references to the new symbol; AiInferenceService.onCreate (running in :ai
+  before any SCRFD_* line) plants AiChildLogTree with a double-plant guard.
+  StudioApp is byte-equivalent to the proven r47 shape. IF a future round
+  needs a new cross-package symbol from StudioApp, declare it in a file that
+  already resolvable (e.g. AiProcMonitor.kt) and TEST FIRST.
+
+### r48 device-verify reminder
+Expected next dump: AI_PROC_STATE=running (XNNPACK was the crash — done) or
+dead + AI_PROC_CHILD_LOG lines ending at SCRFD_MODEL_FILE/SCRFD_EP (abort
+inside createSession with CPU-only) — and if size < 16,000,000, re-download.
