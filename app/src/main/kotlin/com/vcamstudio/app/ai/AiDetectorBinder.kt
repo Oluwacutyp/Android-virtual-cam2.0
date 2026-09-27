@@ -99,6 +99,10 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
     }
 
     override fun setModel(path: String?) {
+        // Round 50-A0.1: split the AI_RING_OPEN -> AI_PROBE_BEGIN window —
+        // this line proves the binder DELIVERED the request (the r50-A0
+        // dump died with neither this nor PROBE_BEGIN in the log).
+        Timber.i("AI_SETMODEL_RECV path=%s", path)
         // Hand to the r47 probe thread — session creation never rides a
         // binder thread. Duplicate requests (boot probe + client connect)
         // are deduped by path.
@@ -144,6 +148,7 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
                 probeTaskIsSet = false
             }
             if (!running) break
+            if (path != null) Timber.i("AI_PROBE_WAKE path=%s", path)
             if (path == null) {
                 // Model removed: drop the session, stay in :ai.
                 closeDetector()

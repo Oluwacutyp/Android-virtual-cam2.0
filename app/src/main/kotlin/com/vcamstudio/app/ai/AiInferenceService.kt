@@ -139,6 +139,9 @@ object AiChildLogTree : Timber.Tree() {
     private val prio = charArrayOf('?', 'V', 'D', 'I', 'W', 'E', 'A')
 
     @Volatile private var file: File? = null
+
+    /** Wall clock at [reset] — every line is prefixed with [+ms] since it. */
+    @Volatile private var epochMs: Long = 0L
     private val lock = Any()
 
     /** Start a fresh probe log (called from the service, child process). */
@@ -146,6 +149,7 @@ object AiChildLogTree : Timber.Tree() {
         val f = File(context.applicationContext.filesDir, FILE_NAME)
         synchronized(lock) {
             runCatching { f.writeText("") }
+            epochMs = System.currentTimeMillis()
             file = f
         }
     }
@@ -161,7 +165,11 @@ object AiChildLogTree : Timber.Tree() {
         runCatching {
             synchronized(lock) {
                 if (f.length() > MAX_BYTES) return
-                val head = "${prio.getOrElse(priority) { '?' }}/${tag ?: "vcam"}: $message"
+                // r50-A0.1: per-line age — how long the child LIVED between
+                // steps (an instant stop after AI_RING_OPEN reads very
+                // differently from a death 3 s into createSession).
+                val head = "[+" + (System.currentTimeMillis() - epochMs) + "ms] " +
+                    "${prio.getOrElse(priority) { '?' }}/${tag ?: "vcam"}: $message"
                 val stack = t?.let { Log.getStackTraceString(it) }
                 if (stack.isNullOrBlank()) {
                     f.appendText(head + "\n")

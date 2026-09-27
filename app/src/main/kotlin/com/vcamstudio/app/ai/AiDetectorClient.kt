@@ -72,7 +72,11 @@ class AiDetectorClient(private val context: Context) {
     private val deathRecipient = IBinder.DeathRecipient {
         Timber.e("AI_BINDER_DIED")
         AiProcMonitor.noteBound(false)
-        AiProcMonitor.noteChildDeath("binder died (native abort in :ai)")
+        // Round 50-A0.1: linkToDeath fires for ANY child death (native
+        // abort, LMK kill, crash) and cannot name the cause — the r50-A0
+        // dump proved the "native abort" label wrong (the child died
+        // before touching ORT at all). The child log tail decides.
+        AiProcMonitor.noteChildDeath("binder died (cause unnamed — read AI_PROC_CHILD_LOG)")
         closeRings()
     }
 

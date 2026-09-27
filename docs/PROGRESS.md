@@ -2231,3 +2231,60 @@ removed, no CI/dependency changes; expected green.
   vcam-studio-debug-apk id 10928457587. Waiting on the owner's A0 dump:
   the child-log tail now names the death step (decision table above);
   checkpoint A (cyan box) remains gated on a surviving child.
+
+### Round 50 item A0.1 — the A0 dump verdict + the last unbracketed window
+
+OWNER A0 DUMP VERDICT: the child died between AI_RING_OPEN and
+AI_PROBE_BEGIN — before SCRFD_MODEL_FILE (pure java.io.File + Timber),
+before ORT_ENV_BEGIN, before the ScrfdDetector class load. That window
+contains ONLY pure Java/POSIX work (binder delivery of setModel,
+offerProbe, closeDetector no-op on first pass, one file append): Kotlin in
+this window CANNOT native-abort. Corroboration: the r49 build survived the
+identical code path on the same device (ONNX_SESSION_OK), and the A and A0
+builds carry ZERO child-path behavior changes vs r49 before the
+constructor. Conclusion: NOT a native abort — external kill (LMKD-class)
+or a process-level event is the remaining cause class. AI_CHILD_MEM
+max=256MB free=252MB at birth: the child's own heap was never the
+constraint (LMKD is about system pressure, not the child's heap).
+
+SECOND (independent) FINDING in the same dump: the MAIN process never
+attached a preview surface (outputs= empty, preview=none), never created a
+camera source (sources=0), and the active scene had ZERO layers
+(SCENE_APPLIED layers=0; the r49 run showed layers=1). presented=0,
+rendered=1. So even a LIVING child would have shown
+AI_FRAMES_SUBMITTED=0 — no camera, no analyzer. Either the dump was taken
+before the camera layer was added, or the scene reopened empty (possible
+scene-restore issue after force-close/reinstall) — needs owner
+confirmation before anyone touches anything.
+
+A0.1 patches (diagnostics-only, no behavior change):
+1. AiChildLogTree — every line now carries its age since reset:
+   `[+832ms] W/vcam: AI_...` (epochMs captured at reset). The child's
+   LIFETIME becomes visible: an instant stop after AI_RING_OPEN reads very
+   differently from a death 3 s into createSession. Line CONTENT after
+   the prefix is unchanged.
+2. AiDetectorBinder.setModel — AI_SETMODEL_RECV path=... (binder thread;
+   proves delivery).
+3. AiDetectorBinder.probeLoop — AI_PROBE_WAKE path=... (probe thread woke
+   with a non-null task).
+4. AiDetectorClient deathRecipient — AI_PROC_DETAIL no longer claims
+   "native abort": linkToDeath fires for ANY death and cannot name a
+   cause (the A0 dump proved the old label wrong). New text: "binder died
+   (cause unnamed — read AI_PROC_CHILD_LOG)".
+
+Updated next-dump table (child log tail -> verdict):
+- AI_RING_OPEN last, lifetime <~100 ms, no SETMODEL_RECV -> killed between
+  transactions: external kill confirmed.
+- SETMODEL_RECV present, no PROBE_WAKE -> killed before the probe woke
+  (still pure Java -> kill).
+- PROBE_WAKE present, no PROBE_BEGIN -> killed in the wake->begin window
+  (microseconds -> kill).
+- PROBE_BEGIN present, no SCRFD_MODEL_FILE -> died in CLASS LOAD of
+  ScrfdDetector (this is where ORT classes + libonnxruntime.so load — the
+  only remaining spot a real lib-load abort can live).
+- ORT_ENV_BEGIN without ORT_ENV_OK -> abort inside
+  OrtEnvironment.getEnvironment / JNI init.
+- SCRFD_EP without ONNX_SESSION_OK -> abort inside createSession (r47
+  signature).
+- All lines present incl. ONNX_SESSION_OK but STATE=dead -> died AFTER a
+  good session: look at the age deltas and AI_CHILD_MEM.
