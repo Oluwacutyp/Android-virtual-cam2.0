@@ -73,7 +73,7 @@ object AiProcMonitor {
         // abort and name the exact step that died.
         val ctx = appContext
         if (ctx != null) {
-            for (line in AiChildFileLog.tail(ctx, 24)) {
+            for (line in AiChildLogTree.tail(ctx, 24)) {
                 append("\nAI_PROC_CHILD_LOG=").append(line)
             }
         }

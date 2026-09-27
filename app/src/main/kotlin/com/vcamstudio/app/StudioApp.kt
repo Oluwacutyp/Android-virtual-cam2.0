@@ -8,7 +8,6 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.android.HiltAndroidApp
 import dagger.hilt.components.SingletonComponent
-import com.vcamstudio.app.ai.AiChildFileLog
 import com.vcamstudio.app.ai.AiProcMonitor
 import com.vcamstudio.app.crash.CrashLogger
 import com.vcamstudio.app.crash.RingLog
@@ -49,7 +48,7 @@ class StudioApp : Application() {
             // Round 48: the child's SCRFD_* step lines must survive its own
             // native death — append them to a file the main process's
             // Diagnostics dump can read (AI_PROC_CHILD_LOG).
-            Timber.plant(AiChildFileLog(this))
+            Timber.plant(com.vcamstudio.app.ai.AiChildLogTree(this))
         }
         if (procName == packageName) {
             // ---- main process only ----
