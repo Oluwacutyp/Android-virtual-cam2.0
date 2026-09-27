@@ -2,6 +2,7 @@ package com.vcamstudio.app.ai
 
 import android.os.SystemClock
 import com.vcamstudio.engine.aiface.Detection
+import com.vcamstudio.engine.aiface.FaceBox
 import com.vcamstudio.engine.aiface.ScrfdDetector
 import com.vcamstudio.engine.aiface.ScrfdPreprocess
 import timber.log.Timber
@@ -214,6 +215,7 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
         var preMs = 0L
         var inferMs = 0L
         var detection: Detection? = null
+        var letterbox: ScrfdPreprocess.Letterbox? = null // kept for the box conversion
         val det = detector
         if (det != null && n > 0) {
             i420.clear()
@@ -225,6 +227,7 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
             if (lb != null) {
                 detection = det.detectTop(tensor)
                 inferMs = SystemClock.elapsedRealtime() - t1
+                letterbox = lb
             }
             preMs = t1 - t0
         }
@@ -251,7 +254,17 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
         }
         boxCursor = (slot + 1) % AiDetectorClient.BOX_SLOTS
 
-        val box = detection
+        // Round 50: the ring carries an UPRIGHT, NORMALIZED FaceBox. The raw
+        // Detection is in 640x640 letterbox pixels (unclamped), and both
+        // FaceDebugOverlay (x * srcW * scale) and the VM front-mirror
+        // (1f - x2) assume normalized coordinates. toFaceBox clamps to
+        // [0,1], so a partly out-of-frame face hugs the edge instead of
+        // landing off-canvas.
+        val box: FaceBox? = if (detection != null && letterbox != null) {
+            ScrfdPreprocess.toFaceBox(detection, letterbox, System.currentTimeMillis())
+        } else {
+            null
+        }
         br.putInt(slot, AiDetectorClient.BOX_HAS_FACE, if (box != null) 1 else 0)
         if (box != null) {
             br.putFloat(slot, AiDetectorClient.BOX_X1, box.x1)
@@ -259,9 +272,10 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
             br.putFloat(slot, AiDetectorClient.BOX_X2, box.x2)
             br.putFloat(slot, AiDetectorClient.BOX_Y2, box.y2)
             br.putFloat(slot, AiDetectorClient.BOX_SCORE, box.score)
-            br.putLong(slot, AiDetectorClient.BOX_TS, System.currentTimeMillis())
-            br.putInt(slot, AiDetectorClient.BOX_FRAME_W, task.width)
-            br.putInt(slot, AiDetectorClient.BOX_FRAME_H, task.height)
+            br.putLong(slot, AiDetectorClient.BOX_TS, box.timestampMs)
+            // Upright dims (letterbox.uprightW/H) — NOT task.width/height.
+            br.putInt(slot, AiDetectorClient.BOX_FRAME_W, box.frameWidth)
+            br.putInt(slot, AiDetectorClient.BOX_FRAME_H, box.frameHeight)
         }
         br.putLong(slot, 40, preMs)   // PRE_MS
         br.putLong(slot, 48, inferMs) // INFER_MS

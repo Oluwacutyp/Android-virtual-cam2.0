@@ -164,4 +164,26 @@ class ScrfdPreprocessTest {
         assertEquals(640, box.frameWidth)
         assertEquals(480, box.frameHeight)
     }
+
+    @Test
+    fun `toFaceBox maps content origin and far corner and clamps overhang`() {
+        // Round 50 build gate: the r50 ring contract — toFaceBox output IS
+        // the wire format. Geometry: 640x480 source at size 640 -> scale 1,
+        // padX 0, padY 80; content occupies letterbox y in [80, 560].
+        val lb = ScrfdPreprocess.Letterbox(scale = 1f, padX = 0f, padY = 80f, uprightW = 640, uprightH = 480)
+        // Content origin (letterbox 0,80) -> normalized (0,0).
+        val origin = ScrfdPreprocess.toFaceBox(Detection(0f, 80f, 10f, 90f, 0.5f), lb, 1L)
+        assertEquals(0f, origin.x1, 1e-5f)
+        assertEquals(0f, origin.y1, 1e-5f)
+        // Far content corner (letterbox 640,560) -> normalized (1,1).
+        val corner = ScrfdPreprocess.toFaceBox(Detection(630f, 550f, 640f, 560f, 0.5f), lb, 2L)
+        assertEquals(1f, corner.x2, 1e-5f)
+        assertEquals(1f, corner.y2, 1e-5f)
+        // Overhang: negative x1 and y2 beyond the input size clamp to the
+        // frame edges (partly out-of-frame face hugs the edge, never lands
+        // off-canvas — the r49 dump failure).
+        val over = ScrfdPreprocess.toFaceBox(Detection(-60f, 0f, 100f, 700f, 0.5f), lb, 3L)
+        assertEquals(0f, over.x1, 1e-5f) // -60/640 = -0.09 -> clamped
+        assertEquals(1f, over.y2, 1e-5f) // (700-80)/480 = 1.29 -> clamped
+    }
 }

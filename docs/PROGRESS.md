@@ -2129,3 +2129,62 @@ AI_PROC_CHILD_LOG tail; SUBMITTED=0 -> analyzer gate false (check
 bound/READY/camera-layer); RESULTS=0 with submits>0 -> no session in :ai
 (AI_PROC_SESSION_FAIL); AI_INFER_MS>~400 -> next variable is 640->320
 input, NOT the transport.
+
+## Increment 46 — Round 50, ITEM A: the ring contract fix (checkpoint-gated)
+
+Owner r49 device dump = baseline: AI_IPC_BIND=bound, SUBMITTED=221,
+RESULTS=70, RTT=868 (pre+infer 853 -> ~15 ms IPC inside ~870 ms), health
+HEALTHY 58.8 fps dropped=0 recoveries=0, ONNX_SESSION_OK ep=cpu. No cyan
+box: the child shipped RAW 640-letterbox Detection coords as the FaceBox
+(dump FACE_BOX=[-42.857,805.997,177.422,1105.577] — values outside [0,1]),
+so the overlay drew ~3 orders of magnitude off-canvas, and
+reportRemoteResult never touched phase (SCRFD_RUNS=70 next to
+SCRFD_STATE=OFF). Round 50 is THREE checkpointed items; this commit is
+ITEM A ONLY (one variable at a time; B = threads, C = overlay polish come
+after the owner's A-checkpoint dump).
+
+### A1 — child converts (AiDetectorBinder.processFrame)
+The letterbox from ScrfdPreprocess.fill is now kept (was a local lb that
+went out of scope); the raw Detection is converted via
+ScrfdPreprocess.toFaceBox(detection, letterbox, ts) BEFORE the ring write:
+BOX_X1..Y2 hold an UPRIGHT, NORMALIZED FaceBox in [0,1] (toFaceBox clamps,
+so a partly out-of-frame face hugs the edge instead of landing off-canvas);
+BOX_TS = box.timestampMs; BOX_FRAME_W/H = the UPRIGHT frame dims
+(letterbox.uprightW/H), NOT task.width/height. Ring contract stated once:
+the child performs the one and only conversion; nothing downstream
+rescales. FaceBox import added (r47-era symbol; mandate's "already
+imported" was off by one — the r49 binder never named the type).
+
+### A2 — SCRFD_STATE honest (badge)
+- FaceDetectionController.reportRemoteResult now sets
+  _phase.value = Phase.RUNNING first (results flowing = the child IS
+  running), and a new reportRemotePhase(p) routes the other child states.
+- Channel (all inside the proven pattern): AiDetectorClient.onState ->
+  AiProcMonitor.noteChildState(state) -> childPhase: StateFlow<Int>
+  (0 idle/1 model-missing/2 session-failed/3 running; state 3 also keeps
+  the r47 noteChildRunning mirror) -> VM collector maps onto
+  FaceDetectionController.Phase (OFF/MODEL_MISSING/SESSION_FAILED/RUNNING)
+  -> reportRemotePhase. VM references stay FQN (file has no
+  FaceDetectionController import — r48 anomaly discipline).
+
+### Build gate (mandate 5)
+ScrfdPreprocessTest + `toFaceBox maps content origin and far corner and
+clamps overhang`: content origin (letterbox 0,80 @ padY 80) -> (0,0); far
+content corner (640,560) -> (1,1); overhang (x1=-60, y2=700) clamps to
+0.0 / 1.0. Test total 91 (one more than the r49 green run's 90).
+
+### Checkpoint A (owner device protocol)
+Same scene, same light, 30+ s, then dump + screenshot. Expected:
+SCRFD_STATE=RUNNING; SCRFD_RUNS climbing; every FACE_BOX value inside
+[0,1]; for the r49 detection specifically the mandate computes normalized
+~[0.000, 0.630, 0.246, 0.864] (upright 720x1280; verified consistent with
+the r49 raw values); a cyan rectangle visible in frame. If visible but
+misplaced: STOP — geometry bug (layer quad / fill-crop mapping), report
+OES_ORIENT + DRAW_STATE[OES], do not start B or C.
+
+DO-NOTs honored: no CI/dependency changes; no ORT outside :ai; no
+XNNPACK/NNAPI; no engine-render/capture/output/audio changes; ring
+geometry (2x1382400 / 8x64), AIDL interface, and dump field names
+untouched (no new dump fields in A); ScrfdDetector.kt init FROZEN;
+StudioApp.kt untouched; no input-shape change (B2 measurement comes with
+item B); no smoothing yet (item C).

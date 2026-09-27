@@ -264,6 +264,20 @@ object AiProcMonitor {
         lastEventMs = System.currentTimeMillis()
     }
 
+    /**
+     * Round 50: the child's AIDL onState (0 idle, 1 model-missing,
+     * 2 session-failed, 3 running). The VM maps it onto
+     * FaceDetectionController.Phase so the SCRFD badge is honest for the
+     * non-running states too (r49 only surfaced state 3).
+     */
+    private val _childPhase = MutableStateFlow(-1)
+    val childPhase: StateFlow<Int> = _childPhase
+
+    fun noteChildState(childState: Int) {
+        _childPhase.value = childState
+        if (childState == 3) noteChildRunning()
+    }
+
     // ------------------------------------------------------------ internals
 
     private fun noteProbeStart(model: String) {

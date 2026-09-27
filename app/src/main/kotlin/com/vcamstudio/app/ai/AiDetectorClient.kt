@@ -105,7 +105,10 @@ class AiDetectorClient(private val context: Context) {
 
         override fun onState(state: Int, detail: String?) {
             Timber.i("AI_CHILD_STATE_REPORT state=%d detail=%s", state, detail)
-            if (state == 3) AiProcMonitor.noteChildRunning()
+            // Round 50: all states route to the badge (VM maps onto
+            // FaceDetectionController.Phase); state 3 also mirrors the
+            // r47 AI_PROC_STATE=running.
+            AiProcMonitor.noteChildState(state)
         }
     }
 

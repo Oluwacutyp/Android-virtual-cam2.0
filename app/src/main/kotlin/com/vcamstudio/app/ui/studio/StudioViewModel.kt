@@ -452,6 +452,23 @@ class StudioViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
+            // Round 50: the child's onState -> the SCRFD badge (r49 only
+            // surfaced state 3; model-missing / session-failed / idle were
+            // invisible in the dump).
+            com.vcamstudio.app.ai.AiProcMonitor.childPhase.collect { s ->
+                runCatching {
+                    val phase = when (s) {
+                        0 -> com.vcamstudio.engine.aiface.FaceDetectionController.Phase.OFF
+                        1 -> com.vcamstudio.engine.aiface.FaceDetectionController.Phase.MODEL_MISSING
+                        2 -> com.vcamstudio.engine.aiface.FaceDetectionController.Phase.SESSION_FAILED
+                        3 -> com.vcamstudio.engine.aiface.FaceDetectionController.Phase.RUNNING
+                        else -> return@collect
+                    }
+                    faceDetection.reportRemotePhase(phase)
+                }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=childPhase") }
+            }
+        }
+        viewModelScope.launch {
             kotlinx.coroutines.flow.combine(scenes, activeSceneId) { s, id ->
                 s.firstOrNull { it.id == id }?.layers?.any { it is LayerDefinition.Camera } ?: false
             }.collect {

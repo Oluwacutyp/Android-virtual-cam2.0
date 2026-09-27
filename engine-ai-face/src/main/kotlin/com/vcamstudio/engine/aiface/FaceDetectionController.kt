@@ -161,8 +161,21 @@ class FaceDetectionController : AutoCloseable {
      */
     fun reportRemoteResult(box: FaceBox?, preprocessMs: Long, inferMs: Long) {
         val now = System.currentTimeMillis()
+        // Round 50: the dump's own definition of healthy — results flowing
+        // means the child session is RUNNING (r49 printed SCRFD_RUNS=70
+        // next to SCRFD_STATE=OFF).
+        _phase.value = Phase.RUNNING
         _stats.value = _stats.value.copy(box = box)
         recordRun(now, preprocessMs + inferMs)
+    }
+
+    /**
+     * Round 50: the child's AIDL onState (routed VM-side via
+     * AiProcMonitor.childPhase) — keeps the SCRFD badge honest for the
+     * non-running states too (model-missing / session-failed / idle).
+     */
+    fun reportRemotePhase(p: Phase) {
+        _phase.value = p
     }
 
     private fun publish(box: FaceBox?, now: Long) {
