@@ -2490,3 +2490,9 @@ FACE_BOX subset [0,1]):
   line in diagnosticsDump SCRFD_SECTION.
 6 new unit tests (EMA appear/smooth/fields, mirror once, double-mirror
 identity WITHIN TOLERANCE — 1f-(1f-x) is not bit-exact x, convex hull).
+
+### Ledger
+
+| Round | Commit | CI run | Result | Artifact (vcam-studio-debug-apk) |
+|---|---|---|---|---|
+| r51 B+C | 602e366 | 36348809303 | GREEN 7m4s | id 10940949013 (21,272,865 B) |
