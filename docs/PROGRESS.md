@@ -2192,3 +2192,38 @@ item B); no smoothing yet (item C).
   vcam-studio-debug-apk id 10927852313 (21,268,510 B). Awaiting the owner's
   checkpoint-A dump/screenshot before item B (threads) and C (overlay
   polish).
+
+### Round 50 item A0 — make the child's death name its step
+
+Owner checkpoint-A device evidence: the A-build shows AI_PROC_STATE=dead
+with the child log stopping at AI_RING_OPEN — no SCRFD_MODEL_FILE, no
+SCRFD_EP, no ONNX_SESSION_OK. probeLoop wraps construction in
+catch (t: Throwable) and would have logged AI_PROC_SESSION_FAIL; it logged
+nothing -> the child died WITHOUT a Throwable: native abort or external
+kill. Why the window is invisible: in ScrfdDetector `env` is a property
+initializer declared BEFORE the init block, and Kotlin runs property
+initializers and init blocks in SOURCE ORDER — so
+OrtEnvironment.getEnvironment() (the first ORT touch, which loads
+libonnxruntime) ran before the first step log. (r48's init-block freeze is
+superseded here by this explicit owner mandate.)
+
+Three patches (this commit):
+1. ScrfdDetector.kt — early init block BEFORE `env` (SCRFD_MODEL_FILE moved
+   there + ORT_ENV_BEGIN); env creation bracketed:
+   OrtEnvironment.getEnvironment().also { ORT_ENV_OK }. Everything after
+   `val opts = SessionOptions()` unchanged byte-for-byte.
+2. AiDetectorBinder.probeLoop — AI_PROBE_BEGIN path=%s immediately before
+   the ScrfdDetector constructor call (pins "before construction" vs a
+   specific constructor step).
+3. AiInferenceService.onCreate — AI_CHILD_MEM max=%dMB free=%dMB right
+   after AI_PROC_START (native abort vs OS/LMK kill discriminator when all
+   step lines are present but the child is still dead).
+
+Next-dump decision table: ORT_ENV_BEGIN without ORT_ENV_OK = abort inside
+getEnvironment / lib load; SCRFD_EP without ONNX_SESSION_OK = abort inside
+createSession (the r47 signature); all lines present but still dead =
+external kill — check AI_CHILD_MEM. Checkpoint A is FAILED/blocked on the
+dead child: items B (threads) and C (overlay polish) stay gated until a
+build both survives AND shows the A contract (FACE_BOX inside [0,1] +
+cyan box). A0 changes logging only — no behavior, no ORT calls added or
+removed, no CI/dependency changes; expected green.

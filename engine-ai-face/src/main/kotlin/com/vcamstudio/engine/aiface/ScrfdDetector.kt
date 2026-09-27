@@ -19,19 +19,28 @@ class ScrfdDetector(
     useNnapi: Boolean = false,
 ) : AutoCloseable {
 
-    private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
+    // Round 50-A0: property initializers and init blocks run in SOURCE ORDER,
+    // so this block runs BEFORE `env` below. r48 planted the step logs in an
+    // init block that came after `env`, so the very first ORT touch
+    // (OrtEnvironment.getEnvironment, which loads libonnxruntime) was
+    // unlogged — a death there looks identical to "died before we started".
+    init {
+        // r48 (owner CHANGE 1): prove the file on disk before ORT parses it.
+        // ~16.9 MB expected for scrfd_10g_bnkps.onnx; a truncated ONNX
+        // protobuf aborts natively at parse time.
+        val f = java.io.File(modelPath)
+        Timber.i("SCRFD_MODEL_FILE exists=%s size=%d", f.exists(), if (f.exists()) f.length() else -1L)
+        Timber.i("ORT_ENV_BEGIN")
+    }
+
+    private val env: OrtEnvironment = OrtEnvironment.getEnvironment().also {
+        Timber.i("ORT_ENV_OK")
+    }
+
     private val session: OrtSession
     private val inputName: String
 
     init {
-        // r48 (owner CHANGE 1): prove the file on disk before ORT parses it.
-        // ~16.9 MB expected for scrfd_10g_bnkps.onnx; a truncated ONNX
-        // protobuf aborts natively at parse time. Logged BEFORE
-        // createSession so it survives (via the :ai child file log) even if
-        // the abort happens inside createSession.
-        val f = java.io.File(modelPath)
-        Timber.i("SCRFD_MODEL_FILE exists=%s size=%d", f.exists(), if (f.exists()) f.length() else -1L)
-
         val opts = SessionOptions()
         // r48 (owner CHANGE 2): force CPU-only. No XNNPACK, no NNAPI. Both
         // are candidate native-abort sites on Adreno/ARM SoCs (XNNPACK has

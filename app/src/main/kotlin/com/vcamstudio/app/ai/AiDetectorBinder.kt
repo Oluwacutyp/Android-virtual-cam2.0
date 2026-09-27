@@ -157,6 +157,10 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
             sessionCreating = true
             closeDetector()
             try {
+                // Round 50-A0: name the attempt — with the detector's own
+                // step lines, this pins a silent child death to either
+                // "before construction" or a specific constructor step.
+                Timber.i("AI_PROBE_BEGIN path=%s", path)
                 // The call that natively aborted in the MAIN process on two
                 // ORT versions — if it aborts again, only this process dies.
                 detector = ScrfdDetector(path)

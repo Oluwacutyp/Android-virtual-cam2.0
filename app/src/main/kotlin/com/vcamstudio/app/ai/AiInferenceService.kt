@@ -63,6 +63,14 @@ class AiInferenceService : Service() {
         // dump reads this file after a native abort.
         AiChildLogTree.reset(this)
         Timber.i("AI_PROC_START pid=%d", Process.myPid())
+        // Round 50-A0: memory at birth — distinguishes "native abort" from
+        // "the OS killed us" (LMK) when every step line is present but the
+        // child is still dead.
+        Timber.i(
+            "AI_CHILD_MEM max=%dMB free=%dMB",
+            Runtime.getRuntime().maxMemory() / 1048576L,
+            Runtime.getRuntime().freeMemory() / 1048576L,
+        )
         writeReport("started", null)
     }
 
