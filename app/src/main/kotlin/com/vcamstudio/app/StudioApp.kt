@@ -43,14 +43,7 @@ class StudioApp : Application() {
             // Release has no logcat access anyway — the ring feeds the crash file.
             Timber.plant(RingLog)
         }
-        val procName = currentProcessName()
-        if (procName.endsWith(":ai")) {
-            // Round 48: the child's SCRFD_* step lines must survive its own
-            // native death — append them to a file the main process's
-            // Diagnostics dump can read (AI_PROC_CHILD_LOG).
-            Timber.plant(com.vcamstudio.app.ai.AiChildLogTree(this))
-        }
-        if (procName == packageName) {
+        if (currentProcessName() == packageName) {
             // ---- main process only ----
             // Round 42: CACHE_TOMBSTONE events — 7-day crash sweep + launch marker.
             Thread({ CrashLogger.onAppStart(this) }, "vcam-crash-boot").start()

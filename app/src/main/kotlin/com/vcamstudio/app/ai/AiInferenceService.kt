@@ -41,8 +41,14 @@ class AiInferenceService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        // Round 48: start a fresh durable child log BEFORE any step line —
-        // the main process's dump reads this file after a native abort.
+        // Round 48: plant the durable child log HERE (this runs in :ai, before
+        // any SCRFD_* line exists) — NOT from StudioApp: the cross-package
+        // reference to this package's new symbols fails to resolve on the CI
+        // compiler (r48, cause unknown; same-package references resolve fine),
+        // and StudioApp never needs this tree anyway.
+        if (Timber.forest().none { it === AiChildLogTree }) Timber.plant(AiChildLogTree)
+        // Start a fresh durable log BEFORE any step line — the main process's
+        // dump reads this file after a native abort.
         AiChildLogTree.reset(this)
         Timber.i("AI_PROC_START pid=%d", Process.myPid())
         writeReport("started", null)
