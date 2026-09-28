@@ -3094,3 +3094,12 @@ project, negate, validEmapBytes, maeBgr. SwapMathTest: 5 mandated tests
 projection norm 1, emap byte checks) -> 118 total.
 NOT DONE (nothing else per mandate): no CI/deps/device-specific changes,
 FaceAlign untouched, no per-frame path change, no download of emap.
+
+**r58 ledger**: c61f9e9 (RED: smart-cast on TensorProto.raw mutable prop)
+ -> a3e2da2 = HEAD, GREEN run 36475333327 (5m9s), artifact 10993172736
+ (21,442,954 B). Owner device test: both models READY at real byte
+ counts -> face in frame -> Run swap test -> paste the swap block
+ (EMAP_CARVE / ARCFACE_EMBED norm=1.000000 / LATENT_PROJECT norm=1.000000
+ / 2x SWAP_RUN / SWAP_SELFTEST ratio well under 0.5 / PASTE); re-run
+ Dump crops -> 128 crop eyes ~8 px LEFT of centre; Phase-1 unchanged
+ (fps ~58.8, HEALTHY).
