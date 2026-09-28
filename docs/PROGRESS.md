@@ -2535,3 +2535,9 @@ Owner patches 1-5 all in:
 5. Child-log tail: read 40, keep last 2 heartbeats only, then last 24 —
    boot-time SCRFD_/ONNX_ lines survive past ~25 s of child life (they
    were the lines we needed most and they were the ones being flooded out).
+
+### Ledger
+
+| Round | Commit | CI run | Result | Artifact (vcam-studio-debug-apk) |
+|---|---|---|---|---|
+| r51.1 decode fix | 185abb5 | 36362602759 | GREEN 5m49s | id 10945914713 (21,276,092 B) |
