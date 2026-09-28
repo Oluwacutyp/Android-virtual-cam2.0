@@ -3,7 +3,7 @@
 package com.vcamstudio.app.ai;
 
 // The aidl tool in build-tools 34 resolves cross-file interface types ONLY
-// via explicit imports — same-package auto-import is newer-aidl behavior
+// via explicit imports - same-package auto-import is newer-aidl behavior
 // (classic AIDL samples import their callback interface from the same
 // package; r49 CI run 36301385974 failed compileDebugAidl without this).
 import com.vcamstudio.app.ai.IAiDetectorCallback;
