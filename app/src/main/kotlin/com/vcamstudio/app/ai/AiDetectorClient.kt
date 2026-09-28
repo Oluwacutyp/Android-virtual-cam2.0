@@ -172,15 +172,36 @@ class AiDetectorClient(private val context: Context) {
         }
     }
 
+    /** r54-B2: importance tracks the foreground app when the toggle is on. */
+    @Volatile private var boundImportant = false
+
     fun start() {
         val intent = Intent(context, AiInferenceService::class.java)
-        runCatching { context.bindService(intent, conn, Context.BIND_AUTO_CREATE) }
+        boundImportant =
+            com.vcamstudio.app.transport.DebugFlags.isOn(
+                context, com.vcamstudio.app.transport.DebugFlags.KEY_AI_FG,
+            )
+        val flags = if (boundImportant) {
+            Context.BIND_IMPORTANT or Context.BIND_AUTO_CREATE
+        } else {
+            Context.BIND_AUTO_CREATE
+        }
+        runCatching { context.bindService(intent, conn, flags) }
             .onFailure { Timber.e(it, "AI_CLIENT_BIND_FAIL") }
     }
 
+    @Volatile private var lastModelPath: String? = null
+
     fun setModelPath(path: String?) {
         pendingModelPath = path
+        lastModelPath = path
         api?.setModel(path)
+    }
+
+    /** r54-C: force a session rebuild (e.g. the XNNPACK toggle changed). */
+    fun reofferSession() {
+        val p = lastModelPath ?: return
+        api?.setModel(p)
     }
 
     /**

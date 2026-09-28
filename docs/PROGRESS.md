@@ -2707,3 +2707,66 @@ TRANSPORT_SECTION. "Self-test" button next to "Detect".
 | Round | Commit | CI run | Result | Artifact (vcam-studio-debug-apk) |
 |---|---|---|---|---|
 | r53.1 testability | 5603ec5 | 36395529261 | GREEN 7m47s | id 10958615186 (21,370,532 B) |
+
+### Round 54 — ONE consolidated push: A (crash-on-open), B (:ai survival), C (XNNPACK), D (fp16 Conv probe), E (crop button), F (runtime toggles)
+
+A. CRASH-ON-OPEN HARDENING (TransportProvider/TransportManager/CrashLogger):
+A1 onCreate is total — no context!!, runCatching attach, returns false on
+failure (app opens with transport unavailable). A2 attach is capture-only;
+probing/ring/exec moved OFF the startup path — capsLine() (dump path) now
+returns the CACHED result or "not-probed-yet" and NEVER lazily probes; VM
+Detect runs caps refresh on dispatchers.io. A3 verified unchanged: VDM
+probe still SDK_INT>=34 && runCatching; VirtualDeviceTransport still
+Class.forName. A4 CrashLogger gained ensureInstalled (idempotent) and is
+installed FIRST in provider.onCreate — handler + full stack + RingLog
+(400 lines >= the 200 mandate) land in DCIM/VCamStudio/crashes even for
+provider-phase deaths; TRANSPORT_BOOT=provider_attached|provider_failed|
+deferred logged from onCreate. A5 exported-without-permission DECISION
+RECORDED in the provider KDoc (hook consumers share no signature; surface
+is one read-only SharedMemory; grantUriPermissions stays false).
+
+B. :ai SURVIVAL: B1 AiInferenceService starts FOREGROUND at child onCreate
+(channel + Notification.Builder (framework, minSdk 26), API>=34 uses
+startForeground(id, n, FOREGROUND_SERVICE_TYPE_SPECIAL_USE), manifest
+gains the specialUse type + PROPERTY_SPECIAL_USE_FGS_SUBTYPE +
+FOREGROUND_SERVICE + FOREGROUND_SERVICE_SPECIAL_USE permissions). B2
+client binds BIND_IMPORTANT|BIND_AUTO_CREATE (gated by the ai_fg toggle at
+bind time). B3 additive dump fields AI_PROC_FG=<child report fg>,
+AI_PROC_IMPORTANCE=<childImportance>, AI_PROC_IDLE_MS=<ms since last
+submit>; writeReport carries fg=. B4 every FGS call wrapped; failure logs
+AI_PROC_FG_FAIL and degrades to the previous behaviour.
+
+C. XNNPACK (owner mandate, freeze lifted for session options ONLY):
+ScrfdDetector gains useXnnpack param; addXnnpack(emptyMap()) called BEFORE
+addCPU(false) (EP preference = call order; CPU stays fallback; arena
+already off; intra stays 2, inter 1). API verified in ORT v1.17.1 sources
+(public addXnnpack(Map<String,String>)). SCRFD_XNNPACK=on|off logged.
+Toggle read at session BUILD (DebugFlags file, child-readable); flipping
+re-offers setModel (session rebuild, no app rebuild). KEEP/REVERT rule:
+>=20% INFER improvement with no fps/dropped/p95/liveness regression, else
+exact revert + negative result recorded (as r51 B1). C4: ONNX_INPUT_SHAPE
+expected in the child log (r51.1 tail filter keeps boot lines).
+
+D. FP16 PROBE REPLACED: probe_fp16_io/inner DELETED (Identity/Mul can't
+fail like the real model). New probe_fp16_conv.onnx (514 B, debug assets):
+fp32 [1,3,16,16] -> Cast(FLOAT16) -> Conv(weights FLOAT16 [4,3,3,3] +
+bias [4]) -> Relu -> Cast(FLOAT) -> [1,4,14,14]. Generated via
+scripts/make_stubs.py; desktop-ORT validation CAUGHT a real bug before CI
+(weights not reshaped -> flat [108] Conv) — fixed, contract verified:
+exact IO types/shapes, finite non-negative output. ModelProbes logs
+MODEL_PROBE_fp16_conv=ok ops=Cast,Conv,Relu,Cast ran=true; JVM test pins
+the op list + fp16 initializer dtype/dims + IO shapes.
+
+E. CROP BUTTON PLACEMENT: "Dump align crops" moved NEXT TO "Run model
+probes" (it existed but sat in the backup/restore row); path unchanged:
+child writes 112/128 crops to DCIM/VCamStudio/debug_crops/, diff_x read by
+eye (eyes level+centred = template right; ~8 px left = inverted).
+
+F. DEBUG TOGGLES (mandatory): file-backed (filesDir/
+transport_debug_flags.properties, child-readable) — transport_attach,
+transport_probe, ai_fg, xnnpack, feed; ALL DEFAULT ON (absent file = all
+on). UI: five on/off buttons under the Transport v0 block. Side effects:
+xnnpack -> reofferSession (immediate); ai_fg -> next :ai start; attach ->
+next app start (TRANSPORT_BOOT=deferred); probe -> Detect reports the
+toggle; feed -> existing tap. CONFIG_EFFECTIVE=transport_attach=on,...
+logged once at VM init AND included in TRANSPORT_SECTION.

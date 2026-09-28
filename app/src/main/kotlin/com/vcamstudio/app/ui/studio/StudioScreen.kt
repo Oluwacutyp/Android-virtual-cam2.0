@@ -295,6 +295,8 @@ fun StudioScreen(
             onLaunchThrough = vm::launchThroughVirtualDevice,
             onRefreshTransportCaps = vm::refreshTransportCaps,
             onSelfTest = vm::runTransportSelfTest,
+            debugFlags = vm.debugFlags.collectAsStateWithLifecycle().value,
+            onToggleFlag = vm::toggleDebugFlag,
         )
         StudioViewModel.Sheet.NONE -> Unit
     }

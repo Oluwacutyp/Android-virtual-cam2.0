@@ -23,8 +23,7 @@ object DebugModelTools {
     private val MAPPING = listOf(
         "stub_w600k_r50.onnx" to "w600k_r50.onnx",
         "stub_inswapper_128.onnx" to "inswapper_128_fp16.onnx",
-        "probe_fp16_io.onnx" to "probe_fp16_io.onnx",
-        "probe_fp16_inner.onnx" to "probe_fp16_inner.onnx",
+        "probe_fp16_conv.onnx" to "probe_fp16_conv.onnx",
     )
 
     fun installStubs(context: Context): Int {

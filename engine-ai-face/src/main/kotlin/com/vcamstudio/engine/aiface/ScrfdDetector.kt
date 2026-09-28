@@ -17,6 +17,8 @@ import java.nio.FloatBuffer
 class ScrfdDetector(
     modelPath: String,
     useNnapi: Boolean = false,
+    /** r54-C (owner mandate, freeze lifted for THIS change only). */
+    val useXnnpack: Boolean = false,
 ) : AutoCloseable {
 
     companion object {
@@ -65,6 +67,20 @@ class ScrfdDetector(
         // arena lever (verified in ORT v1.17.1 OrtSession.java), and the
         // pattern goes through a session config entry (unknown keys are
         // ignored harmlessly by ORT core; cannot abort).
+        // r54-C: XNNPACK FIRST when enabled (EP preference order = call
+        // order; CPU stays the implicit fallback). Verified against ORT
+        // v1.17.1 sources: SessionOptions.addXnnpack(Map<String,String>)
+        // is public; empty map = provider defaults. intra stays 2, arena
+        // already off (XNNPACK's requirement).
+        if (useXnnpack) {
+            val ok = runCatching { opts.addXnnpack(emptyMap()) }
+            Timber.i(
+                "SCRFD_XNNPACK=%s",
+                if (ok.isSuccess) "on" else "off:" + (ok.exceptionOrNull()?.message ?: "?"),
+            )
+        } else {
+            Timber.i("SCRFD_XNNPACK=off")
+        }
         runCatching { opts.addCPU(false) }
         runCatching { opts.addConfigEntry("session.enable_cpu_mem_arena", "0") }
         runCatching { opts.addConfigEntry("session.enable_mem_pattern", "0") }

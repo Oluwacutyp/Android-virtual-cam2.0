@@ -1169,12 +1169,69 @@ class StudioViewModel @Inject constructor(
     private val transportCapsLine = MutableStateFlow("")
     val transportCapsFlow: StateFlow<String> = transportCapsLine.asStateFlow()
 
+    /** r54-F: the five runtime toggles (default = new behaviour). */
+    val debugFlags = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+
+    fun refreshDebugFlags() {
+        viewModelScope.launch(dispatchers.io) {
+            val m = com.vcamstudio.app.transport.DebugFlags.all(context)
+            debugFlags.value = m
+        }
+    }
+
+    /**
+     * r54-F: flip one toggle at runtime, no rebuild. Side effects: xnnpack
+     * forces a session rebuild; ai_fg applies at the next :ai start.
+     */
+    fun toggleDebugFlag(key: String) {
+        viewModelScope.launch(dispatchers.io) {
+            val now = !com.vcamstudio.app.transport.DebugFlags.isOn(context, key)
+            com.vcamstudio.app.transport.DebugFlags.set(context, key, now)
+            debugFlags.value = com.vcamstudio.app.transport.DebugFlags.all(context)
+            when (key) {
+                com.vcamstudio.app.transport.DebugFlags.KEY_XNNPACK -> {
+                    com.vcamstudio.app.ai.AiProcMonitor.reofferSession()
+                    launch(dispatchers.main) {
+                        toast.value = "XNNPACK $now — session rebuilding"
+                    }
+                }
+                com.vcamstudio.app.transport.DebugFlags.KEY_AI_FG ->
+                    launch(dispatchers.main) {
+                        toast.value = ":ai foreground service $now — applies after :ai restart (force-stop + reopen)"
+                    }
+                com.vcamstudio.app.transport.DebugFlags.KEY_TRANSPORT_ATTACH ->
+                    launch(dispatchers.main) {
+                        toast.value = "Provider attach $now — applies at next app start"
+                    }
+            }
+        }
+    }
+
+    /** r54-A2: probing NEVER runs on the caller (main) thread. */
     fun refreshTransportCaps() {
-        transportCapsLine.value =
-            com.vcamstudio.app.transport.TransportManager.capsLine()
+        viewModelScope.launch(dispatchers.io) {
+            com.vcamstudio.app.transport.TransportManager.refreshCaps()
+            val line = com.vcamstudio.app.transport.TransportManager.capsLine()
+            launch(dispatchers.main) { transportCapsLine.value = line }
+        }
     }
 
     /** r53: one-tap provider round-trip (no root needed) -> toast + dump. */
+    init {
+        // r54-F: the effective combination is logged once at startup so a
+        // dump is self-describing.
+        viewModelScope.launch(dispatchers.io) {
+            val m = com.vcamstudio.app.transport.DebugFlags.all(context)
+            debugFlags.value = m
+            Timber.i(
+                com.vcamstudio.app.transport.DebugFlags.effectiveLine(
+                    context,
+                    com.vcamstudio.app.transport.TransportTap.isEnabled(),
+                ),
+            )
+        }
+    }
+
     fun runTransportSelfTest() {
         viewModelScope.launch(dispatchers.io) {
             val res = com.vcamstudio.app.transport.TransportManager.selfTest(context)

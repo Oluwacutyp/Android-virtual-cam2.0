@@ -82,8 +82,13 @@ object CrashLogger {
         return if (external != null) File(external, "launch.log") else File(context.filesDir, "launch.log")
     }
 
+    /** r54-A4: installable from the provider (process start) AND the app — once. */
+    @Volatile private var installed = false
+
     /** Install FIRST in [android.app.Application.onCreate] — before anything can die. */
     fun install(context: Context) {
+        if (installed) return
+        installed = true
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
@@ -99,6 +104,9 @@ object CrashLogger {
         }
         Log.i("vcam-engine", "CRASH_LOGGER_INSTALL dcim=${dcimCrashDir().absolutePath} fallback=${crashDir(context).absolutePath}")
     }
+
+    /** r54-A4: idempotent variant for the provider-phase install. */
+    fun ensureInstalled(context: Context) = install(context)
 
     /** Boot bookkeeping: sweeps + writetest + launch marker. Never throws. */
     fun onAppStart(context: Context) {

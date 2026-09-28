@@ -11,8 +11,9 @@ only — never packaged in a release APK). Contracts:
                            OUT output    [1,3,128,128]       fp32
                            output = target*0.5 + mean(source)  — depends on
                            BOTH inputs (catches a silently ignored 'source')
-  probe_fp16_io.onnx       fp16 tensors end to end
-  probe_fp16_inner.onnx    fp32 I/O + fp16 weights (the inswapper pattern)
+  probe_fp16_conv.onnx     fp32 I/O -> fp16 CONV (+bias, Relu) -> fp32 out —
+                           r54-D: only a Conv can fail the way the real fp16
+                           inswapper fails; Identity/Mul probes are worthless
 """
 import numpy as np
 import onnx
@@ -72,31 +73,29 @@ def inswapper():
     return model
 
 
-def fp16_io():
-    n = helper.make_node("Identity", ["fp16_in"], ["fp16_out"])
-    graph = helper.make_graph(
-        [n],
-        "probe_fp16_io",
-        [helper.make_tensor_value_info("fp16_in", TensorProto.FLOAT16, [1, 4])],
-        [helper.make_tensor_value_info("fp16_out", TensorProto.FLOAT16, [1, 4])],
-    )
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
-    model.ir_version = 8
-    return model
+def fp16_conv():
+    """r54-D: the ONLY probe that can fail like the real fp16 model fails.
 
-
-def fp16_inner():
-    # fp32 I/O, fp16 weights + internal fp16 compute (the inswapper pattern).
-    W16 = (np.arange(4, dtype=np.float32) + 1.0).astype(np.float16).reshape(1, 4)
+    fp32 in [1,3,16,16] -> Cast to FLOAT16 -> Conv (FLOAT16 weights
+    [4,3,3,3] + bias [4]) -> Relu -> Cast back to FLOAT -> [1,4,14,14].
+    Identity/Mul probes cannot catch an fp16-Conv failure; this one can.
+    """
+    W16 = (((np.arange(4 * 3 * 3 * 3, dtype=np.float32) % 7) - 3) / 7.0).astype(np.float16).reshape(4, 3, 3, 3)
+    B16 = np.array([0.1, -0.1, 0.2, -0.2], dtype=np.float16)
     c1 = helper.make_node("Cast", ["x"], ["x16"], to=TensorProto.FLOAT16)
-    mul = helper.make_node("Mul", ["x16", "W16"], ["y16"])
-    c2 = helper.make_node("Cast", ["y16"], ["y"], to=TensorProto.FLOAT)
+    conv = helper.make_node(
+        "Conv", ["x16", "W16", "B16"], ["conv16"],
+        kernel_shape=[3, 3], pads=[0, 0, 0, 0], strides=[1, 1],
+    )
+    relu = helper.make_node("Relu", ["conv16"], ["act16"])
+    c2 = helper.make_node("Cast", ["act16"], ["y"], to=TensorProto.FLOAT)
     graph = helper.make_graph(
-        [c1, mul, c2],
-        "probe_fp16_inner",
-        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4])],
-        [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4])],
-        [numpy_helper.from_array(W16, name="W16")],
+        [c1, conv, relu, c2],
+        "probe_fp16_conv",
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 16, 16])],
+        [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 14, 14])],
+        [numpy_helper.from_array(W16, name="W16"),
+         numpy_helper.from_array(B16, name="B16")],
     )
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
     model.ir_version = 8
@@ -106,13 +105,11 @@ def fp16_inner():
 if __name__ == "__main__":
     save(w600k(), "stub_w600k_r50.onnx")
     save(inswapper(), "stub_inswapper_128.onnx")
-    save(fp16_io(), "probe_fp16_io.onnx")
-    save(fp16_inner(), "probe_fp16_inner.onnx")
+    save(fp16_conv(), "probe_fp16_conv.onnx")
     print("total:",
           sum(os.path.getsize(f"{OUT}/{f}") for f in os.listdir(OUT)
               if f.endswith(".onnx")) if False else
           __import__("os").path.getsize(f"{OUT}/stub_w600k_r50.onnx")
           + __import__("os").path.getsize(f"{OUT}/stub_inswapper_128.onnx")
-          + __import__("os").path.getsize(f"{OUT}/probe_fp16_io.onnx")
-          + __import__("os").path.getsize(f"{OUT}/probe_fp16_inner.onnx"),
+          + __import__("os").path.getsize(f"{OUT}/probe_fp16_conv.onnx"),
           "bytes")

@@ -34,6 +34,11 @@ import java.io.File
  */
 class AiInferenceService : Service() {
 
+    private companion object {
+        const val FG_CHANNEL = "vcam_ai_fg"
+        const val FG_NOTIF_ID = 42
+    }
+
     private var binder: AiDetectorBinder? = null
 
     /** model_path extra that arrived before the first bind (r47 probe order). */
@@ -71,8 +76,54 @@ class AiInferenceService : Service() {
             Runtime.getRuntime().maxMemory() / 1048576L,
             Runtime.getRuntime().freeMemory() / 1048576L,
         )
+        // r54-B1/B4: foreground service at CHILD START (not lazily) so an
+        // idle bound-but-not-foreground :ai is no longer the reaper's
+        // low-hanging fruit (the dump-1 idle-death signature). Every call
+        // is wrapped: an FGS failure degrades to the previous behaviour and
+        // logs AI_PROC_FG_FAIL — it must never crash the child.
+        @Volatile var fg = false
+        if (!com.vcamstudio.app.transport.DebugFlags.isOn(
+                this, com.vcamstudio.app.transport.DebugFlags.KEY_AI_FG,
+            )
+        ) {
+            Timber.i("AI_PROC_FG=off reason=toggle")
+        } else {
+            runCatching {
+                val pm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    pm.createNotificationChannel(
+                        android.app.NotificationChannel(
+                            FG_CHANNEL, "VCam AI inference",
+                            android.app.NotificationManager.IMPORTANCE_LOW,
+                        ),
+                    )
+                }
+                val n = android.app.Notification.Builder(this, FG_CHANNEL)
+                    .setSmallIcon(applicationInfo.icon)
+                    .setContentTitle("VCam Studio AI")
+                    .setContentText("Keeping the inference process alive")
+                    .setOngoing(true)
+                    .build()
+                if (android.os.Build.VERSION.SDK_INT >= 34) {
+                    startForeground(
+                        FG_NOTIF_ID, n,
+                        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+                    )
+                } else {
+                    startForeground(FG_NOTIF_ID, n)
+                }
+                fg = true
+                Timber.i("AI_PROC_FG=on type=specialUse")
+            }.onFailure { t ->
+                // B4: degrade, never crash.
+                Timber.w("AI_PROC_FG_FAIL=%s", t.message ?: t.javaClass.simpleName)
+            }
+        }
+        fgActive = fg
         writeReport("started", null)
     }
+
+    @Volatile private var fgActive: Boolean = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val modelPath = intent?.getStringExtra("model_path") ?: return START_NOT_STICKY
@@ -87,6 +138,12 @@ class AiInferenceService : Service() {
 
     override fun onDestroy() {
         // Clean teardown only — a native death never reaches this.
+        runCatching {
+            if (fgActive) {
+                stopForeground(true)
+                fgActive = false
+            }
+        }
         binder?.shutdown()
         binder = null
         writeReport("stopped", null)
@@ -108,6 +165,8 @@ class AiInferenceService : Service() {
                         binder?.lastRequestedModelPath() ?: lastStartModelPath ?: "-",
                     ).append('\n')
                     append("ts=").append(System.currentTimeMillis()).append('\n')
+                    // r54-B3: the child's own view of its foreground state.
+                    append("fg=").append(if (fgActive) 1 else 0).append('\n')
                     detail?.let { append("detail=").append(it).append('\n') }
                 },
             )

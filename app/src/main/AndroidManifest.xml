@@ -19,6 +19,11 @@
          network permission — inference itself stays fully on-device. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- r54-B1: :ai foreground service (child-survival remedy). specialUse
+         is the only type that fits a non-media, non-location worker. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
     <uses-feature android:name="android.hardware.camera" android:required="true" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
@@ -63,7 +68,14 @@
         <service
             android:name=".ai.AiInferenceService"
             android:process=":ai"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <!-- r54-B1: the property names the special-use reason (API 34
+                 requires a type; missing type throws at startForeground). -->
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="keeps the out-of-process AI inference child alive for live face detection" />
+        </service>
         <!-- r53: hands the transport ring SharedMemory to consumer processes
              (the Xposed hook inside the target app). Deliberately exported:
              consumers run under other uids; it serves exactly one read-only

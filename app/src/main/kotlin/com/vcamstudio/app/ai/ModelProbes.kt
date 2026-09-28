@@ -9,15 +9,18 @@ import java.io.File
 import java.nio.FloatBuffer
 
 /**
- * r52a (debug, :ai child ONLY): loads the tiny fp16/stub probe models with
- * the CHILD's own ORT and logs MODEL_PROBE_* lines to the durable child
- * log. The main process must never touch ORT (r47 native-abort law), so
- * the IAiDetector.runModelProbes() request is executed here, on the probe
+ * r52a/r54-D (debug, :ai child ONLY): loads the tiny fp16/stub probe models
+ * with the CHILD's own ORT and logs MODEL_PROBE_* lines to the durable child
+ * log. The main process must never touch ORT (r47 native-abort law), so the
+ * IAiDetector.runModelProbes() request is executed here, on the probe
  * thread — the only thread that owns ORT session creation.
  *
- * For 439 bytes of probes this answers on device whether ORT 1.17.1 CPU
- * accepts fp16 tensors end to end and the fp16-weights pattern (what the
- * real 278 MB inswapper_128_fp16 uses) — BEFORE any large download.
+ * r54-D: the fp16 probe is a CONV probe (fp32 in [1,3,16,16] -> Cast ->
+ * Conv(FLOAT16 weights+bias) -> Relu -> Cast -> [1,4,14,14]). Identity/Mul
+ * probes cannot fail the way the real 278 MB fp16 inswapper fails; an
+ * "ok" without a convolution is worthless. The op list is logged WITH the
+ * result (the graph is the committed asset; its op list is pinned by
+ * StubContractsTest).
  */
 object ModelProbes {
 
@@ -27,10 +30,8 @@ object ModelProbes {
 
     fun runAll(modelsDir: File) {
         Timber.i("MODEL_PROBES_BEGIN dir=%s", modelsDir.absolutePath)
-        runCatching { probeFp16Io(File(modelsDir, "probe_fp16_io.onnx")) }
-            .onFailure { fail("fp16_io", it) }
-        runCatching { probeFp16Inner(File(modelsDir, "probe_fp16_inner.onnx")) }
-            .onFailure { fail("fp16_inner", it) }
+        runCatching { probeFp16Conv(File(modelsDir, "probe_fp16_conv.onnx")) }
+            .onFailure { fail("fp16_conv", it) }
         runCatching { probeInswapperStub(File(modelsDir, "stub_inswapper_128.onnx")) }
             .onFailure { fail("inswapper_stub", it) }
         Timber.i("MODEL_PROBES_END")
@@ -41,42 +42,26 @@ object ModelProbes {
         return env.createSession(f.readBytes(), opts)
     }
 
-    private fun probeFp16Io(f: File) {
-        if (!f.exists()) return fail("fp16_io", IllegalStateException("missing file"))
+    /**
+     * r54-D: fp16 CONV probe. ran=true is only logged when the graph
+     * executed AND the output shape is [1,4,14,14].
+     */
+    private fun probeFp16Conv(f: File) {
+        if (!f.exists()) return fail("fp16_conv", IllegalStateException("missing file (install stubs first)"))
         val env = OrtEnvironment.getEnvironment()
         session(env, f).use { s ->
-            // fp16 via the verified ByteBuffer+OnnxJavaType overload (ORT
-            // 1.17.1); raw fp16 bits: 1.0, 0.0, 2.0, -2.0.
-            val bb = java.nio.ByteBuffer.allocateDirect(8)
-                .order(java.nio.ByteOrder.nativeOrder())
-            bb.putShort(0x3C00.toShort())
-            bb.putShort(0)
-            bb.putShort(0x4000.toShort())
-            bb.putShort(0xBC00.toShort())
-            bb.position(0)
-            OnnxTensor.createTensor(env, bb, longArrayOf(1, 4), OnnxJavaType.FLOAT16).use { input ->
-                s.run(mapOf("fp16_in" to input)).use { out ->
+            val input = FloatBuffer.allocate(1 * 3 * 16 * 16)
+            for (i in 0 until 1 * 3 * 16 * 16) input.put(((i % 13) - 6) / 13f)
+            input.position(0)
+            OnnxTensor.createTensor(env, input, longArrayOf(1, 3, 16, 16)).use { x ->
+                s.run(mapOf("x" to x)).use { out ->
                     val t = out[0] as OnnxTensor
-                    check(t.info.type == OnnxJavaType.FLOAT16) { "output not fp16" }
+                    val shape = t.info.shape.joinToString(",", "[", "]")
+                    check(shape == "[1,4,14,14]") { "bad out shape $shape" }
                 }
             }
         }
-        Timber.i("MODEL_PROBE_fp16_io=ok")
-    }
-
-    private fun probeFp16Inner(f: File) {
-        if (!f.exists()) return fail("fp16_inner", IllegalStateException("missing file"))
-        val env = OrtEnvironment.getEnvironment()
-        session(env, f).use { s ->
-            val fb = FloatBuffer.wrap(floatArrayOf(1f, 2f, 3f, 4f))
-            OnnxTensor.createTensor(env, fb, longArrayOf(1, 4)).use { input ->
-                s.run(mapOf("x" to input)).use { out ->
-                    val t = out[0] as OnnxTensor
-                    check(t.floatBuffer.get(3) == 16f) { "wrong result" }
-                }
-            }
-        }
-        Timber.i("MODEL_PROBE_fp16_inner=ok")
+        Timber.i("MODEL_PROBE_fp16_conv=ok ops=Cast,Conv,Relu,Cast ran=true")
     }
 
     /**
@@ -85,7 +70,7 @@ object ModelProbes {
      * exists to catch: a silently ignored 'source').
      */
     private fun probeInswapperStub(f: File) {
-        if (!f.exists()) return fail("inswapper_stub", IllegalStateException("missing file"))
+        if (!f.exists()) return fail("inswapper_stub", IllegalStateException("missing file (install stubs first)"))
         val env = OrtEnvironment.getEnvironment()
         session(env, f).use { s ->
             val target = FloatBuffer.allocate(1 * 3 * 128 * 128)

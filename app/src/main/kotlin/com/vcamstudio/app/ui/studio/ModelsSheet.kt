@@ -66,6 +66,8 @@ fun ModelsSheet(
     onLaunchThrough: () -> Unit = {},
     onRefreshTransportCaps: () -> Unit = {},
     onSelfTest: () -> Unit = {},
+    debugFlags: Map<String, Boolean> = emptyMap(),
+    onToggleFlag: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     // r53: installed apps holding CAMERA permission (runtime choice, no
@@ -231,9 +233,10 @@ fun ModelsSheet(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = onInstallStubs) { Text("Install stub models") }
                             TextButton(onClick = onRunProbes) { Text("Run model probes") }
+                            // r54-E: next to Run model probes (mandate).
+                            TextButton(onClick = onDumpCrops) { Text("Dump align crops") }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(onClick = onDumpCrops) { Text("Dump align crops") }
                             TextButton(onClick = { backupLauncher.launch(null) }) { Text("Back up models") }
                             TextButton(onClick = { restoreLauncher.launch(null) }) { Text("Restore models") }
                         }
@@ -263,6 +266,34 @@ fun ModelsSheet(
                                 Text(if (transportFeedOn) "Stop feed" else "Start feed")
                             }
                             TextButton(onClick = onLaunchThrough) { Text("Launch through VD") }
+                        }
+                        // r54-F: every behaviour independently switchable.
+                        Text(
+                            "Debug toggles (bisect without rebuild)",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            fun flag(key: String, label: String) {
+                                val on = debugFlags[key] ?: true
+                                TextButton(onClick = { onToggleFlag(key) }) {
+                                    Text("$label: ${if (on) "on" else "off"}")
+                                }
+                            }
+                            flag("transport_attach", "Attach")
+                            flag("transport_probe", "Probe")
+                            flag("ai_fg", ":ai FG")
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            fun flag(key: String, label: String) {
+                                val on = debugFlags[key] ?: true
+                                TextButton(onClick = { onToggleFlag(key) }) {
+                                    Text("$label: ${if (on) "on" else "off"}")
+                                }
+                            }
+                            flag("xnnpack", "XNNPACK")
+                            flag("feed", "Feed")
                         }
                     }
                 }

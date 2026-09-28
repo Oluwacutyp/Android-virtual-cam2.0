@@ -238,7 +238,16 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
                 Timber.i("AI_PROBE_BEGIN path=%s", path)
                 // The call that natively aborted in the MAIN process on two
                 // ORT versions — if it aborts again, only this process dies.
-                detector = ScrfdDetector(path)
+                // r54-C/F: the XNNPACK toggle is read at session BUILD —
+                // flipping it triggers a re-offer (session rebuild), no rebuild
+                // of the app needed.
+                detector = ScrfdDetector(
+                    path,
+                    useNnapi = false,
+                    useXnnpack = com.vcamstudio.app.transport.DebugFlags.isOn(
+                        service, com.vcamstudio.app.transport.DebugFlags.KEY_XNNPACK,
+                    ),
+                )
                 sessionActive = true
                 Timber.i("AI_PROC_SESSION_OK model=%s", path)
                 Timber.i("AI_CHILD_STATE state=running")

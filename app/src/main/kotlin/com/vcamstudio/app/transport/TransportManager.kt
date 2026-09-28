@@ -77,6 +77,18 @@ object TransportManager {
     // ---- capability detection --------------------------------------------
 
     fun refreshCaps(): com.vcamstudio.engine.transport.TransportCaps {
+        val ctx0 = appContext
+        if (ctx0 != null && !DebugFlags.isOn(ctx0, DebugFlags.KEY_TRANSPORT_PROBE)) {
+            val off = com.vcamstudio.engine.transport.TransportCaps(
+                api = android.os.Build.VERSION.SDK_INT,
+                root = "none", xposed = 0, vdm = "null", injectPerm = "denied",
+                selinux = "unknown", videoDevs = 0,
+                route = com.vcamstudio.engine.transport.TransportRoute.NONE,
+                reason = "capability probing disabled by toggle",
+            )
+            caps = off
+            return off
+        }
         val ctx = appContext ?: return TransportCapabilities.detect(
             TransportCapabilities.Probes(
                 api = android.os.Build.VERSION.SDK_INT,
@@ -132,7 +144,13 @@ object TransportManager {
         return capsOut
     }
 
-    fun capsLine(): String = caps?.capsLine() ?: refreshCaps().capsLine()
+    /**
+     * r54-A2: the DUMP path never probes (su exec must not run on whatever
+     * thread builds the dump). Returns the last cached result or a
+     * not-probed marker; probing happens on Detect / first feed enable.
+     */
+    fun capsLine(): String =
+        caps?.capsLine() ?: "TRANSPORT_CAPS not-probed-yet (tap Detect)" 
 
     @Volatile var lastSelfTest: String = "not-run"
         private set
@@ -182,6 +200,11 @@ object TransportManager {
             ring?.let { "shared-memory ready" } ?: "not-allocated",
         )
         append("\n").append(lastSelfTest)
+        append("\n").append(
+            appContext?.let {
+                DebugFlags.effectiveLine(it, TransportTap.isEnabled())
+            } ?: "CONFIG_EFFECTIVE context-not-attached",
+        )
     }
 
     // ---- su / exec helpers (probe-only; never device-specific) ------------

@@ -108,6 +108,19 @@ class StubContractsTest {
         return Triple(nodes, inputs, outputs)
     }
 
+    /** Initializers: (name, (dataType, dims)) — graph field 5. */
+    private fun initializers(bytes: ByteArray): List<Pair<String, Pair<Int, List<Long>>>> {
+        val model = parse(bytes)
+        val g = msg(first(model, 7)!!)
+        return g.filter { it.no == 5 }.map { t ->
+            val tf = msg(t)
+            val name = str(first(tf, 8)!!)
+            val dtype = first(tf, 2)?.vlong?.toInt() ?: 1
+            val dims = tf.filter { it.no == 1 }.map { it.vlong }
+            Pair(name, Pair(dtype, dims))
+        }
+    }
+
     private fun stub(name: String): File {
         val rel = File("src/debug/assets/stubs/$name")
         return if (rel.exists()) rel else File("app/src/debug/assets/stubs/$name")
@@ -156,18 +169,22 @@ class StubContractsTest {
     }
 
     @Test
-    fun `fp16 io probe is fp16 end to end`() {
-        val (_, inputs, outputs) = graph(stub("probe_fp16_io.onnx").readBytes())
-        assertEquals(10, inputs[0].second.elemType) // FLOAT16
-        assertEquals(10, outputs[0].second.elemType)
-    }
-
-    @Test
-    fun `fp16 inner probe is fp32 io with fp16 inside`() {
-        val (nodes, inputs, outputs) = graph(stub("probe_fp16_inner.onnx").readBytes())
+    fun `fp16 conv probe - ops contain Conv, fp16 weights, exact shapes`() {
+        // r54-D: an fp16 probe WITHOUT a Conv cannot fail like the real
+        // model; the committed probe must be Cast,Conv,Relu,Cast with fp16
+        // [4,3,3,3] weights and fp32 [1,3,16,16] -> [1,4,14,14] I/O.
+        val (nodes, inputs, outputs) = graph(stub("probe_fp16_conv.onnx").readBytes())
+        assertEquals(listOf("Cast", "Conv", "Relu", "Cast"), nodes.map { it.opType })
         assertEquals(1, inputs[0].second.elemType) // FLOAT in
+        assertEquals(listOf(1L, 3L, 16L, 16L), inputs[0].second.dims.map { it.first })
         assertEquals(1, outputs[0].second.elemType) // FLOAT out
-        assertTrue(nodes.count { it.opType == "Cast" } >= 2)
-        assertNotNull(nodes.firstOrNull { it.opType == "Mul" })
+        assertEquals(listOf(1L, 4L, 14L, 14L), outputs[0].second.dims.map { it.first })
+        val conv = nodes.first { it.opType == "Conv" }
+        assertTrue("W16" in conv.inputs && "B16" in conv.inputs)
+        val inits = initializers(stub("probe_fp16_conv.onnx").readBytes())
+        val w = inits.first { it.first == "W16" }
+        assertEquals(10, w.second.first) // FLOAT16 weights
+        assertEquals(listOf(4L, 3L, 3L, 3L), w.second.second)
+        assertEquals(10, inits.first { it.first == "B16" }.second.first)
     }
 }

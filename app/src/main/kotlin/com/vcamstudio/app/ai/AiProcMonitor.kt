@@ -97,6 +97,12 @@ object AiProcMonitor {
         append("\nAI_SYS_THRESHOLD_MB=").append(sysThresholdMb)
         append("\nAI_SYS_DEATH_LOW=").append(sysDeathLow)
         append("\nAI_CHILD_IMPORTANCE=").append(childImportance)
+        // r54-B3 additive fields.
+        append("\nAI_PROC_FG=").append(childFg)
+        append("\nAI_PROC_IMPORTANCE=").append(childImportance)
+        append("\nAI_PROC_IDLE_MS=").append(
+            if (lastSubmitAtMs < 0) -1 else android.os.SystemClock.elapsedRealtime() - lastSubmitAtMs,
+        )
         // Round 48: the :ai child's durable step lines (SCRFD_MODEL_FILE,
         // SCRFD_EP, ONNX_SESSION_OK / SCRFD_CREATE_FAIL ...) — written to
         // disk BEFORE ORT is touched, so they survive the child's native
@@ -259,6 +265,16 @@ object AiProcMonitor {
 
     fun noteFrameSubmitted() {
         framesSubmitted.incrementAndGet()
+        lastSubmitAtMs = android.os.SystemClock.elapsedRealtime()
+    }
+
+    /** r54-B3: for AI_PROC_IDLE_MS (ms since the last submitted frame). */
+    @Volatile private var lastSubmitAtMs: Long = -1L
+    @Volatile private var childFg: Int = 0
+
+    /** r54-C: force a child session rebuild (debug toggle side effect). */
+    fun reofferSession() {
+        runCatching { client?.reofferSession() }
     }
 
     fun noteFrameDropped() {
@@ -433,6 +449,7 @@ object AiProcMonitor {
         var rModel: String? = null
         var rTs = 0L
         var rDetail: String? = null
+        var rFg = 0
         f.readLines().forEach { line ->
             val i = line.indexOf('=')
             if (i <= 0) return@forEach
@@ -444,11 +461,13 @@ object AiProcMonitor {
                 "model" -> rModel = v.takeIf { it != "-" }
                 "ts" -> rTs = v.toLongOrNull() ?: 0L
                 "detail" -> rDetail = v
+                "fg" -> rFg = v.toIntOrNull() ?: 0
             }
         }
         if (rPid <= 0 || rState.isEmpty()) return null
         // Stale report from an earlier probe -> ignore.
         if (rTs < probeStartMs - 1_500) return null
+        childFg = rFg
         Report(rPid, rState, rModel, rTs, rDetail)
     }.getOrNull()
 }
