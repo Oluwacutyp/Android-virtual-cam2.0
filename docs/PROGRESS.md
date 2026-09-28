@@ -3018,3 +3018,10 @@ deleted on EVERY failure path; export dedupes same-named documents
 (export + import + hash helper). NIT: DebugFlags store header now says
 absent=OFF (comment only, behaviour unchanged). No CI/dependency/
 device-specific changes.
+
+**r56 ledger**: d367e67 = HEAD, GREEN run 36452772735 (7m45s), artifact
+ 10984531770 (21,423,555 B) — owner device test 1: xnnpack flag must stay OFF, ONNX_SESSION_OK
+ + SCRFD_STATE=RUNNING must appear, then SCRFD_FILL_NULL reason= (r55
+ instrumentation finally gets its frame); test 2: backup 16.9 MB SCRFD ->
+ MODEL_EXPORT_OK count=1 + visible file; clear data -> restore ->
+ MODEL_IMPORT_OK count=1 (+VERIFY_OK) + SCRFD READY.
