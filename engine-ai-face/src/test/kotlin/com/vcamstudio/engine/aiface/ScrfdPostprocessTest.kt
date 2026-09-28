@@ -140,7 +140,7 @@ class ScrfdPostprocessTest {
         assertEquals(12800, g.scores[0].size)
         assertEquals(800, g.scores[2].size)
         assertEquals(12800 * 4, g.boxes[0].size)
-        assertEquals(25600, g.kps[0].size)
+        assertEquals(128000, g.kps[0].size)
     }
 
     @Test
@@ -152,7 +152,7 @@ class ScrfdPostprocessTest {
         val grid = 40
         val scores = FloatArray(n)
         val boxes = FloatArray(n * 4)
-        val kps = FloatArray(n * 2)
+        val kps = FloatArray(n * 10)
         val i = (25 * grid + 10) * 2
         scores[i] = 0.8f
         val k = i * 10

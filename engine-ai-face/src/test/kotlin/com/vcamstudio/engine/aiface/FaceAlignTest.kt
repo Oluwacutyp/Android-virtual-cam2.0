@@ -74,14 +74,15 @@ class FaceAlignTest {
         }
         val m = FaceAlign.estimate(src, 112)!!
         val warped = m.map(src)
-        for (i in 0 until 10) {
+        for (i in 0 until 5) {
             assertEquals(tmpl[2 * i], warped[2 * i], 0.5f)
             assertEquals(tmpl[2 * i + 1], warped[2 * i + 1], 0.5f)
         }
-        // The recovered linear part is the exact inverse similarity.
+        // The recovered linear part is the exact inverse similarity
+        // (theta = -17deg: cos is even, sin is not).
         val invScale = 1f / 1.8f
         assertEquals(invScale * c, m.m[0], 1e-3f)
-        assertEquals(invScale * s, m.m[3], 1e-3f)
+        assertEquals(invScale * s, -m.m[3], 1e-3f)
     }
 
     @Test
@@ -98,7 +99,7 @@ class FaceAlignTest {
         val m = FaceAlign.estimate(src, 128)!!
         val inv = m.inverse()!!
         val back = inv.map(tmpl)
-        for (i in 0 until 10) {
+        for (i in 0 until 5) {
             assertEquals(src[2 * i], back[2 * i], 0.01f)
             assertEquals(src[2 * i + 1], back[2 * i + 1], 0.01f)
         }

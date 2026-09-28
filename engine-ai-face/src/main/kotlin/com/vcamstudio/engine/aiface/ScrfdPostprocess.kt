@@ -102,10 +102,10 @@ object ScrfdPostprocess {
             val n = minOf(sc.size, bx.size / 4)
             val (stride, anchors) = resolveLayout(n, inputSize) ?: continue
             val grid = inputSize / stride
-            // r52a: the kps tensor for this pair carries n*2 floats (5
-            // landmarks x 2). Matched by ENTRY COUNT — the r51.1 lesson:
-            // never by output position.
-            val kp = keypoints.firstOrNull { it.size == n * 2 }
+            // r52a: the kps tensor for this pair carries n*10 floats (5
+            // landmarks x 2 per anchor). Matched by ENTRY COUNT — the
+            // r51.1 lesson: never by output position.
+            val kp = keypoints.firstOrNull { it.size == n * 10 }
             var i = 0
             while (i < n) {
                 val score = sc[i]
