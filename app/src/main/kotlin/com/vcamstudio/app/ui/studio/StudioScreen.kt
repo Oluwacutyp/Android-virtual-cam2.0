@@ -294,6 +294,7 @@ fun StudioScreen(
             onSetTransportTarget = vm::setTransportTarget,
             onLaunchThrough = vm::launchThroughVirtualDevice,
             onRefreshTransportCaps = vm::refreshTransportCaps,
+            onSelfTest = vm::runTransportSelfTest,
         )
         StudioViewModel.Sheet.NONE -> Unit
     }

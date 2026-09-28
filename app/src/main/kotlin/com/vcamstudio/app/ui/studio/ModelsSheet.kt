@@ -65,6 +65,7 @@ fun ModelsSheet(
     onSetTransportTarget: (String?) -> Unit = {},
     onLaunchThrough: () -> Unit = {},
     onRefreshTransportCaps: () -> Unit = {},
+    onSelfTest: () -> Unit = {},
 ) {
     val context = LocalContext.current
     // r53: installed apps holding CAMERA permission (runtime choice, no
@@ -252,6 +253,7 @@ fun ModelsSheet(
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = onRefreshTransportCaps) { Text("Detect") }
+                            TextButton(onClick = onSelfTest) { Text("Self-test") }
                             TextButton(onClick = { pickingTarget = true }) {
                                 Text("Target: ${transportTarget ?: "pick"}")
                             }

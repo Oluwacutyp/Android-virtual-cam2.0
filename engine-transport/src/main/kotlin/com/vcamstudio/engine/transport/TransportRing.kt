@@ -63,7 +63,9 @@ class TransportRing private constructor(private val shared: SharedMemory) {
 
     /** Producer: allocate. [width]/[height] may change per frame; capacity is fixed. */
     companion object {
-        const val DEFAULT_PAYLOAD_BYTES = 96 * 96 * 96 * 3 / 2 // ~1.32 MB default guard
+        // Fits up to 1920x1080 I420. (720x1280 portrait = 1,382,400 B — the
+        // old ~1.32 MB guard silently rejected it.)
+        const val DEFAULT_PAYLOAD_BYTES = 1920 * 1080 * 3 / 2
 
         fun allocate(payloadBytes: Int = DEFAULT_PAYLOAD_BYTES): TransportRing {
             val sm = SharedMemory.create("vcam-transport", HeaderCodec.HEADER_BYTES + payloadBytes)

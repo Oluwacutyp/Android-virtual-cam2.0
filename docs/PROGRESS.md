@@ -2687,3 +2687,17 @@ test used api=34 so the api<34 gate never fired (test now api=33).
 New CI-proven facts: classic aidl array params need `in` (r52a);
 AndroidAppHelper absent from xposed api:82 compile jar; AssociationInfo
 public surface is unreliable at compileSdk 34 (reflection).
+
+### Round 53.1 — testability fixes (owner: "implement what needs to be implemented so I can test at once")
+
+(1) RING CAPACITY FIX: DEFAULT_PAYLOAD_BYTES 1,327,104 -> 1920*1080*3/2
+(3,110,400) — the old guard silently REJECTED 720x1280 analysis frames
+(1,382,400 B), so "Start feed" would have published nothing.
+(2) FEED NO LONGER NEEDS THE AI TOGGLE: syncDetection attaches a
+transport-only analyzer (no-op AI sink -> AI counters stay clean) when the
+feed is on but the AI chain is off; transportDev collector re-runs the gate.
+(3) ONE-TAP SELF-TEST: TransportManager.selfTest exercises the EXACT hook
+path in-process (ContentResolver.call -> SharedMemory parcelable ->
+read-only map -> seqlock header validation) — works on ANY device, no
+root/Xposed; result in a toast AND TRANSPORT_SELFTEST=ok|fail:<detail> in
+TRANSPORT_SECTION. "Self-test" button next to "Detect".

@@ -134,6 +134,43 @@ object TransportManager {
 
     fun capsLine(): String = caps?.capsLine() ?: refreshCaps().capsLine()
 
+    @Volatile var lastSelfTest: String = "not-run"
+        private set
+
+    /**
+     * r53: one-tap in-app round-trip — the SAME call path the hook uses
+     * (ContentResolver.call -> SharedMemory parcelable -> read-only map ->
+     * seqlock-validated header read), exercised from our own process. Proves
+     * the whole chain on ANY device, no root and no Xposed needed.
+     */
+    fun selfTest(ctx: Context): String {
+        val res = runCatching {
+            ensureRing()
+            val b = ctx.contentResolver.call(
+                android.net.Uri.parse("content://com.vcamstudio.app.transport"),
+                "getRing", null, null,
+            ) ?: error("provider returned null (authority mismatch?)")
+            @Suppress("DEPRECATION")
+            val sm: android.os.SharedMemory = b.getParcelable("ring")
+                ?: error("no ring parcelable")
+            val map = sm.mapReadOnly().order(java.nio.ByteOrder.nativeOrder())
+            val magic = map.getInt(0)
+            check(magic == 0x56435430) { "bad magic 0x%08x".format(magic) }
+            val seq = map.getInt(36)
+            val w = map.getInt(12)
+            val h = map.getInt(16)
+            check(seq % 2 == 0) { "seq odd (producer mid-write)" }
+            check(w in 1..4096 && h in 1..4096) { "bad dims ${w}x${h}" }
+            "ok ${w}x${h} seq=$seq frames=$framesPublished"
+        }.fold(
+            onSuccess = { "TRANSPORT_SELFTEST=ok:$it" },
+            onFailure = { "TRANSPORT_SELFTEST=fail:${it.message}" },
+        )
+        lastSelfTest = res
+        Timber.i("%s", res)
+        return res
+    }
+
     fun route(): TransportRoute = caps?.route ?: TransportRoute.NONE
 
     fun dumpSection(): String = buildString {
@@ -144,6 +181,7 @@ object TransportManager {
         append("\nTRANSPORT_RING=").append(
             ring?.let { "shared-memory ready" } ?: "not-allocated",
         )
+        append("\n").append(lastSelfTest)
     }
 
     // ---- su / exec helpers (probe-only; never device-specific) ------------

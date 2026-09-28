@@ -230,9 +230,22 @@ class StudioViewModel @Inject constructor(
                 com.vcamstudio.app.ai.AiProcMonitor.isBound() &&
                 modelManager.isReady("scrfd_10g_bnkps") &&
                 _hasCameraLayer.value
-            val analyzer = if (chainUp) com.vcamstudio.app.ai.AiProcMonitor.analyzer() else null
+            // r53: transport needs the analysis stream too but must NOT
+            // force the AI chain on. AI on -> AI analyzer (AI + tap);
+            // transport only -> a no-op-sink analyzer (transport tap only),
+            // so the AI counters stay clean.
+            val analyzer = when {
+                chainUp -> com.vcamstudio.app.ai.AiProcMonitor.analyzer()
+                transportDev.value -> transportOnlyAnalyzer
+                else -> null
+            }
             cameraSource.setAnalysisAnalyzer(analyzer)
         }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=syncDetection") }
+    }
+
+    /** r53: analyzer that feeds ONLY the transport ring (no AI submits). */
+    private val transportOnlyAnalyzer by lazy {
+        com.vcamstudio.app.ai.AiFrameAnalyzer { _, _, _, _, _, _ -> }
     }
 
     private val videoControllers = LinkedHashMap<String, VideoLayerController>()
@@ -452,6 +465,11 @@ class StudioViewModel @Inject constructor(
                     syncDetection()
                 }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=bound") }
             }
+        }
+        viewModelScope.launch {
+            // r53: feed toggle re-runs the analyzer gate (transport-only mode
+            // needs no AI chain).
+            transportDev.collect { syncDetection() }
         }
         viewModelScope.launch {
             // Round 49: results from the :ai child -> the EXISTING stats
@@ -1154,6 +1172,15 @@ class StudioViewModel @Inject constructor(
     fun refreshTransportCaps() {
         transportCapsLine.value =
             com.vcamstudio.app.transport.TransportManager.capsLine()
+    }
+
+    /** r53: one-tap provider round-trip (no root needed) -> toast + dump. */
+    fun runTransportSelfTest() {
+        viewModelScope.launch(dispatchers.io) {
+            val res = com.vcamstudio.app.transport.TransportManager.selfTest(context)
+            refreshTransportCaps()
+            toast.value = res
+        }
     }
 
     fun setTransportFeed(on: Boolean) {
