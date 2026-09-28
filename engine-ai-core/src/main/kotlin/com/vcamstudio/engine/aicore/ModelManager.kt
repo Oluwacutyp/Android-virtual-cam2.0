@@ -126,15 +126,57 @@ class ModelManager(private val context: Context) {
     fun exportModels(treeUri: Uri): Int {
         val resolver = context.contentResolver
         var n = 0
+        // r56-P2: createDocument expects a parent DOCUMENT uri — passing
+        // the raw TREE uri returned null on the system provider, so every
+        // model was silently skipped (MODEL_EXPORT_OK count=0).
+        val root = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
+        if (root == null) {
+            Timber.e("MODEL_EXPORT_FAIL reason=tree_document_id")
+            return 0
+        }
+        val parent = DocumentsContract.buildDocumentUriUsingTree(treeUri, root)
         for (m in catalog()) {
             val f = fileOf(m)
             if (!f.exists()) continue
-            val child = runCatching {
-                DocumentsContract.createDocument(resolver, treeUri, "application/octet-stream", m.fileName)
-            }.getOrNull() ?: continue
+            // r56-P3: dedupe — delete an existing same-named document
+            // first, else repeat backups yield "w600k_r50 (1).onnx" and a
+            // display-name-keyed import can restore a stale copy.
+            runCatching {
+                resolver.query(
+                    DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, root),
+                    arrayOf(
+                        DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                        DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    ),
+                    null, null, null,
+                )?.use { c ->
+                    while (c.moveToNext()) {
+                        if (c.getString(1) == m.fileName) {
+                            DocumentsContract.deleteDocument(
+                                resolver,
+                                DocumentsContract.buildDocumentUriUsingTree(treeUri, c.getString(0)),
+                            )
+                        }
+                    }
+                }
+            }
+            var threw = false
+            val child: Uri? = try {
+                DocumentsContract.createDocument(resolver, parent, "application/octet-stream", m.fileName)
+            } catch (t: Throwable) {
+                threw = true
+                Timber.i("MODEL_EXPORT_SKIP name=%s reason=create_document_throw err=%s", m.fileName, t.message)
+                null
+            }
+            if (child == null) {
+                if (!threw) {
+                    Timber.i("MODEL_EXPORT_SKIP name=%s reason=create_document_null", m.fileName)
+                }
+                continue
+            }
             runCatching {
                 resolver.openInputStream(Uri.fromFile(f))?.use { input ->
-                    resolver.openOutputStream(child)?.use { output -> input.copyTo(output) }
+                    resolver.openOutputStream(child)?.use { output -> input.copyTo(output, 1024 * 1024) }
                 } ?: error("no input stream for ${f.name}")
             }.onFailure {
                 Timber.e(it, "MODEL_EXPORT_FAIL name=%s", m.fileName)
@@ -163,26 +205,56 @@ class ModelManager(private val context: Context) {
         var n = 0
         for (m in catalog()) {
             val src = names[m.fileName] ?: continue
+            val tmp = File(modelsDir, "${m.fileName}.import")
             runCatching {
                 resolver.openInputStream(src)?.use { input ->
-                    val tmp = File(modelsDir, "${m.fileName}.import")
-                    tmp.outputStream().use { output -> input.copyTo(output) }
-                    check(tmp.length() == m.sizeBytes || m.sizeBytes <= 0L) {
-                        "size mismatch ${tmp.length()} != ${m.sizeBytes}"
-                    }
-                    if (!tmp.renameTo(fileOf(m))) {
-                        fileOf(m).delete()
-                        check(tmp.renameTo(fileOf(m))) { "rename failed" }
-                    }
+                    tmp.outputStream().use { output -> input.copyTo(output, 1024 * 1024) }
                 } ?: error("no stream for ${m.fileName}")
-            }.onFailure {
-                Timber.e(it, "MODEL_IMPORT_FAIL name=%s", m.fileName)
+                check(tmp.length() == m.sizeBytes || m.sizeBytes <= 0L) {
+                    "size mismatch ${tmp.length()} != ${m.sizeBytes}"
+                }
+                // r56-P3: hash verify like the download path — SIZE alone
+                // once let a corrupt restore look READY.
+                val expected = m.sha256Hex?.lowercase()
+                if (expected != null) {
+                    val got = sha256Hex(tmp)
+                    if (got == null || got != expected) {
+                        Timber.i(
+                            "MODEL_IMPORT_HASH_MISMATCH name=%s expected=%s got=%s",
+                            m.fileName, expected, got ?: "-",
+                        )
+                        error("sha256 mismatch")
+                    }
+                    Timber.i("MODEL_IMPORT_VERIFY_OK name=%s sha256=%s", m.fileName, got)
+                }
+                if (!tmp.renameTo(fileOf(m))) {
+                    fileOf(m).delete()
+                    check(tmp.renameTo(fileOf(m))) { "rename failed" }
+                }
+            }.onFailure { t ->
+                // r56-P3: the .import temp NEVER survives a failed check.
+                runCatching { tmp.delete() }
+                Timber.e(t, "MODEL_IMPORT_FAIL name=%s", m.fileName)
             }.onSuccess { n++ }
         }
         Timber.i("MODEL_IMPORT_OK count=%d", n)
         scanAdoptions()
         return n
     }
+
+    /** r56-P3: streaming SHA-256 (1 MiB reads) — same digest as the download path. */
+    private fun sha256Hex(f: File): String? = runCatching {
+        val d = MessageDigest.getInstance("SHA-256")
+        f.inputStream().use { input ->
+            val buf = ByteArray(1024 * 1024)
+            while (true) {
+                val r = input.read(buf)
+                if (r <= 0) break
+                d.update(buf, 0, r)
+            }
+        }
+        d.digest().joinToString("") { "%02x".format(it) }
+    }.getOrNull()
 
     fun fileOf(model: CatalogModel): File = File(modelsDir, model.fileName)
 

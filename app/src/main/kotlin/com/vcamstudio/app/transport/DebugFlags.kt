@@ -59,7 +59,7 @@ object DebugFlags {
             val f = file(ctx)
             if (f.exists()) f.inputStream().use { p.load(it) }
             p.setProperty(key, if (on) "1" else "0")
-            f.outputStream().use { p.store(it, "r54-F debug toggles (1=on 0=off; absent=on)") }
+            f.outputStream().use { p.store(it, "r54-F/r54.5 debug toggles (1=on 0=off; absent=OFF)") }
         }
     }
 

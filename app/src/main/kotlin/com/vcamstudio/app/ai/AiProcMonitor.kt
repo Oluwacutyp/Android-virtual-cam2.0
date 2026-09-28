@@ -74,7 +74,17 @@ object AiProcMonitor {
         append("\nAI_PROC_PID=").append(if (pid > 0) pid.toString() else "-")
         append("\nAI_PROC_LAST=").append(lastEventMs)
         append("\nAI_PROC_MODEL=").append(modelPath ?: "-")
-        detail?.let { append("\nAI_PROC_DETAIL=").append(it) }
+        detail?.let {
+            append("\nAI_PROC_DETAIL=").append(it)
+            // r56-P1b: name the likely cause on the abort signature — the
+            // bare "binder died (cause unnamed)" gave no hint the toggle
+            // did it.
+            if (xnnpackAbort) {
+                append(" [XNNPACK_ABORT=1 phase=").append(xnnpackAbortPhase ?: "SESSION_CREATE")
+                    .append(" xnnpack flag cleared]")
+            }
+        }
+        if (xnnpackAbort) append("\nXNNPACK_ABORT=1 phase=").append(xnnpackAbortPhase ?: "SESSION_CREATE")
         // Round 49: IPC health — bind state, frame/results counters, last
         // measured latencies and ring geometry (mandate 2.9).
         append("\nAI_IPC_BIND=").append(if (ipcBound.get()) "bound" else "unbound")
@@ -346,8 +356,40 @@ object AiProcMonitor {
     }
 
     /** Instant death signal (linkToDeath); the r47 /proc poll stays as backstop. */
+    /** r56-P1b: set when a death matched the XNNPACK abort signature. */
+    @Volatile
+    var xnnpackAbort = false
+        private set
+    @Volatile
+    var xnnpackAbortPhase: String? = null
+        private set
+
     fun noteChildDeath(reason: String) {
         Log.w("vcam-ai", "AI_PROC_CHILD_DEATH $reason")
+        // r56-P1a: self-heal the XNNPACK native abort. A native abort
+        // cannot be caught — the only lever is the NEXT launch. Death with
+        // last breadcrumb SESSION_CREATE while xnnpack=on is the abort
+        // signature (r56 device evidence: died between SCRFD_THREADS and
+        // ONNX_SESSION_OK), so clear the flag; the next start is cpu-only.
+        runCatching {
+            val ctx = appContext ?: return@runCatching
+            val phase = com.vcamstudio.app.crash.PhaseMark.readAi(ctx) ?: ""
+            if (phase.contains("SESSION_CREATE") &&
+                com.vcamstudio.app.transport.DebugFlags.isOn(
+                    ctx, com.vcamstudio.app.transport.DebugFlags.KEY_XNNPACK,
+                )
+            ) {
+                com.vcamstudio.app.transport.DebugFlags.set(
+                    ctx, com.vcamstudio.app.transport.DebugFlags.KEY_XNNPACK, false,
+                )
+                xnnpackAbort = true
+                xnnpackAbortPhase = "SESSION_CREATE"
+                Log.w(
+                    "vcam-ai",
+                    "XNNPACK_ABORT=1 phase=SESSION_CREATE xnnpack=cleared (self-heal next launch)",
+                )
+            }
+        }
         // r50-A0.4: drop the badge too — only onState changed it before, so
         // SCRFD_STATE read RUNNING after a dead child (A0.3 dump).
         _childPhase.value = 0

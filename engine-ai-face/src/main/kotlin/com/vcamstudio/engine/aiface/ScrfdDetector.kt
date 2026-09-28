@@ -90,6 +90,9 @@ class ScrfdDetector(
             INTRA_OP_THREADS, INTER_OP_THREADS,
         )
 
+        // r56-P1c: the last line before a native abort names the EP being
+        // created — SCRFD_CREATE_BEGIN then silence == the abort site.
+        Timber.i("SCRFD_CREATE_BEGIN ep=%s", if (useXnnpack) "xnnpack" else "cpu")
         // r48 (owner CHANGE 3): defense wrap. A native abort escapes Kotlin
         // try/catch — but if this ever becomes catchable, we want the log.
         session = try {

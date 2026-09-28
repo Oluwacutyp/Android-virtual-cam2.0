@@ -2993,3 +2993,28 @@ safe). NO model/ring/transport/stub changes (owner: nothing else).
  SCRFD_FILL_FAIL count=, SCRFD_STATE=DEGRADED reason=fill_null after 10,
  SCRFD_SUSPECT_NOOP after 20 zero-infer frames, and CONFIG_EFFECTIVE ...
  fill_null=<reason>.
+
+### Round 56 — XNNPACK abort guard (verdict: ABORTS on SM-S908N/Adreno 730 — item C CLOSED as negative result) + silent model-export fix
+
+PART 1 (device evidence: died at env.createSession between SCRFD_THREADS
+and ONNX_SESSION_OK, xnnpack=on, 3179 MB free = not memory): (a) self-heal
+— noteChildDeath reads last_phase_ai; if it names SESSION_CREATE while
+xnnpack=on -> DebugFlags.set(KEY_XNNPACK,false) + XNNPACK_ABORT=1 log +
+xnnpackAbort/Phase fields; a native abort cannot be caught, next launch is
+cpu-only, death loop broken. (b) dumpSection renders [XNNPACK_ABORT=1
+phase=... xnnpack flag cleared] appended to AI_PROC_DETAIL + a
+XNNPACK_ABORT=1 phase= line in the section. (c) SCRFD_CREATE_BEGIN
+ep=xnnpack|cpu logged immediately BEFORE createSession — the boundary is
+unambiguous (SCRFD_CREATE_BEGIN then silence == abort site). (d) toggle
+kept, default OFF (r54.5). PART 2: exportModels passed the raw TREE uri
+as createDocument parent -> null on the system provider -> silent skip ->
+count=0. Now: getTreeDocumentId -> buildDocumentUriUsingTree(parent);
+createDocument null/throw logs MODEL_EXPORT_SKIP name= reason=
+create_document_null|create_document_throw. PART 3: importModels now
+streaming-SHA-256 verifies against CatalogModel.sha256Hex
+(MODEL_IMPORT_VERIFY_OK / MODEL_IMPORT_HASH_MISMATCH); .import temp
+deleted on EVERY failure path; export dedupes same-named documents
+(no "(1)" copies -> no stale last-wins restore); copyTo 1 MiB buffers
+(export + import + hash helper). NIT: DebugFlags store header now says
+absent=OFF (comment only, behaviour unchanged). No CI/dependency/
+device-specific changes.
