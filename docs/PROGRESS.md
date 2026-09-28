@@ -2911,3 +2911,11 @@ split is the deliberate improvement, contents tagged proc=:ai). D5
 ALREADY present (Log.e("VCAM-CRASH", header+stack) both processes).
 NO feature code touched this round: CrashLogger sink/marker, new activity,
 MainActivity 8 lines, manifest 1 entry — nothing else.
+
+**r54.4 ledger**: d926c91 (RED: layout.Card import + startActivity in a
+ composable without a receiver) → bafcddd (RED: the LocalContext val was
+ LOST from the working tree between edits — same gremlin class as the two
+ .git clobbers) → 315b29f = HEAD, GREEN run 36431070195 (6m19s), artifact
+ 10973213280 (21,419,118 B). Owner protocol: install+open (opens), grant
+ (may crash — expected), relaunch -> crash screen, COPY -> paste, else
+ Files -> Downloads -> VCamStudio -> crash txt.
