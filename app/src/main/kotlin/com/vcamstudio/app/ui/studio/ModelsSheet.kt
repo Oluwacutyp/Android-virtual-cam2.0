@@ -66,6 +66,7 @@ fun ModelsSheet(
     onLaunchThrough: () -> Unit = {},
     onRefreshTransportCaps: () -> Unit = {},
 ) {
+    val context = LocalContext.current
     // r53: installed apps holding CAMERA permission (runtime choice, no
     // hardcoded list). Excludes this app.
     val cameraApps = remember {
@@ -82,7 +83,6 @@ fun ModelsSheet(
     }
     var pickingTarget by remember { mutableStateOf(false) }
     var licenseFor by remember { mutableStateOf<ModelManager.ModelState?>(null) }
-    val context = LocalContext.current
 
     // r52a: SAF launchers for model backup / restore (owner has no PC).
     val backupLauncher = rememberLauncherForActivityResult(

@@ -80,8 +80,8 @@ object VirtualDeviceTransport {
             val createVirtualDevice = vdmClass.methods.firstOrNull { it.name == "createVirtualDevice" }
                 ?: error("createVirtualDevice method absent")
             val cdm = ctx.getSystemService("companiondevice") as android.companion.CompanionDeviceManager
-            val assocId = (cdm.associations.firstOrNull()?.id
-                ?: error("no association"))
+            val firstAssoc = cdm.associations.firstOrNull() ?: error("no association")
+            val assocId = firstAssoc.javaClass.getMethod("getId").invoke(firstAssoc) as Int
             val paramsClass = Class.forName("android.companion.virtual.VirtualDeviceParams")
             val policyField = paramsClass.fields.firstOrNull { it.name == "POLICY_TYPE_CAMERA" }
                 ?: error("POLICY_TYPE_CAMERA absent")

@@ -86,7 +86,7 @@ object TransportManager {
         ).also { caps = it }
         val pm = ctx.packageManager
         val suOk = execSu("id")
-        val magisk = suOk && execSu("ls /data/adb/magisk") == 0
+        val magisk = suOk && execSu("ls /data/adb/magisk")
         val selinux = if (suOk) {
             execOut("getenforce")?.let { out ->
                 when (out.trim().uppercase()) {
