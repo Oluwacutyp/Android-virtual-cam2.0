@@ -9,5 +9,5 @@ oneway interface IAiDetectorCallback {
     // r52a ADDITIVE: 5 SCRFD keypoints in upright PIXEL coordinates (order
     // left eye, right eye, nose, left mouth corner, right mouth corner).
     // The boxes ring stays 8x64 - landmarks ride the binder only.
-    void onKps(long frameId, float[] kps, int uprightW, int uprightH);
+    void onKps(long frameId, in float[] kps, int uprightW, int uprightH);
 }
