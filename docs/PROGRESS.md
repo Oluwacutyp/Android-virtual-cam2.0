@@ -2674,7 +2674,7 @@ roundtrip, seqlock even/odd stability.
 
 | Round | Commit | CI run | Result | Artifact (vcam-studio-debug-apk) |
 |---|---|---|---|---|
-| r53 transport v0 | 21d0a35 | 36394252085 | GREEN 7m10s | id recorded in chat + below |
+| r53 transport v0 | 21d0a35 | 36394252085 | GREEN 7m10s | id 10958026516 (21,367,951 B) |
 
 r53 CI debugging record (3 red runs, all named): (1) f9ce66f — execSu
 Boolean==Int, AssociationInfo.id not on the public compile surface
