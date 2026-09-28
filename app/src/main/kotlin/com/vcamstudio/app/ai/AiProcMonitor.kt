@@ -343,6 +343,11 @@ object AiProcMonitor {
     }
 
     /** r52a debug: ask the child to dump the next face's align crops. */
+    /** r58 (debug): one-shot face-swap self-test in :ai. */
+    fun requestSwapTest() {
+        runCatching { client?.requestSwapTest() }
+    }
+
     fun requestDebugCrops() {
         runCatching { client?.requestDebugCrops() }
     }

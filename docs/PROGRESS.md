@@ -3053,3 +3053,44 @@ release). No CI/deps/device-specific/crop-math changes.
  both PNGs in Files > Downloads > VCamStudio > debug_crops; CRITERION:
  eyes ~8 px LEFT of centre in the 128 crop (centred = 128 template wrong,
  the actual item-E question); probes re-run -> both MODEL_PROBE_* ok.
+
+### Round 58 — the face-swap pipeline (emap carve, ArcFace latent, INSwapper, paste-back, self-swap gate) — ONE-SHOT, never per-frame
+
+DESIGN: "Run swap test" button (ModelsSheet, next to Dump crops/probes) ->
+VM.runSwapTest -> AiProcMonitor.requestSwapTest -> client -> NEW AIDL
+oneway runSwapTest() -> binder swapThread ("vcam-ai-swap", own lock/wait,
+started+joined with the others). Worker snapshots the latest detected face
+(raw I420 + lm640 + letterbox + upright-px box) under snapLock; the swap
+thread builds bitmaps lazily. No new toggle (owner mandate). Never called
+from processFrame.
+GATE (scope guard): catalogue-SIZE gate — w600k 174,383,860 B,
+inswapper 277,680,829 B; mismatch -> SWAP_SKIP reason=model_not_ready
+name= bytes=; no snapshot -> SWAP_SKIP reason=no_face. Never throws
+(SwapTest.run catch-all SWAP_TEST=fail:<msg> + binder runCatching).
+STAGE 1 emap carve: minimal ONNX protobuf walker (ModelProto.graph=7 ->
+GraphProto.initializer=5 -> TensorProto dims=1/dtype=2/name=8/raw_data=9)
+finds the FLOAT [512,512] initializer; raw len must be 1,048,576
+(SwapMath.validEmapBytes); writes filesDir/models/emap.bin; idempotent
+(right-sized existing file -> EMAP_CARVE=ok cached=true + sha256);
+sha256 LOGGED not gated (no verified reference hash); EMAP_CARVE=ok
+bytes= shape=512x512 sha256= ms= | fail:<reason>.
+STAGE 2 ArcFace: session CPU-only arena=off intra=2 inter=1
+(SWAP_SESSION_BEGIN before createSession — r56 lesson); input "input.1"
+[1,3,112,112], crop RGB NCHW (px-127.5)/127.5; output "683";
+L2-normalised -> ARCFACE_EMBED=ok dim=512 norm=<6dp> ms= (norm MUST be
+1.000000). STAGE 3: latent = l2norm(emb x emap) -> LATENT_PROJECT=ok
+norm= ms= (emap omission = silent wrong identity — landmine 5).
+STAGE 4 INSwapper: "target" [1,3,128,128] px/255, "source" [1,512]
+latent, output "output" 0..1 -> x255 clip -> RGB->BGR planes;
+SWAP_RUN=ok ms= out_min= out_max=. fp16 is WEIGHTS ONLY — all IO fp32.
+STAGE 5 paste-back: FaceAlign.Affine.inverse() (engine, tested) of the
+128 estimate drawn over the frame copy -> PASTE=ok box=<x0,y0,x1,y1>.
+STAGE 6 self-swap gate: source = own latent vs CONTROL = negated latent;
+SWAP_SELFTEST self_mae= control_mae= ratio= (pass = ratio well under
+0.5; catches wrong emap/latent/range/RGB-BGR/unnormalised for free).
+SwapMath (pure, JVM-testable): arcfacePreprocess, swapPreprocess, l2norm,
+project, negate, validEmapBytes, maeBgr. SwapMathTest: 5 mandated tests
+(range endpoints 0->-1/255->+1 and 0->0/255->1, embedding norm 1e-5,
+projection norm 1, emap byte checks) -> 118 total.
+NOT DONE (nothing else per mandate): no CI/deps/device-specific changes,
+FaceAlign untouched, no per-frame path change, no download of emap.

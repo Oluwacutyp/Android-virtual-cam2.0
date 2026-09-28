@@ -1347,6 +1347,12 @@ class StudioViewModel @Inject constructor(
         toast.value = "Align crops dumped on next detected face"
     }
 
+    /** r58 (debug): ONE-SHOT face-swap pipeline test in :ai. */
+    fun runSwapTest() {
+        com.vcamstudio.app.ai.AiProcMonitor.requestSwapTest()
+        toast.value = "Swap test running in :ai (needs BOTH real models) — see AI_PROC_CHILD_LOG"
+    }
+
     fun exportModels(treeUri: android.net.Uri) {
         viewModelScope.launch(dispatchers.io) {
             val n = modelManager.exportModels(treeUri)

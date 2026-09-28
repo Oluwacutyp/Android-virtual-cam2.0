@@ -29,4 +29,9 @@ interface IAiDetector {
     // r52a ADDITIVE (debug): child writes the 112/128 aligned crops of the
     // next detected face to DCIM/VCamStudio/debug_crops/ (MediaStore).
     oneway void dumpDebugCrops();
+
+    // r58 ADDITIVE (debug): ONE-SHOT face-swap self-test in the child
+    // (emap carve -> ArcFace -> INSwapper -> self-swap gate). Never
+    // per-frame; no toggle by owner mandate (button only).
+    oneway void runSwapTest();
 }

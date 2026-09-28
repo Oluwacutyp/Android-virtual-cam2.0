@@ -64,6 +64,22 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
     private val probeThread = Thread({ probeLoop() }, "vcam-ai-probe")
     private val workerThread = Thread({ workerLoop() }, "vcam-ai-infer")
 
+    // r58: ONE-SHOT swap test — its OWN thread, never per-frame.
+    private val swapLock = java.lang.Object()
+    private var swapTestRequested = false
+    private val swapThread = Thread({ swapLoop() }, "vcam-ai-swap")
+
+    // r58: latest detected face (raw I420 + geometry) for the one-shot.
+    // Cheap copy on the worker; the swap thread builds bitmaps lazily.
+    private val snapBuf = ByteArray(AiDetectorClient.FRAME_PAYLOAD_BYTES)
+    private val snapLock = Any()
+    @Volatile private var snapLen = 0
+    @Volatile private var snapW = 0
+    @Volatile private var snapH = 0
+    @Volatile private var snapLm: FloatArray? = null
+    @Volatile private var snapLb: ScrfdPreprocess.Letterbox? = null
+    @Volatile private var snapBox: FloatArray? = null
+
     // Round 50-A0.3: 1 Hz heartbeat into the durable child log — three
     // dumps died with the last line at +16..+38 ms, but "last LOG line"
     // is not "time of death" (a write could fail/block). The heartbeat
@@ -84,6 +100,7 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
     init {
         probeThread.start()
         workerThread.start()
+        swapThread.start()
         heartbeatThread.isDaemon = true
         heartbeatThread.start()
         Timber.i("AI_CHILD_STATE state=idle")
@@ -156,6 +173,38 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
         // Consumed by the worker on the next frame WITH a detection.
         debugCropsRequested = true
         Timber.i("AI_CROP_DUMP_REQUESTED")
+    }
+
+    /** r58: one-shot face-swap self-test (button only — never per-frame). */
+    override fun runSwapTest() {
+        synchronized(swapLock) {
+            swapTestRequested = true
+            swapLock.notifyAll()
+        }
+        Timber.i("AI_SWAP_TEST_REQUESTED")
+    }
+
+    private fun swapLoop() {
+        while (running) {
+            val go = synchronized(swapLock) {
+                while (!swapTestRequested && running) swapLock.wait()
+                swapTestRequested.also { swapTestRequested = false }
+            }
+            if (!go || !running) break
+            val snap = synchronized(snapLock) {
+                val lm = snapLm
+                val lb = snapLb
+                val bx = snapBox
+                if (snapLen == 0 || lm == null || lb == null || bx == null) {
+                    null
+                } else {
+                    FaceSnapshot(snapBuf.copyOf(snapLen), snapLen, snapW, snapH, lm, lb, bx)
+                }
+            }
+            runCatching { SwapTest.run(service, snap) }.onFailure {
+                Timber.w(it, "AI_SWAP_TEST_FAIL")
+            }
+        }
     }
 
     override fun submitFrame(slot: Int, width: Int, height: Int, rotationDeg: Int, frameId: Long) {
@@ -495,6 +544,22 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
             debugCropsRequested = false
             DebugCrops.dumpAlignCrops(service, i420, task.width, task.height, lm640, lb2)
         }
+        // r58: keep the latest face for the one-shot swap test.
+        if (box != null && lm640 != null && lb2 != null && lb2.scale > 0f) {
+            synchronized(snapLock) {
+                val cn = minOf(n, snapBuf.size)
+                System.arraycopy(frameScratch, 0, snapBuf, 0, cn)
+                snapLen = cn
+                snapW = task.width
+                snapH = task.height
+                snapLm = lm640.copyOf()
+                snapLb = lb2
+                snapBox = floatArrayOf(
+                    box.x1 * lb2.uprightW, box.y1 * lb2.uprightH,
+                    box.x2 * lb2.uprightW, box.y2 * lb2.uprightH,
+                )
+            }
+        }
     }
 
     // ------------------------------------------------------------ teardown
@@ -511,6 +576,8 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
         runCatching { heartbeatThread.join(500) }
         runCatching { probeThread.join(1_000) }
         runCatching { workerThread.join(1_000) }
+        synchronized(swapLock) { swapLock.notifyAll() }
+        runCatching { swapThread.join(1_000) }
         closeDetector()
         frameRing?.close()
         boxRing?.close()

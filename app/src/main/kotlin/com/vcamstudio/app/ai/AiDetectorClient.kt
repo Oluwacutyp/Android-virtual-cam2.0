@@ -249,6 +249,11 @@ class AiDetectorClient(private val context: Context) {
         runCatching { api?.runModelProbes() }
     }
 
+    /** r58 debug: one-shot face-swap self-test in :ai (never per-frame). */
+    fun requestSwapTest() {
+        runCatching { api?.runSwapTest() }
+    }
+
     /** r52a debug: child writes the next face's 112/128 align crops. */
     fun requestDebugCrops() {
         runCatching { api?.dumpDebugCrops() }

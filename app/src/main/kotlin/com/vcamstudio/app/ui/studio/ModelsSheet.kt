@@ -55,6 +55,7 @@ fun ModelsSheet(
     onInstallStubs: () -> Unit = {},
     onRunProbes: () -> Unit = {},
     onDumpCrops: () -> Unit = {},
+    onSwapTest: () -> Unit = {},
     onBackup: (Uri) -> Unit = {},
     onRestore: (Uri) -> Unit = {},
     // r53 transport
@@ -235,6 +236,8 @@ fun ModelsSheet(
                             TextButton(onClick = onRunProbes) { Text("Run model probes") }
                             // r54-E: next to Run model probes (mandate).
                             TextButton(onClick = onDumpCrops) { Text("Dump align crops") }
+                            // r58: one-shot swap pipeline test (never per-frame).
+                            TextButton(onClick = onSwapTest) { Text("Run swap test") }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = { backupLauncher.launch(null) }) { Text("Back up models") }

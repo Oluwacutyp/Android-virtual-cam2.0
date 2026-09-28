@@ -285,6 +285,7 @@ fun StudioScreen(
             onInstallStubs = vm::installStubModels,
             onRunProbes = vm::runModelProbes,
             onDumpCrops = vm::dumpAlignCrops,
+            onSwapTest = vm::runSwapTest,
             onBackup = vm::exportModels,
             onRestore = vm::importModels,
             transportCaps = vm.transportCapsFlow.collectAsStateWithLifecycle().value,

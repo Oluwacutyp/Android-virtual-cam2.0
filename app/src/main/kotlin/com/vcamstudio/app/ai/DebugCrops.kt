@@ -68,7 +68,7 @@ object DebugCrops {
     }
 
     /** Packed I420 (no strides) -> NV21 -> YuvImage -> JPEG -> Bitmap. */
-    private fun i420ToBitmap(buf: ByteBuffer, w: Int, h: Int): Bitmap {
+    internal fun i420ToBitmap(buf: ByteBuffer, w: Int, h: Int): Bitmap {
         val dup = buf.duplicate()
         dup.position(0)
         val ySize = w * h
