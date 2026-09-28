@@ -114,6 +114,11 @@ dependencies {
     implementation(project(":engine-output"))
     implementation(project(":engine-ai-core"))
     implementation(project(":engine-ai-face"))
+    implementation(project(":engine-transport"))
+    // r53 (owner-mandated, the ONE dependency addition): Xposed API at
+    // COMPILE time only — the framework provides the classes at runtime;
+    // this jar is never packaged (hook code is loaded from the host).
+    compileOnly("de.robv.android.xposed:api:82")
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

@@ -287,6 +287,13 @@ fun StudioScreen(
             onDumpCrops = vm::dumpAlignCrops,
             onBackup = vm::exportModels,
             onRestore = vm::importModels,
+            transportCaps = vm.transportCapsFlow.collectAsStateWithLifecycle().value,
+            transportTarget = vm.transportTargetFlow.collectAsStateWithLifecycle().value,
+            transportFeedOn = vm.transportDev.collectAsStateWithLifecycle().value,
+            onSetTransportFeed = vm::setTransportFeed,
+            onSetTransportTarget = vm::setTransportTarget,
+            onLaunchThrough = vm::launchThroughVirtualDevice,
+            onRefreshTransportCaps = vm::refreshTransportCaps,
         )
         StudioViewModel.Sheet.NONE -> Unit
     }

@@ -64,5 +64,26 @@
             android:name=".ai.AiInferenceService"
             android:process=":ai"
             android:exported="false" />
+        <!-- r53: hands the transport ring SharedMemory to consumer processes
+             (the Xposed hook inside the target app). Deliberately exported:
+             consumers run under other uids; it serves exactly one read-only
+             frame ring and nothing else. -->
+        <provider
+            android:name="com.vcamstudio.app.transport.TransportProvider"
+            android:authorities="com.vcamstudio.app.transport"
+            android:exported="true"
+            android:grantUriPermissions="false" />
+
+        <!-- r53: this APK is ALSO an Xposed module (route R, root hook).
+             Scope this round: Camera1 apps only. -->
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="VCamStudio transport v0 (Camera1 preview injection)" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="82" />
     </application>
 </manifest>

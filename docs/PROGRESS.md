@@ -2621,3 +2621,51 @@ recovered-rotation assert uses -m.m[3] for the sin sign (theta = -17deg).
 Test total now 112 (91 through r50 + 6 r51 + 8 FaceAlign + 3 net
 ScrfdPostprocess + 4 StubContracts). AIDL law extended: array params need
 explicit direction tags in classic aidl; comments must stay ASCII.
+
+### Round 53 — TRANSPORT v0 (owner mandate: root AND no-root, universal injection, capability-driven, ZERO device-specific code)
+
+NEW MODULE engine-transport (depends on core-common ONLY): TransportSink
+contract, TransportRing (ONE SharedMemory parcelable carrying frame+meta —
+the AI-ring fd-over-binder pattern with a SEQLOCK instead of slot states,
+because the consumer is a hook in another app's process that cannot run our
+release protocol; header 96 B: magic/version/format/w/h/rotation/tsNs/
+frameBytes/seq/payloadBytes; EVEN seq = stable, ODD = writing, readers
+validate before+after copy), HeaderCodec (pure, JVM-tested),
+TransportCapabilities (pure Probes->route matrix, JVM-tested), caps line
+format byte-for-byte per mandate.
+
+ROUTE R (root hook): the VCam APK IS the Xposed module — compileOnly
+de.robv.android.xposed:api:82 (the ONE mandated dependency; canonical host
+api.xposed.info added to settings, verified reachable; NOT a CI change),
+assets/xposed_init, xposedmodule/description/minversion meta-data.
+VcamHook is SELF-CONTAINED (no Hilt/DI/VCam imports, android.util.Log):
+Camera1 setPreviewTexture keeps the app's target and hands the real camera
+a dummy SurfaceTexture (sensor keeps running), rendering ring frames into
+the app's target via EGL14+GLES20 built in-process (pure framework APIs,
+no NDK; 3-plane LUMINANCE I420 upload + BT.601 shader, TRIANGLES per house
+style); setPreviewCallback swaps in a wrapper callback that fills the
+app's byte[] (NV21) from the ring; startPreview/stopPreview/release
+ordering handled; every hook body try/caught so a failure can NEVER crash
+the host app. Frames reach the hook as a SharedMemory parcelable via
+content://com.vcamstudio.app.transport (TransportProvider, exported,
+serves exactly one thing).
+
+ROUTE V (no root): VirtualDeviceTransport — reflection-only probing and
+invocation (probing IS the capability detection): api>=34 + VDM service +
+CDM association + CAMERA_INJECT_EXTERNAL_CAMERA + injectCamera API presence
+each checked and reported; best-effort launch-through (association ->
+VirtualDevice POLICY_TYPE_CAMERA -> virtual display -> setLaunchDisplayId).
+HONEST SCOPE: app streaming — the target must be launched BY US.
+
+CAPS/dump: TRANSPORT_CAPS line per mandate + TRANSPORT_SECTION
+(FEED/FRAMES/TARGET/RING) additive only. Debug UI in ModelsSheet: Detect
+caps, Target picker (installed apps holding CAMERA at RUNTIME, excludes
+self, no hardcoded list), Start/Stop feed, Launch through VD. Feed source:
+the EXISTING analyzer stream via a one-line TransportTap dispatch in
+AiFrameAnalyzer (copy inside dispatch; AI ring untouched). No device
+strings, no model strings, no hardcoded package list or resolutions
+anywhere; if no route is available the UI/caps say so with the reason.
+
+JVM tests (+8): route matrix (none/root-preferred/all-3-gates/debug
+override), su classification, selinux parse, caps-line format, header
+roundtrip, seqlock even/odd stability.

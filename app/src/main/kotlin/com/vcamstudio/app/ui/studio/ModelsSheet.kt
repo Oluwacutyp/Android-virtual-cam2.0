@@ -57,11 +57,34 @@ fun ModelsSheet(
     onDumpCrops: () -> Unit = {},
     onBackup: (Uri) -> Unit = {},
     onRestore: (Uri) -> Unit = {},
+    // r53 transport
+    transportCaps: String = "",
+    transportTarget: String? = null,
+    transportFeedOn: Boolean = false,
+    onSetTransportFeed: (Boolean) -> Unit = {},
+    onSetTransportTarget: (String?) -> Unit = {},
+    onLaunchThrough: () -> Unit = {},
+    onRefreshTransportCaps: () -> Unit = {},
 ) {
+    // r53: installed apps holding CAMERA permission (runtime choice, no
+    // hardcoded list). Excludes this app.
+    val cameraApps = remember {
+        val pm = context.packageManager
+        runCatching {
+            pm.getInstalledPackages(android.content.pm.PackageManager.GET_PERMISSIONS)
+                .filter { p ->
+                    p.requestedPermissions?.contains(android.Manifest.permission.CAMERA) == true &&
+                        p.packageName != context.packageName
+                }
+                .map { it.packageName }
+                .sorted()
+        }.getOrDefault(emptyList())
+    }
+    var pickingTarget by remember { mutableStateOf(false) }
     var licenseFor by remember { mutableStateOf<ModelManager.ModelState?>(null) }
+    val context = LocalContext.current
 
     // r52a: SAF launchers for model backup / restore (owner has no PC).
-    val context = LocalContext.current
     val backupLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri: Uri? ->
@@ -213,6 +236,32 @@ fun ModelsSheet(
                             TextButton(onClick = { backupLauncher.launch(null) }) { Text("Back up models") }
                             TextButton(onClick = { restoreLauncher.launch(null) }) { Text("Restore models") }
                         }
+                        // r53 TRANSPORT v0
+                        HorizontalDivider()
+                        Text(
+                            "Transport v0",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                        )
+                        Text(
+                            transportCaps.ifEmpty { "Tap refresh to detect capabilities" },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 4.dp),
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = onRefreshTransportCaps) { Text("Detect") }
+                            TextButton(onClick = { pickingTarget = true }) {
+                                Text("Target: ${transportTarget ?: "pick"}")
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { onSetTransportFeed(!transportFeedOn) }) {
+                                Text(if (transportFeedOn) "Stop feed" else "Start feed")
+                            }
+                            TextButton(onClick = onLaunchThrough) { Text("Launch through VD") }
+                        }
                     }
                 }
             }
@@ -235,6 +284,26 @@ fun ModelsSheet(
             },
             dismissButton = {
                 TextButton(onClick = onMeteredDismiss) { Text("Wait for Wi-Fi") }
+            },
+        )
+    }
+
+    if (pickingTarget) {
+        AlertDialog(
+            onDismissRequest = { pickingTarget = false },
+            title = { Text("Target app (holds CAMERA)") },
+            text = {
+                LazyColumn(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    items(cameraApps.size) { i ->
+                        TextButton(onClick = {
+                            onSetTransportTarget(cameraApps[i])
+                            pickingTarget = false
+                        }) { Text(cameraApps[i], style = MaterialTheme.typography.bodySmall) }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { pickingTarget = false }) { Text("Cancel") }
             },
         )
     }

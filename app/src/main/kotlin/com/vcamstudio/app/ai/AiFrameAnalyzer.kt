@@ -48,6 +48,11 @@ class AiFrameAnalyzer(
             )
             if (!ok) return
             sink(buf, w, h, proxy.imageInfo.rotationDegrees, nextFrameId.incrementAndGet(), need)
+            // r53: transport tap — the COPY happens inside dispatch (duplicated
+            // buffer) so the AI ring is untouched and never blocked by it.
+            com.vcamstudio.app.transport.TransportTap.dispatch(
+                buf, w, h, proxy.imageInfo.rotationDegrees, nextFrameId.get(),
+            )
         } finally {
             runCatching { proxy.close() }
         }

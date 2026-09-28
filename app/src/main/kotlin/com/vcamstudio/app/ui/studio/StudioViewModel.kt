@@ -1138,6 +1138,47 @@ class StudioViewModel @Inject constructor(
         }
     }
 
+    // ------------------------------------------------------------ r53 transport
+
+    /** r53: transport feed toggle (DEV). */
+    val transportDev = MutableStateFlow(false)
+
+    /** r53: user-chosen target app (debug UI lists CAMERA-permission apps). */
+    private val transportTarget = MutableStateFlow<String?>(null)
+    val transportTargetFlow: StateFlow<String?> = transportTarget.asStateFlow()
+
+    /** r53: last capability line (also in the dump). */
+    private val transportCapsLine = MutableStateFlow("")
+    val transportCapsFlow: StateFlow<String> = transportCapsLine.asStateFlow()
+
+    fun refreshTransportCaps() {
+        transportCapsLine.value =
+            com.vcamstudio.app.transport.TransportManager.capsLine()
+    }
+
+    fun setTransportFeed(on: Boolean) {
+        transportDev.value = on
+        com.vcamstudio.app.transport.TransportTap.setEnabled(on)
+        refreshTransportCaps()
+    }
+
+    fun setTransportTarget(pkg: String?) {
+        transportTarget.value = pkg
+        com.vcamstudio.app.transport.TransportManager.targetPackage = pkg
+    }
+
+    /** r53 route V: best-effort launch-through; result surfaced as a toast. */
+    fun launchThroughVirtualDevice() {
+        val target = transportTarget.value ?: run {
+            toast.value = "Pick a target app first"
+            return
+        }
+        val res = com.vcamstudio.app.transport.VirtualDeviceTransport
+            .attemptLaunchThrough(context, target)
+        toast.value = res ?: "Virtual-device route unavailable: " +
+            com.vcamstudio.app.transport.VirtualDeviceTransport.probe(context).summary
+    }
+
     // ------------------------------------------------------- r52a model tools
 
     /** r52a: debug-only actions live in ModelsSheet when this is true. */
@@ -1215,7 +1256,9 @@ class StudioViewModel @Inject constructor(
             "\n\nMODEL_SECTION\n  " +
             modelManager.dumpSection().replace("\n", "\n  ") +
             "\n\nAI_PROC_SECTION\n  " +
-            com.vcamstudio.app.ai.AiProcMonitor.dumpSection().replace("\n", "\n  ")
+            com.vcamstudio.app.ai.AiProcMonitor.dumpSection().replace("\n", "\n  ") +
+            "\n\nTRANSPORT_SECTION\n  " +
+            com.vcamstudio.app.transport.TransportManager.dumpSection().replace("\n", "\n  ")
 
     /** DEV DIAGNOSTIC (round 16A): render external sources as a UV gradient. */
     val uvDebugPass = MutableStateFlow(false)

@@ -22,6 +22,10 @@ dependencyResolutionManagement {
         // app/build.gradle.kts), not the network; canonical repos only.
         google()
         mavenCentral()
+        // r53 (owner-mandated): the canonical host of de.robv.android.xposed:api
+        // (compileOnly, never shipped). The ONE dependency addition of the
+        // transport round; not a mirror, it IS the upstream repo.
+        maven("https://api.xposed.info/")
     }
 }
 
@@ -47,6 +51,9 @@ include(":engine-output")
 include(":engine-ai-core")
 include(":engine-ai-face")
 include(":app")
+// r53: transport v0 — cross-app frame transport (root hook + virtual device).
+// Depends on core-common ONLY by mandate.
+include(":engine-transport")
 // Round-20 mandate 1: standalone minimal wedge probe. Separate APK, ZERO
 // dependency on any studio engine module — decisive isolation either way.
 include(":probe-wedge")
