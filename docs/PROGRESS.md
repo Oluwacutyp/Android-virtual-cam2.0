@@ -3046,3 +3046,10 @@ OPTIONAL shipped: :ai startup (debug builds only) auto-installs stubs
 when filesDir/models/probe_fp16_conv.onnx is absent (clear-data wipes
 them; not catalogue models) -> AI_STUBS_AUTO_INSTALL n= (guarded, never
 release). No CI/deps/device-specific/crop-math changes.
+
+**r57 ledger**: dcf3b9e = HEAD, GREEN run 36469935085 (7m42s), artifact
+ 10991665519 (21,424,230 B). Owner device test: crop_dump toggle ON ->
+ Dump crops with a face -> MODEL_CROP_DUMP=ok:align112_…,align128_… +
+ both PNGs in Files > Downloads > VCamStudio > debug_crops; CRITERION:
+ eyes ~8 px LEFT of centre in the 128 crop (centred = 128 template wrong,
+ the actual item-E question); probes re-run -> both MODEL_PROBE_* ok.
