@@ -2770,3 +2770,10 @@ xnnpack -> reofferSession (immediate); ai_fg -> next :ai start; attach ->
 next app start (TRANSPORT_BOOT=deferred); probe -> Detect reports the
 toggle; feed -> existing tap. CONFIG_EFFECTIVE=transport_attach=on,...
 logged once at VM init AND included in TRANSPORT_SECTION.
+
+**r54 ledger**: b98a01f (RED: attach block typed Unit — getOrDefault(false)
+ poisoned the if-expression; @Volatile on a local var; local funs invoking
+ TextButton) → e9646bf = HEAD, GREEN run 36401716854 (7m16s), artifact
+ 10960243343 (21,382,207 B). Items A–F reported to owner; device protocol
+ steps 0–5 attached; C keep/revert + B idle-death verdicts PENDING owner
+ device runs.
