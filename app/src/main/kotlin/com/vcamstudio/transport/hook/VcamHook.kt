@@ -140,7 +140,10 @@ class VcamHook : IXposedHookLoadPackage {
     }
 
     private fun context(): Context? = try {
-        de.robv.android.xposed.AndroidAppHelper.currentApplication()
+        // AndroidAppHelper is not in the compileOnly api:82 jar; the
+        // framework idiom works everywhere.
+        Class.forName("android.app.ActivityThread")
+            .getMethod("currentApplication").invoke(null) as? Context
     } catch (t: Throwable) {
         null
     }
@@ -266,7 +269,7 @@ class VcamHook : IXposedHookLoadPackage {
         val target = st.appTexture
         if (target != null) {
             stopRenderer(st)
-            val r = Renderer(st)
+            val r = Renderer(st, ensureReader() ?: return, QUAD)
             st.renderer = r
             r.start()
         }
@@ -334,7 +337,11 @@ class VcamHook : IXposedHookLoadPackage {
 
     // ---- GL renderer (pure framework EGL14/GLES20) -------------------------
 
-    private class Renderer(private val st: CameraState) {
+    private class Renderer(
+        private val st: CameraState,
+        private val reader: RingReader,
+        private val quad: java.nio.FloatBuffer,
+    ) {
         private var thread: Thread? = null
         private val running = AtomicBoolean(false)
 
@@ -391,14 +398,13 @@ class VcamHook : IXposedHookLoadPackage {
             GLES20.glGenTextures(1, texV, 0)
             GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 1)
             val frame = ByteBuffer.allocateDirect(4 * 1920 * 1080 * 3 / 2).order(ByteOrder.nativeOrder())
-            val reader = ringReader
             val meta = IntArray(4)
             var publishedSeq = -1
 
             GLES20.glUseProgram(prog)
             val posLoc = GLES20.glGetAttribLocation(prog, "aPos")
             GLES20.glEnableVertexAttribArray(posLoc)
-            GLES20.glVertexAttribPointer(posLoc, 2, GLES20.GL_FLOAT, false, 0, QUAD)
+            GLES20.glVertexAttribPointer(posLoc, 2, GLES20.GL_FLOAT, false, 0, quad)
             GLES20.glUniform1i(GLES20.glGetUniformLocation(prog, "uY"), 0)
             GLES20.glUniform1i(GLES20.glGetUniformLocation(prog, "uU"), 1)
             GLES20.glUniform1i(GLES20.glGetUniformLocation(prog, "uV"), 2)
