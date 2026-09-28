@@ -40,6 +40,7 @@ class MainActivity : ComponentActivity() {
         // run completes in StudioViewModel.onCleared). Native deaths leave
         // no Java stack — LAST_PHASE is the only localisation we get.
         Timber.i("LAST_PHASE=%s", com.vcamstudio.app.crash.PhaseMark.read(this) ?: "none")
+        Timber.i("AI_LAST_PHASE=%s", com.vcamstudio.app.crash.PhaseMark.readAi(this) ?: "none")
         // Studio screen: keep the compositor visible and hot while foregrounded.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         lifecycleBridge = this

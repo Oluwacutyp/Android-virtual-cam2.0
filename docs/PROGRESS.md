@@ -2846,3 +2846,34 @@ untouched, exactly-cap → true). 113 tests total.
 **r54.2 ledger**: e22f5ec = HEAD, GREEN run 36409227109 (6m2s), artifact
  10963911775 (21,391,519 B). G2a choice reported (raise, not clamp);
  owner device protocol unchanged (r54.1 steps 0-3 + this build).
+
+### Round 54.3 — H1-H4: :ai-process observability (owner: crash probably NOT in the app process; the "keeps stopping" dialog is identical for both, and the 02:56 screenshot already showed :ai dying independently)
+
+H1 :ai installs its OWN handler + breadcrumbs: AiInferenceService.onCreate
+runs CrashLogger.ensureInstalled(this) + PhaseMark.markAi("proc_start")
+FIRST (after the durable-log reset). KEY FACT recorded: the manifest
+ContentProvider has NO android:process — it instantiates in EVERY process
+of the package, so :ai has had the handler (and TransportManager.attach)
+since r54; H1 makes it independent of that detail. Crash files: BOTH
+processes write the SAME shared filesDir/crashes (no binder transport
+needed — filesDir is shared, same uid); every crash header now carries
+proc=main|:ai (CrashLogger.processLabel: Application.getProcessName on
+28+, ActivityThread.currentProcessName reflection pre-P); DEV Crash-logs
+block shows the latest file labelled proc= + last_phase= AND a separate
+"latest :ai crash" line. H2 :ai breadcrumbs (PhaseMark second file
+last_phase_ai, content "proc=:ai|<phase>"): proc_start (service onCreate)
+-> MODEL_FILE_RESOLVE -> SESSION_CREATE (brackets the ScrfdDetector ctor:
+file resolve + OrtSession create) -> FIRST_INFER (processFrame entry) ->
+KPS_DECODE (once, before the r52a keypoint decode — PRIME SUSPECT per
+owner) -> RESULT_PUBLISH (once, before box handoff). Read back: MainActivity
+logs AI_LAST_PHASE= alongside LAST_PHASE; dump carries AI_CHILD_LAST_PHASE;
+cleared on CLEAN service onDestroy only. H3 MODEL LOAD GUARD: every load
+attempt logs MODEL_FILE=<path> MODEL_SIZE=<exists?bytes:-1> exists= BEFORE
+construction; failure logs AI_MODEL_LOAD_FAIL path= size= (with the
+OrtException) and the chain stays DOWN (pre-existing catch keeps :ai alive
+— H3 enriches with file facts; dump gains AI_MODEL_FILE/AI_MODEL_SIZE,
+captured main-side in setModelPath). H4 every durable child line prefixed
+"proc=:ai " (AiChildLogTree head) + the child report gains proc=:ai line.
+G1 kept (r54.2). NOTE: working tree has out-of-band uncommitted changes
+(README.md, .github/, .gitignore) NOT from this branch's work — left
+untouched, not committed here.

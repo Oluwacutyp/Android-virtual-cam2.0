@@ -82,6 +82,28 @@ object CrashLogger {
         return if (external != null) File(external, "launch.log") else File(context.filesDir, "launch.log")
     }
 
+    /** r54.3-H1/H4: which process crashed — the DEV list labels files. */
+    @Volatile var processLabel: String = "main"
+        private set
+
+    private fun resolveProcessLabel(): String = try {
+        val n = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            android.app.Application.getProcessName()
+        } else {
+            @Suppress("DEPRECATION") // pre-P only: documented reflection route
+            Class.forName("android.app.ActivityThread")
+                .getMethod("currentProcessName")
+                .invoke(null) as? String
+        }
+        when {
+            n.isNullOrEmpty() -> "main"
+            n.contains(":") -> ":" + n.substringAfter(":")
+            else -> "main"
+        }
+    } catch (_: Throwable) {
+        "main"
+    }
+
     /** r54.1-X4: internal crash files, newest first (DEV Crash-logs UI). */
     fun crashFiles(context: Context): List<File> =
         File(context.filesDir, "crashes")
@@ -96,6 +118,7 @@ object CrashLogger {
     fun install(context: Context) {
         if (installed) return
         installed = true
+        processLabel = resolveProcessLabel()
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
@@ -173,6 +196,7 @@ object CrashLogger {
     private fun crashText(context: Context, thread: Thread, throwable: Throwable, sink: String): String =
         "app=VCamStudio version=${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) debug=${BuildConfig.DEBUG}\n" +
             "device=${Build.MANUFACTURER} ${Build.MODEL} android=${Build.VERSION.SDK_INT}\n" +
+            "proc=$processLabel\n" +
             "sink=$sink\n" +
             "at=${System.currentTimeMillis()}\n" +
             "thread=${thread.name}\n" +

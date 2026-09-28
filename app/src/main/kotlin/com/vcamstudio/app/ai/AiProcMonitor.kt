@@ -90,6 +90,12 @@ object AiProcMonitor {
         append(AiDetectorClient.BOX_SLOTS).append('x').append(AiDetectorClient.BOX_PAYLOAD_BYTES)
         // r54.2-G2c: oversized-frame drops (writePayload false).
         append("\nAI_RING_DROPS=").append(ringDrops)
+        // r54.3-H3: what :ai was asked to load, how big, and where its
+        // breadcrumbs stand (both read straight from the shared filesDir).
+        append("\nAI_MODEL_FILE=").append(modelPath ?: "-")
+        append("\nAI_MODEL_SIZE=").append(modelSizeBytes).append("B")
+        append("\nAI_CHILD_LAST_PHASE=")
+            .append(appContext?.let { com.vcamstudio.app.crash.PhaseMark.readAi(it) } ?: "unknown")
         // Round 50-A0.2: death context — system memory at bind/death and
         // the child's scheduler importance while bound. Separates LMKD
         // (avail < threshold at death) from an OEM/policy kill (plenty of
@@ -235,7 +241,11 @@ object AiProcMonitor {
 
     fun setModelPath(path: String?) {
         client?.setModelPath(path)
-        if (path != null) modelPath = path
+        if (path != null) {
+            modelPath = path
+            // r54.3-H3: dump carries the file size on every load attempt.
+            modelSizeBytes = runCatching { java.io.File(path).length() }.getOrDefault(-1L)
+        }
     }
 
     /**
@@ -278,6 +288,10 @@ object AiProcMonitor {
     fun reofferSession() {
         runCatching { client?.reofferSession() }
     }
+
+    /** r54.3-H3: bytes of the last model path handed to :ai (-1 unknown). */
+    @Volatile var modelSizeBytes: Long = -1L
+        private set
 
     /** r54.2-G2c: ring-level oversized-frame drops, logged ONCE per run. */
     @Volatile var ringDrops: Long = 0

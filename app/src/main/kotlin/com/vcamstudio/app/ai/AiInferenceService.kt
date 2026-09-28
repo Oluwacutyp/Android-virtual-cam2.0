@@ -67,6 +67,12 @@ class AiInferenceService : Service() {
         // Start a fresh durable log BEFORE any step line — the main process's
         // dump reads this file after a native abort.
         AiChildLogTree.reset(this)
+        // r54.3-H1: :ai installs its OWN crash handler + breadcrumbs — it
+        // must not depend on the main process. (The manifest provider runs
+        // in EVERY process of the package, so this is usually a no-op; it
+        // guarantees installation even if that ever changes.)
+        com.vcamstudio.app.crash.CrashLogger.ensureInstalled(this)
+        com.vcamstudio.app.crash.PhaseMark.markAi(this, "proc_start")
         Timber.i("AI_PROC_START pid=%d", Process.myPid())
         // Round 50-A0: memory at birth — distinguishes "native abort" from
         // "the OS killed us" (LMK) when every step line is present but the
@@ -146,6 +152,9 @@ class AiInferenceService : Service() {
         }
         binder?.shutdown()
         binder = null
+        // r54.3-H2: clean teardown clears :ai's breadcrumb — a native death
+        // never reaches this, so the file survives every crash.
+        com.vcamstudio.app.crash.PhaseMark.clearAi(this)
         writeReport("stopped", null)
         super.onDestroy()
     }
@@ -160,6 +169,8 @@ class AiInferenceService : Service() {
             File(filesDir, AiProcMonitor.REPORT_FILE).writeText(
                 buildString {
                     append("pid=").append(Process.myPid()).append('\n')
+                    // r54.3-H4: the report names its process.
+                    append("proc=:ai").append('\n')
                     append("state=").append(state).append('\n')
                     append("model=").append(
                         binder?.lastRequestedModelPath() ?: lastStartModelPath ?: "-",
@@ -231,7 +242,10 @@ object AiChildLogTree : Timber.Tree() {
                 // r50-A0.1: per-line age — how long the child LIVED between
                 // steps (an instant stop after AI_RING_OPEN reads very
                 // differently from a death 3 s into createSession).
-                val head = "[+" + (System.currentTimeMillis() - epochMs) + "ms] " +
+                // r54.3-H4: every durable child line is explicitly
+                // labelled — a dump tail can never be mistaken for
+                // main-process output.
+                val head = "proc=:ai [+${System.currentTimeMillis() - epochMs}ms] " +
                     "${prio.getOrElse(priority) { '?' }}/${tag ?: "vcam"}: $message"
                 val stack = t?.let { Log.getStackTraceString(it) }
                 if (stack.isNullOrBlank()) {

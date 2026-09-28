@@ -309,9 +309,32 @@ fun ModelsSheet(
                             modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
                         )
                         Text(
-                            crashFiles.firstOrNull()?.let { "${it.name}  ${it.length() / 1024} KB" }
-                                ?: "none — no crashes recorded",
+                            crashFiles.firstOrNull()?.let { f ->
+                                val head = runCatching {
+                                    f.useLines { ls -> ls.take(10).joinToString(" ") }
+                                }.getOrDefault("")
+                                val proc = Regex("proc=(\S+)").find(head)?.groupValues?.get(1) ?: "?"
+                                val phase = Regex("last_phase=(\S+)").find(head)?.groupValues?.get(1) ?: "?"
+                                "${f.name}  ${f.length() / 1024} KB  proc=$proc last_phase=$phase"
+                            } ?: "none — no crashes recorded",
                             style = MaterialTheme.typography.bodySmall,
+                        )
+                        // r54.3-H1: :ai writes into the SAME shared
+                        // filesDir/crashes — list its latest file separately.
+                        Text(
+                            "latest :ai crash: " + (crashFiles.firstOrNull { f ->
+                                runCatching {
+                                    f.useLines { ls -> ls.take(10).any { it.startsWith("proc=:ai") } }
+                                }.getOrDefault(false)
+                            }?.let { f ->
+                                val head = runCatching {
+                                    f.useLines { ls -> ls.take(10).joinToString(" ") }
+                                }.getOrDefault("")
+                                val phase = Regex("last_phase=(\S+)").find(head)?.groupValues?.get(1) ?: "?"
+                                "${f.name}  ${f.length() / 1024} KB  last_phase=$phase"
+                            } ?: "none"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = {

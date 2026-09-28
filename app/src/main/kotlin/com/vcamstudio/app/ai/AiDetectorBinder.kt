@@ -231,11 +231,22 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
             lastRequestedPath = path
             sessionCreating = true
             closeDetector()
+            // r54.3-H3: exact file facts on EVERY load attempt — a stub file,
+            // truncated download or wrong file is visible in the dump without
+            // the child ever dying.
+            com.vcamstudio.app.crash.PhaseMark.markAi(service, "MODEL_FILE_RESOLVE")
+            val mFile = java.io.File(path)
+            val mSize = runCatching { mFile.length() }.getOrDefault(-1L)
+            Timber.i("MODEL_FILE=%s MODEL_SIZE=%dB exists=%s", path, mSize, mFile.exists())
             try {
                 // Round 50-A0: name the attempt — with the detector's own
                 // step lines, this pins a silent child death to either
                 // "before construction" or a specific constructor step.
                 Timber.i("AI_PROBE_BEGIN path=%s", path)
+                // r54.3-H2: everything from here to SESSION_OK is bracketed
+                // by this breadcrumb (file resolve + OrtSession creation
+                // happen inside the detector constructor).
+                com.vcamstudio.app.crash.PhaseMark.markAi(service, "SESSION_CREATE")
                 // The call that natively aborted in the MAIN process on two
                 // ORT versions — if it aborts again, only this process dies.
                 // r54-C/F: the XNNPACK toggle is read at session BUILD —
@@ -254,7 +265,9 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
                 callback?.onState(3, "running")
                 service.writeReport("ok", null)
             } catch (t: Throwable) {
-                Timber.e(t, "AI_PROC_SESSION_FAIL")
+                // r54.3-H3: NAMED failure — path, bytes, OrtException
+                // message. The AI chain stays DOWN; the child lives.
+                Timber.e(t, "AI_MODEL_LOAD_FAIL path=%s size=%dB", path, mSize)
                 Timber.i("AI_CHILD_STATE state=session-failed")
                 callback?.onState(2, t.message ?: "session failed")
                 service.writeReport("fail", t.message)
@@ -265,6 +278,11 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
     }
 
     @Volatile private var sessionCreating = false
+
+    // r54.3-H2: once-only :ai breadcrumbs (worker thread writes them).
+    @Volatile private var markedFirstInfer = false
+    @Volatile private var markedKps = false
+    @Volatile private var markedPublish = false
 
     private fun closeDetector() {
         sessionActive = false
@@ -303,6 +321,9 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
     private fun queuedCount(): Int = synchronized(pendingLock) { if (pending != null) 1 else 0 }
 
     private fun processFrame(task: FrameTask) {
+
+        // r54.3-H2: first inference begins (once — same code path after).
+        if (!markedFirstInfer) { markedFirstInfer = true; com.vcamstudio.app.crash.PhaseMark.markAi(service, "FIRST_INFER") }
         val fr = frameRing ?: return
         val br = boxRing ?: return
         val n = fr.payloadSize(task.slot).coerceAtMost(frameScratch.size)
@@ -392,8 +413,13 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
         br.putLong(slot, 48, inferMs) // INFER_MS
         br.putLong(slot, 56, task.frameId) // FRAME_ID
         br.setPayloadSize(slot, AiDetectorClient.BOX_PAYLOAD_BYTES)
+        // r54.3-H2: box handoff to main (once).
+        if (!markedPublish) { markedPublish = true; com.vcamstudio.app.crash.PhaseMark.markAi(service, "RESULT_PUBLISH") }
         br.publish(slot, AiRing.STATE_FULL)
         callback?.onResult(task.frameId, slot, box != null, preMs, inferMs)
+        // r54.3-H2: the r52a keypoint decode is a PRIME SUSPECT for the
+        // :ai deaths — bracket it (once).
+        if (!markedKps) { markedKps = true; com.vcamstudio.app.crash.PhaseMark.markAi(service, "KPS_DECODE") }
         // r52a ADDITIVE: keypoints ride the binder (boxes ring stays 8x64).
         val lm640 = detection?.landmarks
         val lb2 = letterbox
