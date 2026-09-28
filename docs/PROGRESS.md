@@ -2810,3 +2810,8 @@ exec) synchronously on the caller (main) thread — now a daemon thread
 Owner device protocol 0-3 attached (install+grant must not crash; else
 relaunch + report LAST_PHASE verbatim; dialog=Java vs vanish=native;
 device list).
+
+**r54.1 ledger**: b8d321a = HEAD, GREEN run 36405977882 (6m6s) FIRST TRY,
+artifact 10962307681 (21,389,154 B) — owner protocol 0-3 pending (LAST_PHASE / dialog-vs-vanish
+/ devices). No B-F code was reverted; this delta is crash-fix only on top
+of the green r54 base (r54 artifact was 10960243343).
