@@ -2599,3 +2599,25 @@ satisfied; probe-wedge does not implement these interfaces (checked).
 session options only) and 52c (:ai foreground service, BIND_IMPORTANT,
 AI_PROC_FG/IDLE_MS fields) each proceed after the previous round's device
 checkpoint.
+
+### Ledger
+
+| Round | Commit | CI run | Result | Artifact (vcam-studio-debug-apk) |
+|---|---|---|---|---|
+| r52a | 8be4048 | 36376230376 | GREEN 5m53s | id 10950659797 (21,315,752 B) |
+
+r52a CI debugging record (4 red runs, all named): (1) 35ceee3 — legacy aidl
+rejected the new lines; (2) 2ec044a — ASCII-only comments did NOT fix it;
+(3) 756b156 — explicit `in` direction tag on the float[] param FIXED the
+aidl stage (CI-proven: classic aidl demands direction tags on array
+params); then compileDebugKotlin caught ModelProbes guessing APIs —
+(4) d03f977 — verified against ORT v1.17.1 sources: OnnxJavaType.FLOAT16
+exists, fp16 tensors go through the PUBLIC
+createTensor(env, ByteBuffer, long[], OnnxJavaType) overload, accessor is
+t.info (as detectTop already uses); (5) 8be4048 GREEN — test index bugs:
+kps tensor is n*10 floats (n anchors x 5 points x 2), matcher+tests
+aligned; FaceAlignTest point loops 0 until 5 (were 0 until 10 with 2*i);
+recovered-rotation assert uses -m.m[3] for the sin sign (theta = -17deg).
+Test total now 112 (91 through r50 + 6 r51 + 8 FaceAlign + 3 net
+ScrfdPostprocess + 4 StubContracts). AIDL law extended: array params need
+explicit direction tags in classic aidl; comments must stay ASCII.
