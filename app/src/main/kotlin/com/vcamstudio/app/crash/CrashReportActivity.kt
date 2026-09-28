@@ -134,6 +134,7 @@ class CrashReportActivity : ComponentActivity() {
 @Composable
 private fun CrashScreen(crashes: List<CrashEntry>, onClose: () -> Unit) {
     val clipboard = LocalClipboardManager.current
+    val context = androidx.compose.ui.platform.LocalContext.current
     var copied by remember { mutableStateOf(false) }
     val allText = crashes.joinToString("\n\n========================\n\n") { it.full }
     Column(
