@@ -3121,3 +3121,8 @@ mandatory (Flatten->Gemm->BatchNormalization->"683" tail is not unit
 length); the l2norm call itself was already in place (r58). Contracts
 confirmed as implemented: input.1/683, target/source/output, fp32 I/O,
 fp16 weights-only, opset 11/15, "None" string batch dim.
+
+**r58 addendum ledger**: f7d643d = HEAD, GREEN run 36483367268 (7m38s),
+ artifact 10998346889 (21,443,936 B). Device test unchanged from r58 (swap block + crop
+ criterion + Phase-1 unchanged); EMAP_CARVE=ok now additionally proves
+ the hash gate passed.
