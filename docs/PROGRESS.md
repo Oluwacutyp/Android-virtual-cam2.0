@@ -2919,3 +2919,37 @@ MainActivity 8 lines, manifest 1 entry — nothing else.
  10973213280 (21,419,118 B). Owner protocol: install+open (opens), grant
  (may crash — expected), relaunch -> crash screen, COPY -> paste, else
  Files -> Downloads -> VCamStudio -> crash txt.
+
+### Round 54.5 — ONE BUILD: F1-F4 (init-order fix, CRITICAL PATH) + the full round-54 set with toggles DEFAULT OFF (owner correction supersedes the r54.4 park order)
+
+ROOT CAUSE (owner's pasted crash file, SM-S908N, android 36, proc=main):
+NPE in StudioViewModel.<init> — viewModelScope uses
+Dispatchers.Main.immediate, so collectors ran EAGERLY during construction;
+transportDev (1218) / debugFlags (1229) are ~850 lines BELOW the old init
+block (367) -> null at first emission. VM is constructed only after the
+permission grant (StudioScreen sits inside PermissionsGate) -> exactly the
+after-Allow crash. The fatal frame was drop(1)'s unguarded receiver; the
+same NPE had already been CAUGHT by syncDetection's runCatching
+(SYNC_DETECTION_FAIL mode=? in the engine log) — the guard worked, the
+ordering was broken.
+F1 drop(1) removed (plain collect; double-bind moot — syncDetection
+guarded + idempotent since r54.1). F2b ALL collector launches (init@367,
+262 lines + init@1255 CONFIG_EFFECTIVE block) moved into ONE
+startCollectors(); invoked from a NEW LAST init block at 1693 — after
+every property declaration; ordering can never break again (first surgery
+attempt mis-matched the init brace and was DISCARDED via git checkout
+before commit; redo asserted drop(1)+model-collector inside the captured
+body). F3 verified by line numbers: readers (scrfdSessionDev 174,
+_hasCameraLayer 144, transportDev 1218, debugFlags 1229) all < 1693. F4
+VM_COLLECTORS_START first line / VM_READY last line of startCollectors.
+TOGGLES (condition 1): defaults FLIPPED TO OFF for all seven keys
+(transport_attach, transport_probe, ai_fg, xnnpack, feed + NEW
+model_probes, crop_dump) — absent file/missing key = OFF; sheet shows 7
+buttons; DebugFlags doc rewritten. D and E gained real gates:
+runProbes refuses when model_probes off (MODEL_PROBES=off reason=toggle);
+dumpDebugCrops refuses when crop_dump off (AI_CROP_DUMP=off). CONFIG_EFFECTIVE
+(startup + dump) now lists all seven. DEVIATION (stated to owner): G1
+analyzer catch is NOT toggle-gated — disabling a crash-catch can only
+reintroduce the crash it fixes; it is passive instrumentation, same bucket
+as H1-H4 (owner: default ON). B/C/H1-H4 code unchanged (already green
+since r54/r54.3); D probe bytes unchanged (fp16-Conv, r54).

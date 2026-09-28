@@ -267,30 +267,39 @@ fun ModelsSheet(
                             }
                             TextButton(onClick = onLaunchThrough) { Text("Launch through VD") }
                         }
-                        // r54-F: every behaviour independently switchable.
+                        // r54-F / r54.5: every opt-in behaviour switchable,
+                        // ALL DEFAULT OFF (flip on one at a time, dump after).
                         Text(
-                            "Debug toggles (bisect without rebuild)",
+                            "Debug toggles (default OFF — enable one at a time)",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = { onToggleFlag("transport_attach") }) {
-                                Text("Attach: ${if (debugFlags["transport_attach"] ?: true) "on" else "off"}")
+                                Text("Attach: ${if (debugFlags["transport_attach"] ?: false) "on" else "off"}")
                             }
                             TextButton(onClick = { onToggleFlag("transport_probe") }) {
-                                Text("Probe: ${if (debugFlags["transport_probe"] ?: true) "on" else "off"}")
+                                Text("Probe: ${if (debugFlags["transport_probe"] ?: false) "on" else "off"}")
                             }
                             TextButton(onClick = { onToggleFlag("ai_fg") }) {
-                                Text(":ai FG: ${if (debugFlags["ai_fg"] ?: true) "on" else "off"}")
+                                Text(":ai FG: ${if (debugFlags["ai_fg"] ?: false) "on" else "off"}")
                             }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = { onToggleFlag("xnnpack") }) {
-                                Text("XNNPACK: ${if (debugFlags["xnnpack"] ?: true) "on" else "off"}")
+                                Text("XNNPACK: ${if (debugFlags["xnnpack"] ?: false) "on" else "off"}")
                             }
                             TextButton(onClick = { onToggleFlag("feed") }) {
-                                Text("Feed: ${if (debugFlags["feed"] ?: true) "on" else "off"}")
+                                Text("Feed: ${if (debugFlags["feed"] ?: false) "on" else "off"}")
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { onToggleFlag("model_probes") }) {
+                                Text("Probes: ${if (debugFlags["model_probes"] ?: false) "on" else "off"}")
+                            }
+                            TextButton(onClick = { onToggleFlag("crop_dump") }) {
+                                Text("Crops: ${if (debugFlags["crop_dump"] ?: false) "on" else "off"}")
                             }
                         }
                         // r54.1-X4: DEV crash-log access without a PC —

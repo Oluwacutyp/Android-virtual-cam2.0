@@ -5,14 +5,16 @@ import java.io.File
 import java.util.Properties
 
 /**
- * r54-F: the five debug toggles (mandated because A-E ship together — every
- * behaviour must be independently switchable at runtime so a regression can
- * be bisected WITHOUT a rebuild). File-backed Properties in the shared
- * app-private dir so the :ai CHILD reads them too (ai_fg gates the
- * foreground service, xnnpack gates the session build).
+ * r54-F / r54.5: the runtime toggles (mandated because the round ships
+ * together — every behaviour must be independently switchable at runtime so
+ * a regression can be bisected WITHOUT a rebuild). File-backed Properties
+ * in the shared app-private dir so the :ai CHILD reads them too (ai_fg
+ * gates the foreground service, xnnpack gates the session build).
  *
- * DEFAULTS = the new behaviours are ON. An absent/unreadable file means
- * all-on, so the file only ever carries deliberate overrides.
+ * r54.5 (owner): DEFAULTS = OFF for every opt-in behaviour (transport
+ * attach/probe, :ai foreground service, XNNPACK, feed, model probes, crop
+ * dump). An absent/unreadable file means all-OFF; the file only ever
+ * carries deliberate "1" opt-ins.
  */
 object DebugFlags {
 
@@ -22,23 +24,34 @@ object DebugFlags {
     const val KEY_XNNPACK = "xnnpack"
     const val KEY_FEED = "feed"
 
+    // r54.5: item D/E switches (owner: every opt-in behaviour default OFF).
+    const val KEY_MODEL_PROBES = "model_probes"
+    const val KEY_CROP_DUMP = "crop_dump"
+
     val ALL = listOf(
         KEY_TRANSPORT_ATTACH,
         KEY_TRANSPORT_PROBE,
         KEY_AI_FG,
         KEY_XNNPACK,
         KEY_FEED,
+        KEY_MODEL_PROBES,
+        KEY_CROP_DUMP,
     )
 
     private fun file(ctx: Context): File = File(ctx.filesDir, "transport_debug_flags.properties")
 
+    // r54.5 (owner): DEFAULT OFF — absent file / unreadable / missing key
+    // all mean OFF; the file only ever carries deliberate "1" opt-ins.
+    // Passive crash instrumentation (uncaught handlers, breadcrumbs, the
+    // analyzer catch) is deliberately NOT gated by this file and stays
+    // always-on.
     fun isOn(ctx: Context, key: String): Boolean = runCatching {
         val f = file(ctx)
-        if (!f.exists()) return true
+        if (!f.exists()) return false
         val p = Properties()
         f.inputStream().use { p.load(it) }
-        p.getProperty(key, "1") != "0"
-    }.getOrDefault(true)
+        p.getProperty(key, "0") == "1"
+    }.getOrDefault(false)
 
     fun set(ctx: Context, key: String, on: Boolean) {
         runCatching {

@@ -145,6 +145,14 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
     }
 
     override fun dumpDebugCrops() {
+        // r54.5 (owner): item E is toggle-gated, DEFAULT OFF.
+        if (!com.vcamstudio.app.transport.DebugFlags.isOn(
+                service, com.vcamstudio.app.transport.DebugFlags.KEY_CROP_DUMP,
+            )
+        ) {
+            Timber.i("AI_CROP_DUMP=off reason=toggle")
+            return
+        }
         // Consumed by the worker on the next frame WITH a detection.
         debugCropsRequested = true
         Timber.i("AI_CROP_DUMP_REQUESTED")
@@ -210,6 +218,14 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
                 probeTaskIsSet = false
                 runProbes = probesRequested
                 probesRequested = false
+            }
+            // r54.5 (owner): item D is toggle-gated, DEFAULT OFF.
+            if (runProbes && !com.vcamstudio.app.transport.DebugFlags.isOn(
+                    service, com.vcamstudio.app.transport.DebugFlags.KEY_MODEL_PROBES,
+                )
+            ) {
+                Timber.i("MODEL_PROBES=off reason=toggle")
+                runProbes = false
             }
             if (!running) break
             if (path != null) Timber.i("AI_PROBE_WAKE path=%s", path)

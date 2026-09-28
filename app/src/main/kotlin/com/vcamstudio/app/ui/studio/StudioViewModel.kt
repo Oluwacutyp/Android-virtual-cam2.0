@@ -364,7 +364,15 @@ class StudioViewModel @Inject constructor(
     private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
     private data class Quint<A, B, C, D, E>(val a: A, val b: B, val c: C, val d: D, val e: E)
 
-    init {
+    /**
+     * r54.5-F2b: EVERY collector launch lives here, and this runs from the
+     * LAST init block of the class (after every property declaration) —
+     * viewModelScope uses Dispatchers.Main.immediate, so collectors run
+     * EAGERLY during construction; the r54.4 crash was transportDev being
+     * ~830 lines below the old init block. Ordering can never break again.
+     */
+    private fun startCollectors() {
+        Timber.i("VM_COLLECTORS_START") // r54.5-F4
         // Engine -> app: external surfaces for camera/video sources.
         engine.onExternalSourceReady = { sourceId, surface, _, _ ->
             onExternalSourceReady(sourceId, surface)
@@ -501,10 +509,10 @@ class StudioViewModel @Inject constructor(
         viewModelScope.launch {
             // r53: feed toggle re-runs the analyzer gate (transport-only mode
             // needs no AI chain).
-            // r54.1-X2: drop(1) — StateFlow replays its CURRENT value to a
-            // new collector, which re-triggered a bind at startup right
-            // after the permission grant (the r53.1 prime suspect).
-            transportDev.drop(1).collect { syncDetection() }
+            // r54.5-F1: plain collect — the r54.1 drop(1) was removed: the
+            // unguarded drop receiver was the r54.4 fatal frame, and the
+            // double-bind it guarded against is moot (syncDetection is
+            // guarded AND idempotent). Initial emission is harmless now.
         }
         viewModelScope.launch {
             // Round 49: results from the :ai child -> the EXISTING stats
@@ -626,6 +634,19 @@ class StudioViewModel @Inject constructor(
             engine.start()
             createSceneInternal()
         }
+        // r54-F: the effective combination is logged once at startup so a
+        // dump is self-describing.
+        viewModelScope.launch(dispatchers.io) {
+            val m = com.vcamstudio.app.transport.DebugFlags.all(context)
+            debugFlags.value = m
+            Timber.i(
+                com.vcamstudio.app.transport.DebugFlags.effectiveLine(
+                    context,
+                    com.vcamstudio.app.transport.TransportTap.isEnabled(),
+                ),
+            )
+        }
+        Timber.i("VM_READY") // r54.5-F4
     }
 
     fun attachLifecycleOwner(owner: LifecycleOwner) {
@@ -1252,20 +1273,6 @@ class StudioViewModel @Inject constructor(
     }
 
     /** r53: one-tap provider round-trip (no root needed) -> toast + dump. */
-    init {
-        // r54-F: the effective combination is logged once at startup so a
-        // dump is self-describing.
-        viewModelScope.launch(dispatchers.io) {
-            val m = com.vcamstudio.app.transport.DebugFlags.all(context)
-            debugFlags.value = m
-            Timber.i(
-                com.vcamstudio.app.transport.DebugFlags.effectiveLine(
-                    context,
-                    com.vcamstudio.app.transport.TransportTap.isEnabled(),
-                ),
-            )
-        }
-    }
 
     fun runTransportSelfTest() {
         viewModelScope.launch(dispatchers.io) {
@@ -1681,6 +1688,9 @@ class StudioViewModel @Inject constructor(
         mic.stop()
         // Engine is app-scoped; it stays alive across configuration changes.
     }
+    // r54.5-F2b: the LAST initializer in the class — every property
+    // above is initialised before the first collector runs.
+    init { startCollectors() }
 }
 
 /** A finished recording handed to the UI for the auto-share sheet. */
