@@ -2842,3 +2842,7 @@ Throwable, so G1 closes the remaining unguarded surface (compaction,
 TransportTap, breadcrumbs) rather than being the only barrier.
 AiRingTest: new drop-contract test (oversize/negative → false, slot
 untouched, exactly-cap → true). 113 tests total.
+
+**r54.2 ledger**: e22f5ec = HEAD, GREEN run 36409227109 (6m2s), artifact
+ 10963911775 (21,391,519 B). G2a choice reported (raise, not clamp);
+ owner device protocol unchanged (r54.1 steps 0-3 + this build).
