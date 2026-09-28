@@ -3025,3 +3025,24 @@ device-specific changes.
  instrumentation finally gets its frame); test 2: backup 16.9 MB SCRFD ->
  MODEL_EXPORT_OK count=1 + visible file; clear data -> restore ->
  MODEL_IMPORT_OK count=1 (+VERIFY_OK) + SCRFD READY.
+
+### Round 57 — item E fix: crop dump threw on API 36 since r52a (never produced a file); probe name fix + stub auto-install
+
+FIX 1 (the bug): DebugCrops DIR_REL "DCIM/VCamStudio/debug_crops/" ->
+"Download/VCamStudio/debug_crops/" — MediaStore.Files on API 36 rejects
+RELATIVE_PATH outside [Download, Documents] ("Primary directory DCIM not
+allowed"), so EVERY insert threw since r52a; Download/VCamStudio/ is
+device-proven (crash sink). FIX 2: writePng never throws into the
+inference worker — returns Boolean, logs MODEL_CROP_DUMP=fail name= err=
+(insert_null|output_stream_null|compress_false|throwable); ok list only
+counts actually-written files; dumpAlignCrops runCatching stays as
+belt-and-braces (note: the r52a outer guard DID catch today's throw —
+the raw stack in the child log was its Timber.e output). FIX 3:
+MODEL_PROBE inswapper stub loaded "stub_inswapper_128.onnx" but
+installStubs renames that asset to "inswapper_128_fp16.onnx" — the probe
+was structurally unreachable ("missing file" forever). Now probes the
+installed name: 256 B stub today, real 278 MB model once installed.
+OPTIONAL shipped: :ai startup (debug builds only) auto-installs stubs
+when filesDir/models/probe_fp16_conv.onnx is absent (clear-data wipes
+them; not catalogue models) -> AI_STUBS_AUTO_INSTALL n= (guarded, never
+release). No CI/deps/device-specific/crop-math changes.

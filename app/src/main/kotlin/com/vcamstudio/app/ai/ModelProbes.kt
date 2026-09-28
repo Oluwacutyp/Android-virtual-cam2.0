@@ -32,7 +32,13 @@ object ModelProbes {
         Timber.i("MODEL_PROBES_BEGIN dir=%s", modelsDir.absolutePath)
         runCatching { probeFp16Conv(File(modelsDir, "probe_fp16_conv.onnx")) }
             .onFailure { fail("fp16_conv", it) }
-        runCatching { probeInswapperStub(File(modelsDir, "stub_inswapper_128.onnx")) }
+        // r57-FIX3: installStubs() renames the asset to the REAL model's
+        // file name (stub_inswapper_128.onnx -> inswapper_128_fp16.onnx),
+        // so the old name was structurally unreachable — the probe could
+        // only ever print "missing file". Resolves against the 256 B stub
+        // today and the real 278 MB model once installed (slower, still
+        // correct — debug-only probe).
+        runCatching { probeInswapperStub(File(modelsDir, "inswapper_128_fp16.onnx")) }
             .onFailure { fail("inswapper_stub", it) }
         Timber.i("MODEL_PROBES_END")
     }

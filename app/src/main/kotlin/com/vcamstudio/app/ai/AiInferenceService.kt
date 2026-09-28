@@ -73,6 +73,20 @@ class AiInferenceService : Service() {
         // guarantees installation even if that ever changes.)
         com.vcamstudio.app.crash.CrashLogger.ensureInstalled(this)
         com.vcamstudio.app.crash.PhaseMark.markAi(this, "proc_start")
+        // r57 (optional, debug builds): clear data legitimately wipes the
+        // stubs (they are not catalogue models — export/import never
+        // carries them), and re-running the install action by hand is easy
+        // to forget. Small files only; never on release.
+        if (com.vcamstudio.app.BuildConfig.DEBUG &&
+            !java.io.File(filesDir, "models/probe_fp16_conv.onnx").exists()
+        ) {
+            runCatching {
+                val n = com.vcamstudio.app.models.DebugModelTools.installStubs(this)
+                Timber.i("AI_STUBS_AUTO_INSTALL n=%d", n)
+            }.onFailure { t ->
+                Timber.w("AI_STUBS_AUTO_INSTALL_FAIL=%s", t.message ?: t.javaClass.simpleName)
+            }
+        }
         Timber.i("AI_PROC_START pid=%d", Process.myPid())
         // Round 50-A0: memory at birth — distinguishes "native abort" from
         // "the OS killed us" (LMK) when every step line is present but the

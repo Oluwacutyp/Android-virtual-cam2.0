@@ -16,9 +16,9 @@ import java.nio.ByteBuffer
 
 /**
  * r52a (debug, :ai child ONLY): writes the 112 (ArcFace) and 128 (swap)
- * aligned crops of the current frame to DCIM/VCamStudio/debug_crops/ via
- * MediaStore. This settles the diff_x template question BY EYE: if the
- * eyes sit ~8 px left of centre in the 128 crop, the template is wrong.
+ * aligned crops of the current frame via MediaStore. This settles the
+ * diff_x template question BY EYE: if the eyes sit ~8 px left of centre
+ * in the 128 crop, the template is wrong.
  *
  * Runs on the inference worker, one-shot per binder request. The I420
  * buffer is the same packed buffer ScrfdPreprocess.fill consumed; [lm640]
@@ -26,7 +26,11 @@ import java.nio.ByteBuffer
  */
 object DebugCrops {
 
-    private const val DIR_REL = "DCIM/VCamStudio/debug_crops/"
+    // r57-FIX1: MediaStore.Files rejects RELATIVE_PATH under DCIM on
+    // API 36 ("allowed directories are [Download, Documents]") — every
+    // insert threw since r52a, so no crop PNG was ever written.
+    // Download/VCamStudio/ is proven on this device (the crash sink).
+    private const val DIR_REL = "Download/VCamStudio/debug_crops/"
 
     fun dumpAlignCrops(
         service: AiInferenceService,
@@ -53,8 +57,8 @@ object DebugCrops {
                 val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
                 Canvas(out).drawBitmap(full, mat, Paint(Paint.FILTER_BITMAP_FLAG))
                 val name = "align${size}_${System.currentTimeMillis()}.png"
-                writePng(service, out, name)
-                names.add(name)
+                // r57-FIX2: only written files land in the ok list.
+                if (writePng(service, out, name)) names.add(name)
             }
             full.recycle()
             Timber.i("MODEL_CROP_DUMP=ok:%s", names.joinToString(","))
@@ -88,18 +92,39 @@ object DebugCrops {
         return bmp
     }
 
-    /** CrashLogger pattern: MediaStore.Files + RELATIVE_PATH (API 29+). */
-    private fun writePng(service: AiInferenceService, bmp: Bitmap, name: String) {
-        val cv = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, DIR_REL)
+    /**
+     * CrashLogger pattern: MediaStore.Files + RELATIVE_PATH (API 29+).
+     * r57-FIX2: never throws into the inference worker — a MediaStore
+     * failure logs MODEL_CROP_DUMP=fail name= err= and returns false, so
+     * one bad write cannot eat the second crop or fake the ok line.
+     */
+    private fun writePng(service: AiInferenceService, bmp: Bitmap, name: String): Boolean {
+        return try {
+            val cv = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, DIR_REL)
+            }
+            val uri = service.contentResolver.insert(
+                MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), cv,
+            )
+            if (uri == null) {
+                Timber.i("MODEL_CROP_DUMP=fail name=%s err=insert_null", name)
+                return false
+            }
+            service.contentResolver.openOutputStream(uri)?.use { os ->
+                if (!bmp.compress(Bitmap.CompressFormat.PNG, 100, os)) {
+                    Timber.i("MODEL_CROP_DUMP=fail name=%s err=compress_false", name)
+                    return false
+                }
+            } ?: run {
+                Timber.i("MODEL_CROP_DUMP=fail name=%s err=output_stream_null", name)
+                return false
+            }
+            true
+        } catch (t: Throwable) {
+            Timber.i("MODEL_CROP_DUMP=fail name=%s err=%s", name, t.message ?: t.javaClass.simpleName)
+            false
         }
-        val uri = service.contentResolver.insert(
-            MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), cv,
-        ) ?: error("MediaStore insert returned null")
-        service.contentResolver.openOutputStream(uri)?.use { os ->
-            bmp.compress(Bitmap.CompressFormat.PNG, 100, os)
-        } ?: error("output stream null")
     }
 }
