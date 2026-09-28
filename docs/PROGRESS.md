@@ -2496,3 +2496,42 @@ identity WITHIN TOLERANCE — 1f-(1f-x) is not bit-exact x, convex hull).
 | Round | Commit | CI run | Result | Artifact (vcam-studio-debug-apk) |
 |---|---|---|---|---|
 | r51 B+C | 602e366 | 36348809303 | GREEN 7m4s | id 10940949013 (21,272,865 B) |
+
+### Round 51.1 — dump-6: B1 checkpoint FIRED (4 threads lost, reverted) + THE BOTTOM-PINNED-BOX BUG FOUND & FIXED (owner-directed)
+
+DUMP-6 (r51 build): child SURVIVED again (heartbeats tick 107-127, 127+ s;
+two consecutive survives -> the killer is nondeterministic, remedy menu
+stands). B3/C4 verified live on device: coalesced=337 (reconciles
+SUBMITTED=476 vs RUNS=115), FACE_OVERLAY=age=1002ms mirrored=true
+upright=480x640 box=[0.006,0.986,0.147,1.000] score=0.838. C1 EMA + C2
+expiry + C3 dp styling in effect (mirrored box consistent with front cam).
+
+B1 CHECKPOINT FIRED -> REVERTED: 4 threads averaged AI_INFER 1093ms /
+AI_PRE 173ms vs 738 / 115 at 2 (SCRFD_MS 1205.7 vs 844.6); renderer
+dropped=39 p95=34 (vs 3 / 22 in dump-5) — contention visible. INTRA_OP
+back to 2.
+
+THE REAL BUG (owner diagnosis, confirmed in code): the face box was pinned
+to the frame bottom (score tracked the face, geometry did not).
+ScrfdPostprocess.decode assumed the export layout [stride 8 x2a, 16 x1a,
+32 x1a] BY OUTPUT POSITION; scrfd_10g_bnkps actually carries TWO anchors
+at EVERY stride (12800/3200/800 entries — the existing groupOutputs test
+already modeled this!). The stride-16 tensor (3200 entries) was decoded
+on a 40-grid with A=1: gy ran to 79, cy=(79.5)*16=1272 > 640 — boxes past
+the frame bottom, r49's raw y1=806/y2=1106 explained. FIX: (stride,
+anchors) now derived from each pair's ENTRY COUNT via resolveLayout
+(8/16/32 smallest-first, anchors 1..8, null -> pair SKIPPED not guessed);
+works for both the real 2-anchor layout and the old 1-anchor variant.
+
+Owner patches 1-5 all in:
+1. ONNX_OUTPUT_SHAPES log (proves the device export's layout).
+2. Test `decode_centres_the_box_on_the_anchor_that_scored` (owner's exact
+   values) + stride-16 regression pin + resolveLayout unit tests; the
+   old `anchor counts` test (1600/400) asserted the WRONG constants and
+   was rewritten to the corrected 12800/3200/800 fact set.
+3. AI_INFER_SAMPLE now carries frame/rot/upright/pad/scale + RAW pre-clamp
+   det box + score.
+4. B1 reverted to INTRA_OP=2 (see above).
+5. Child-log tail: read 40, keep last 2 heartbeats only, then last 24 —
+   boot-time SCRFD_/ONNX_ lines survive past ~25 s of child life (they
+   were the lines we needed most and they were the ones being flooded out).

@@ -20,11 +20,11 @@ class ScrfdDetector(
 ) : AutoCloseable {
 
     companion object {
-        // r51-B1 (one variable vs the dump-5 baseline PRE=113 + INFER=726ms
-        // at intra=2): intra 2 -> 4. Checkpoint for the next dump: if
-        // AI_INFER_AVG_MS does not beat the 2-thread baseline, or the child
-        // dies / SCRFD_FPS drops -> revert to 2.
-        const val INTRA_OP_THREADS = 4
+        // r51-B1 checkpoint FIRED (dump-6): 4 threads averaged AI_INFER 1093ms
+        // / PRE 173ms vs 738 / 115 at 2 - four ORT threads cost more than
+        // they win on this SoC. REVERTED to 2 (owner patch 4). Do not raise
+        // again without a new one-variable proposal.
+        const val INTRA_OP_THREADS = 2
         const val INTER_OP_THREADS = 1
     }
 
@@ -89,6 +89,15 @@ class ScrfdDetector(
         // (no shape change is made here).
         val inShape = (session.inputInfo[inputName]?.info as? ai.onnxruntime.TensorInfo)?.shape
         Timber.i("ONNX_INPUT_SHAPE shape=%s", inShape?.contentToString() ?: "unknown")
+        // r51: the export's actual output layout — the entry count of each
+        // pair identifies its (stride, anchors) for ScrfdPostprocess
+        // .resolveLayout; this line proves which layout the device model
+        // carries.
+        val outShapes = session.outputInfo.entries.joinToString(" | ") { e ->
+            val s = (e.value.info as? ai.onnxruntime.TensorInfo)?.shape
+            "${e.key}=${s?.contentToString()}"
+        }
+        Timber.i("ONNX_OUTPUT_SHAPES %s", outShapes)
     }
 
     /**

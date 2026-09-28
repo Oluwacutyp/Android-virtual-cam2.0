@@ -35,22 +35,43 @@ data class Detection(
  * unit-testable — the same discipline as the golden ST harness.
  *
  * SCRFD outputs are distance maps at anchor centers. For stride s, the
- * grid is (640/s)x(640/s); scrfd_10g_bnkps uses 2 anchors per location on
- * stride 8 and 1 on strides 16/32 (anchor counts 12800/1600/400 for a
- * 640 input). Decode (distance2bbox):
+ * grid is (640/s)x(640/s); decode (distance2bbox):
  *   cx = (gx + 0.5) * s ; cy = (gy + 0.5) * s
  *   x1 = cx - d0*s ; y1 = cy - d1*s ; x2 = cx + d2*s ; y2 = cy + d3*s
  *
  * Output tensors are grouped by their LAST dimension: 1 = scores,
- * 4 = boxes, 10 = keypoints (unused this round). Within each group the
- * order corresponds to strides 8, 16, 32.
+ * 4 = boxes, 10 = keypoints (unused this round). r51: each pair's
+ * (stride, anchors) is derived from its ENTRY COUNT via
+ * [resolveLayout] — the original output-position assumption
+ * (stride order 8/16/32, anchors 2/1/1) does not match the actual
+ * scrfd_10g_bnkps export, which carries TWO anchors at every stride
+ * (12800/3200/800 entries for a 640 input); decoding the stride-16
+ * tensor on a 40-grid with A=1 drove gy to 79 and cy to 1272 — boxes
+ * pinned past the frame bottom while scores stayed plausible (the
+ * dump-5/6 device signature).
  */
 object ScrfdPostprocess {
 
     const val SCORE_THRESHOLD = 0.5f
     const val NMS_IOU_THRESHOLD = 0.45f
-    val STRIDES = intArrayOf(8, 16, 32)
-    val ANCHORS_PER_STRIDE = intArrayOf(2, 1, 1)
+
+    /**
+     * r51: identifies (stride, anchors) from an output pair's entry count:
+     * entries = grid^2 * anchors with grid = inputSize/stride. Strides are
+     * probed smallest-first so ties resolve toward the smaller stride;
+     * anchors are capped at 8. Returns null for entry counts that fit no
+     * layout — [decode] SKIPS such pairs rather than guessing.
+     */
+    fun resolveLayout(entries: Int, inputSize: Int): Pair<Int, Int>? {
+        for (stride in intArrayOf(8, 16, 32)) {
+            val grid = inputSize / stride
+            val cells = grid * grid
+            if (entries < cells || entries % cells != 0) continue
+            val anchors = entries / cells
+            if (anchors in 1..8) return stride to anchors
+        }
+        return null
+    }
 
     /** Flat score tensors per stride, each [N] (N = grid^2 * anchors). */
     fun decode(
@@ -61,12 +82,11 @@ object ScrfdPostprocess {
         val out = ArrayList<Detection>(256)
         for (s in scores.indices) {
             if (s >= boxes.size) break
-            val stride = STRIDES[s]
-            val anchors = ANCHORS_PER_STRIDE[s]
-            val grid = inputSize / stride
             val sc = scores[s]
             val bx = boxes[s]
             val n = minOf(sc.size, bx.size / 4)
+            val (stride, anchors) = resolveLayout(n, inputSize) ?: continue
+            val grid = inputSize / stride
             var i = 0
             while (i < n) {
                 val score = sc[i]

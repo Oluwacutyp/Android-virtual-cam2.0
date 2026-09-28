@@ -302,9 +302,16 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
         if (recentInferMs.size >= 20) recentInferMs.removeFirst()
         recentInferMs.addLast(inferMs)
         if (framesDone % 10L == 0L) {
+            // r51: raw pre-clamp detection + letterbox params so the dump
+            // shows the geometry BEFORE toFaceBox normalization.
             Timber.i(
-                "AI_INFER_SAMPLE pre=%dms infer=%dms face=%s queued=%d coalesced=%d",
+                "AI_INFER_SAMPLE pre=%dms infer=%dms face=%s queued=%d coalesced=%d frame=%dx%d rot=%d upright=%dx%d pad=%.1f,%.1f scale=%.3f det=[%.0f,%.0f,%.0f,%.0f] score=%.2f",
                 preMs, inferMs, (detection != null).toString(), queuedCount(), framesCoalesced,
+                task.width, task.height, task.rotationDeg,
+                letterbox?.uprightW ?: 0, letterbox?.uprightH ?: 0,
+                letterbox?.padX ?: 0f, letterbox?.padY ?: 0f, letterbox?.scale ?: 0f,
+                detection?.x1 ?: 0f, detection?.y1 ?: 0f, detection?.x2 ?: 0f, detection?.y2 ?: 0f,
+                detection?.score ?: 0f,
             )
             Timber.i("AI_PRE_AVG_MS=%d n=%d", recentPreMs.average().toLong(), recentPreMs.size)
             Timber.i("AI_INFER_AVG_MS=%d n=%d", recentInferMs.average().toLong(), recentInferMs.size)

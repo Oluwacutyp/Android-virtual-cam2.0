@@ -103,9 +103,19 @@ object AiProcMonitor {
         // abort and name the exact step that died.
         val ctx = appContext
         if (ctx != null) {
-            for (line in AiChildLogTree.tail(ctx, 24)) {
-                append("\nAI_PROC_CHILD_LOG=").append(line)
-            }
+            // r51: the 1 Hz heartbeat fills a flat 24-line tail within ~25 s
+            // of child life, pushing the boot-time SCRFD_/ONNX_ lines out of
+            // the dump. Read a wider window (40), keep at most the last two
+            // heartbeats, then take the final 24.
+            val wide = AiChildLogTree.tail(ctx, 40)
+            val keepHb = wide.withIndex()
+                .filter { it.value.contains("AI_HEARTBEAT") }
+                .map { it.index }
+                .takeLast(2)
+                .toSet()
+            wide.filterIndexed { i, line -> i in keepHb || !line.contains("AI_HEARTBEAT") }
+                .takeLast(24)
+                .forEach { line -> append("\nAI_PROC_CHILD_LOG=").append(line) }
         }
     }
 

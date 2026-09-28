@@ -14,11 +14,71 @@ class ScrfdPostprocessTest {
     private fun feq(a: Float, b: Float, eps: Float = 1e-4f) = abs(a - b) < eps
 
     @Test
-    fun `anchor counts match scrfd_10g_bnkps for 640 input`() {
-        // stride 8: 2 anchors * 80*80 = 12800; stride 16: 1600; stride 32: 400
-        assertEquals(12800, (640 / 8) * (640 / 8) * ScrfdPostprocess.ANCHORS_PER_STRIDE[0])
-        assertEquals(1600, (640 / 16) * (640 / 16) * ScrfdPostprocess.ANCHORS_PER_STRIDE[1])
-        assertEquals(400, (640 / 32) * (640 / 32) * ScrfdPostprocess.ANCHORS_PER_STRIDE[2])
+    fun `layout resolves two anchors per stride for the real export`() {
+        // r51 correction: scrfd_10g_bnkps carries TWO anchors at EVERY
+        // stride (12800/3200/800 entries for a 640 input). The previous
+        // assertion here (1600/400) encoded the wrong [2,1,1] assumption
+        // that pinned device boxes to the frame bottom.
+        assertEquals(8 to 2, ScrfdPostprocess.resolveLayout(12800, 640))
+        assertEquals(16 to 2, ScrfdPostprocess.resolveLayout(3200, 640))
+        assertEquals(32 to 2, ScrfdPostprocess.resolveLayout(800, 640))
+    }
+
+    @Test
+    fun `layout resolves one-anchor variant and rejects unknown counts`() {
+        assertEquals(8 to 1, ScrfdPostprocess.resolveLayout(6400, 640))
+        assertEquals(16 to 1, ScrfdPostprocess.resolveLayout(1600, 640))
+        assertEquals(32 to 1, ScrfdPostprocess.resolveLayout(400, 640))
+        assertEquals(null, ScrfdPostprocess.resolveLayout(12345, 640))
+        assertEquals(null, ScrfdPostprocess.resolveLayout(3, 640))
+    }
+
+    @Test
+    fun decode_centres_the_box_on_the_anchor_that_scored() {
+        val grid = 80          // 640 / 8
+        val anchors = 2
+        val n = grid * grid * anchors
+        val scores = FloatArray(n)
+        val boxes = FloatArray(n * 4)
+        val pos = 40 * grid + 20          // gx=20, gy=40
+        val i = pos * anchors             // first anchor at that position
+        scores[i] = 0.9f
+        // 4 px each side, expressed in stride units
+        boxes[i * 4 + 0] = 4f / 8f
+        boxes[i * 4 + 1] = 4f / 8f
+        boxes[i * 4 + 2] = 4f / 8f
+        boxes[i * 4 + 3] = 4f / 8f
+        val dets = ScrfdPostprocess.decode(listOf(scores), listOf(boxes), 640)
+        assertEquals(1, dets.size)
+        val d = dets[0]
+        // anchor centre = ((20+0.5)*8, (40+0.5)*8) = (164, 324)
+        assertEquals(160f, d.x1, 0.5f)
+        assertEquals(320f, d.y1, 0.5f)
+        assertEquals(168f, d.x2, 0.5f)
+        assertEquals(328f, d.y2, 0.5f)
+    }
+
+    @Test
+    fun `decode resolves stride16 two-anchor layout (dump-6 bug)`() {
+        // The device bug: the stride-16 tensor (3200 entries, 2 anchors)
+        // was decoded as 40-grid A=1 — gy ran to 79, cy to 1272.
+        val n = 3200
+        val scores = FloatArray(n)
+        val boxes = FloatArray(n * 4)
+        val grid = 40
+        val i = (25 * grid + 10) * 2      // gx=10, gy=25, anchor 0
+        scores[i] = 0.8f
+        boxes[i * 4 + 0] = 4f / 16f
+        boxes[i * 4 + 1] = 4f / 16f
+        boxes[i * 4 + 2] = 4f / 16f
+        boxes[i * 4 + 3] = 4f / 16f
+        val dets = ScrfdPostprocess.decode(listOf(scores), listOf(boxes), 640)
+        assertEquals(1, dets.size)
+        // anchor centre = (168, 408); 4 px each side
+        assertEquals(164f, dets[0].x1, 0.5f)
+        assertEquals(404f, dets[0].y1, 0.5f)
+        assertEquals(172f, dets[0].x2, 0.5f)
+        assertEquals(412f, dets[0].y2, 0.5f)
     }
 
     @Test
