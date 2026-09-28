@@ -49,6 +49,14 @@ object SwapTest {
     private const val W600K_BYTES = 174_383_860L
     private const val INSWAPPER_BYTES = 277_680_829L
 
+    // r58 ADDENDUM (owner parsed both real files; hash-matched the
+    // catalogue): the emap initializer is literally NAMED "initializer",
+    // it is the ONLY FLOAT32 initializer in the file (all weights are
+    // FLOAT16), and its sha256 below is the C-order row-major raw bytes
+    // (tobytes(), NO transpose). All of these are HARD GATES now.
+    private const val EMAP_INIT_NAME = "initializer"
+    private const val EMAP_SHA256 = "370af5bf707dafdbea8a40448d697d9697610bd223ecf92887af9c9cc7055ac8"
+
     fun run(service: AiInferenceService, snapIn: FaceSnapshot?) {
         try {
             runInner(service, snapIn)
@@ -122,6 +130,10 @@ object SwapTest {
                     for (i in 0 until SwapMath.EMBED_DIM) emb[i] = fb.get(i)
                 }
             }
+            // r58 ADDENDUM: MANDATORY. w600k ends Flatten->Gemm->
+            // BatchNormalization->"683", so the raw output is batch-
+            // normalised and NOT unit length — without this explicit L2 the
+            // latent is wrong while still looking plausible.
             val normAfter = SwapMath.l2norm(emb)
             Timber.i("ARCFACE_EMBED=ok dim=512 norm=%.6f ms=%d", normAfter, SystemClock.elapsedRealtime() - t0)
 
@@ -262,19 +274,38 @@ object SwapTest {
      */
     private fun carveEmap(insw: File, modelsDir: File): FloatArray? {
         val dst = File(modelsDir, "emap.bin")
+        // Cached path is ALSO hard-gated: a stale/corrupt emap.bin is
+        // deleted and re-carved, never silently trusted.
         if (dst.exists() && SwapMath.validEmapBytes(dst.length().toInt())) {
-            val sha = sha256(dst)
-            Timber.i("EMAP_CARVE=ok cached=true bytes=%d shape=512x512 sha256=%s", dst.length(), sha ?: "-")
-            return readEmap(dst)
+            val cached = sha256(dst)
+            if (cached == EMAP_SHA256) {
+                Timber.i("EMAP_CARVE=ok cached=true bytes=%d shape=512x512 sha256=%s", dst.length(), cached)
+                return readEmap(dst)
+            }
+            Timber.i("EMAP_CARVE=cached_mismatch sha256=%s — re-carving", cached ?: "-")
+            runCatching { dst.delete() }
         }
         val t0 = SystemClock.elapsedRealtime()
-        val raw = findEmapRawData(insw)
-        if (raw == null) {
+        val t = findEmapRawData(insw)
+        if (t == null) {
             Timber.i("EMAP_CARVE=fail:initializer_not_found")
             return null
         }
-        if (!SwapMath.validEmapBytes(raw.size)) {
-            Timber.i("EMAP_CARVE=fail:bad_size bytes=%d", raw.size)
+        val raw = t.raw
+        if (raw == null || !SwapMath.validEmapBytes(raw.size)) {
+            Timber.i("EMAP_CARVE=fail:bad_size bytes=%d", raw?.size ?: -1)
+            return null
+        }
+        // r58 ADDENDUM: the initializer's literal name is "initializer".
+        if (t.name != EMAP_INIT_NAME) {
+            Timber.i("EMAP_CARVE=fail:wrong_name name=%s", t.name ?: "-")
+            return null
+        }
+        // HARD GATE: C-order float32 raw bytes — a mismatch means the wrong
+        // initializer or the wrong byte order (owner-verified hash).
+        val got = sha256Hex(raw)
+        if (got != EMAP_SHA256) {
+            Timber.i("EMAP_CARVE=fail:sha_mismatch expected=%s got=%s", EMAP_SHA256, got ?: "-")
             return null
         }
         runCatching {
@@ -285,7 +316,7 @@ object SwapTest {
         }
         Timber.i(
             "EMAP_CARVE=ok bytes=%d shape=512x512 sha256=%s ms=%d",
-            raw.size, sha256(dst) ?: "-", SystemClock.elapsedRealtime() - t0,
+            raw.size, got, SystemClock.elapsedRealtime() - t0,
         )
         return readEmap(dst)
     }
@@ -295,6 +326,12 @@ object SwapTest {
         val fb = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
         FloatArray(SwapMath.EMBED_DIM * SwapMath.EMBED_DIM) { fb.get(it) }
     }.getOrNull()
+
+    private fun sha256Hex(b: ByteArray): String = runCatching {
+        val d = MessageDigest.getInstance("SHA-256")
+        d.update(b)
+        d.digest().joinToString("") { "%02x".format(it) }
+    }.getOrDefault("")
 
     private fun sha256(f: File): String? = runCatching {
         val d = MessageDigest.getInstance("SHA-256")
@@ -316,7 +353,7 @@ object SwapTest {
      * varint, name=8 string, raw_data=9 bytes}. Returns raw_data of the
      * FLOAT tensor with dims [512,512], or null.
      */
-    private fun findEmapRawData(modelFile: File): ByteArray? {
+    private fun findEmapRawData(modelFile: File): TensorInfo? {
         val bytes = modelFile.readBytes()
         // graph = ModelProto field 7 (length-delimited)
         var graph: Pair<Int, Int>? = null // (start, end)
@@ -325,17 +362,20 @@ object SwapTest {
             false // keep walking (one top-level graph, but be safe)
         } ?: return null
         val (gs, ge) = graph ?: return null
-        // each initializer = GraphProto field 5 (length-delimited)
-        var result: ByteArray? = null
+        // each initializer = GraphProto field 5 (length-delimited).
+        // r58 ADDENDUM: FLOAT32 is the robust selector (every weight in
+        // this file is FLOAT16, the emap is the only fp32 initializer) —
+        // no graph connectivity check needed. Name/shape/bytes/sha are
+        // then ASSERTED by the caller (hard gates).
+        var result: TensorInfo? = null
         walkFields(bytes, gs, ge) { field, wire, start, len ->
             if (field == 5 && wire == 2) {
                 val t = parseTensor(bytes, start, start + len)
-                val raw = t?.raw
-                if (t != null && raw != null && t.dtype == 1 &&
+                if (t != null && t.dtype == 1 &&
                     t.dims.size == 2 && t.dims[0] == 512L && t.dims[1] == 512L &&
-                    raw.size == 1_048_576
+                    t.raw != null && t.raw!!.size == 1_048_576
                 ) {
-                    result = raw
+                    result = t
                     true // stop
                 } else {
                     false
@@ -350,6 +390,7 @@ object SwapTest {
     private class TensorInfo {
         val dims = ArrayList<Long>()
         var dtype: Int = 0
+        var name: String? = null
         var raw: ByteArray? = null
     }
 
@@ -361,6 +402,7 @@ object SwapTest {
             when (field) {
                 1 -> if (wire == 0) t.dims.add(readVarint(b, start, len))
                 2 -> if (wire == 0) t.dtype = readVarint(b, start, len).toInt()
+                8 -> if (wire == 2 && t.name == null) t.name = String(b, start, len, Charsets.UTF_8)
                 9 -> if (wire == 2 && t.raw == null) t.raw = b.copyOfRange(start, start + len)
             }
             false

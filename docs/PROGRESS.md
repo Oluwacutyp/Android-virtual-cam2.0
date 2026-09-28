@@ -3103,3 +3103,21 @@ FaceAlign untouched, no per-frame path change, no download of emap.
  / 2x SWAP_RUN / SWAP_SELFTEST ratio well under 0.5 / PASTE); re-run
  Dump crops -> 128 crop eyes ~8 px LEFT of centre; Phase-1 unchanged
  (fps ~58.8, HEALTHY).
+
+### Round 58 ADDENDUM — emap carve upgraded log-only -> HARD GATE (owner parsed the real 278 MB + 174 MB files; both hash-match the catalogue)
+
+Verified contracts (no device re-check needed): emap initializer is
+literally named "initializer", is the ONLY FLOAT32 initializer in the
+inswapper file (all weights FLOAT16 — dtype alone is the robust selector),
+sha256 of the C-order row-major raw bytes (tobytes(), NO transpose) =
+370af5bf707dafdbea8a40448d697d9697610bd223ecf92887af9c9cc7055ac8.
+SwapTest changes: walker returns the matched TensorInfo (name captured,
+TensorProto.name field 8); carveEmap gates on name=="initializer",
+raw len == 1,048,576, and sha256(raw) == EMAP_SHA256 — mismatch logs
+EMAP_CARVE=fail:wrong_name|sha_mismatch expected= got= and the pipeline
+STOPS. Cached emap.bin is now ALSO hash-gated: mismatch -> delete +
+re-carve (never silently trusted). Stage 2 comment records WHY the L2 is
+mandatory (Flatten->Gemm->BatchNormalization->"683" tail is not unit
+length); the l2norm call itself was already in place (r58). Contracts
+confirmed as implemented: input.1/683, target/source/output, fp32 I/O,
+fp16 weights-only, opset 11/15, "None" string batch dim.
