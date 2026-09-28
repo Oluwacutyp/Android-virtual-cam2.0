@@ -81,7 +81,7 @@ class AiInferenceService : Service() {
         // low-hanging fruit (the dump-1 idle-death signature). Every call
         // is wrapped: an FGS failure degrades to the previous behaviour and
         // logs AI_PROC_FG_FAIL — it must never crash the child.
-        @Volatile var fg = false
+        var fg = false
         if (!com.vcamstudio.app.transport.DebugFlags.isOn(
                 this, com.vcamstudio.app.transport.DebugFlags.KEY_AI_FG,
             )

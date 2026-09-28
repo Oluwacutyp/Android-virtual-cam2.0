@@ -35,19 +35,19 @@ class TransportProvider : ContentProvider() {
         // to capture provider-phase crashes (CrashLogger.install is
         // idempotent; the Application path stays as the second line).
         runCatching { com.vcamstudio.app.crash.CrashLogger.ensureInstalled(ctx) }
-        return if (!DebugFlags.isOn(ctx, DebugFlags.KEY_TRANSPORT_ATTACH)) {
+        if (!DebugFlags.isOn(ctx, DebugFlags.KEY_TRANSPORT_ATTACH)) {
             Log.i(TAG, "TRANSPORT_BOOT=deferred reason=transport_attach=off")
-            true
-        } else {
-            runCatching {
-                TransportManager.attach(ctx)
-                Log.i(TAG, "TRANSPORT_BOOT=provider_attached")
-            }.onFailure { t ->
-                Log.e(TAG, "TRANSPORT_BOOT=provider_failed", t)
-            }.getOrDefault(false).also { ok ->
-                if (!ok) Log.e(TAG, "TRANSPORT_BOOT=provider_failed(attach returned false)")
-            }
+            return true
         }
+        val attached = runCatching {
+            TransportManager.attach(ctx)
+            Log.i(TAG, "TRANSPORT_BOOT=provider_attached")
+            true
+        }.onFailure { t ->
+            Log.e(TAG, "TRANSPORT_BOOT=provider_failed", t)
+        }.getOrDefault(false)
+        if (!attached) Log.e(TAG, "TRANSPORT_BOOT=provider_failed(attach returned false)")
+        return attached
     }
 
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {

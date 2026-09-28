@@ -275,25 +275,23 @@ fun ModelsSheet(
                             modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            fun flag(key: String, label: String) {
-                                val on = debugFlags[key] ?: true
-                                TextButton(onClick = { onToggleFlag(key) }) {
-                                    Text("$label: ${if (on) "on" else "off"}")
-                                }
+                            TextButton(onClick = { onToggleFlag("transport_attach") }) {
+                                Text("Attach: ${if (debugFlags["transport_attach"] ?: true) "on" else "off"}")
                             }
-                            flag("transport_attach", "Attach")
-                            flag("transport_probe", "Probe")
-                            flag("ai_fg", ":ai FG")
+                            TextButton(onClick = { onToggleFlag("transport_probe") }) {
+                                Text("Probe: ${if (debugFlags["transport_probe"] ?: true) "on" else "off"}")
+                            }
+                            TextButton(onClick = { onToggleFlag("ai_fg") }) {
+                                Text(":ai FG: ${if (debugFlags["ai_fg"] ?: true) "on" else "off"}")
+                            }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            fun flag(key: String, label: String) {
-                                val on = debugFlags[key] ?: true
-                                TextButton(onClick = { onToggleFlag(key) }) {
-                                    Text("$label: ${if (on) "on" else "off"}")
-                                }
+                            TextButton(onClick = { onToggleFlag("xnnpack") }) {
+                                Text("XNNPACK: ${if (debugFlags["xnnpack"] ?: true) "on" else "off"}")
                             }
-                            flag("xnnpack", "XNNPACK")
-                            flag("feed", "Feed")
+                            TextButton(onClick = { onToggleFlag("feed") }) {
+                                Text("Feed: ${if (debugFlags["feed"] ?: true) "on" else "off"}")
+                            }
                         }
                     }
                 }
