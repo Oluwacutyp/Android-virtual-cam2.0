@@ -2669,3 +2669,21 @@ anywhere; if no route is available the UI/caps say so with the reason.
 JVM tests (+8): route matrix (none/root-preferred/all-3-gates/debug
 override), su classification, selinux parse, caps-line format, header
 roundtrip, seqlock even/odd stability.
+
+### Ledger
+
+| Round | Commit | CI run | Result | Artifact (vcam-studio-debug-apk) |
+|---|---|---|---|---|
+| r53 transport v0 | 21d0a35 | 36394252085 | GREEN 7m10s | id recorded in chat + below |
+
+r53 CI debugging record (3 red runs, all named): (1) f9ce66f — execSu
+Boolean==Int, AssociationInfo.id not on the public compile surface
+(reflection now), ModelsSheet LocalContext declared after first use;
+(2) 9cbff14 — AndroidAppHelper is NOT in the compileOnly api:82 jar
+(ActivityThread.currentApplication reflection idiom now), and Renderer as
+a NESTED class cannot see outer fields (reader/quad passed explicitly);
+(3) 21d0a35 GREEN — JVM test bugs: createTempFile prefix >=3 chars, route
+test used api=34 so the api<34 gate never fired (test now api=33).
+New CI-proven facts: classic aidl array params need `in` (r52a);
+AndroidAppHelper absent from xposed api:82 compile jar; AssociationInfo
+public surface is unreliable at compileSdk 34 (reflection).
