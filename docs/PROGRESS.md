@@ -2701,3 +2701,9 @@ path in-process (ContentResolver.call -> SharedMemory parcelable ->
 read-only map -> seqlock header validation) — works on ANY device, no
 root/Xposed; result in a toast AND TRANSPORT_SELFTEST=ok|fail:<detail> in
 TRANSPORT_SECTION. "Self-test" button next to "Detect".
+
+### Ledger
+
+| Round | Commit | CI run | Result | Artifact (vcam-studio-debug-apk) |
+|---|---|---|---|---|
+| r53.1 testability | 5603ec5 | 36395529261 | GREEN 7m47s | id 10958615186 (21,370,532 B) |
