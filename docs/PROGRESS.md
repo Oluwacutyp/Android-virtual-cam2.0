@@ -2877,3 +2877,10 @@ captured main-side in setModelPath). H4 every durable child line prefixed
 G1 kept (r54.2). NOTE: working tree has out-of-band uncommitted changes
 (README.md, .github/, .gitignore) NOT from this branch's work — left
 untouched, not committed here.
+
+**r54.3 ledger**: 6acb5ef (RED: python heredoc collapsed \\\\S -> \S in
+ Kotlin — unsupported escape, 3 lines) → 631f132 = HEAD, GREEN run
+ 36414759374 (7m13s), artifact 10965904276 (21,395,657 B). INCIDENT recorded: the local .git
+ store was reset to 4581e06 (branch point) mid-turn — first commit landed
+ on the initial commit and push was rejected; recovered via git reset
+ b5bb034 + re-add of exactly the 8 r54.3 paths; remote history intact.
