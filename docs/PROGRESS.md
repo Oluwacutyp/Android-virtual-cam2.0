@@ -2985,3 +2985,11 @@ scrfd_fill_null.txt. 4 NOOP: SCRFD_SUSPECT_NOOP frames= after 20
 consecutive infer==0 (once per run). CONFIG_EFFECTIVE (startup + dump)
 now ends with fill_null=<reason|none> read from the file (cross-process
 safe). NO model/ring/transport/stub changes (owner: nothing else).
+
+**r55 ledger**: 243eed2 = HEAD, GREEN run 36443384258 (7m35s), artifact
+ 10978904691 (21,420,964 B). Owner protocol: install (with detection
+ toggle on as before), 60 s with a face, paste dump — the dump must now
+ contain SCRFD_FILL_ENTER (+caps/needs) or SCRFD_FILL_NULL reason=,
+ SCRFD_FILL_FAIL count=, SCRFD_STATE=DEGRADED reason=fill_null after 10,
+ SCRFD_SUSPECT_NOOP after 20 zero-infer frames, and CONFIG_EFFECTIVE ...
+ fill_null=<reason>.
