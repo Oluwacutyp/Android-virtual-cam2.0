@@ -313,8 +313,8 @@ fun ModelsSheet(
                                 val head = runCatching {
                                     f.useLines { ls -> ls.take(10).joinToString(" ") }
                                 }.getOrDefault("")
-                                val proc = Regex("proc=(\S+)").find(head)?.groupValues?.get(1) ?: "?"
-                                val phase = Regex("last_phase=(\S+)").find(head)?.groupValues?.get(1) ?: "?"
+                                val proc = Regex("proc=([^ ]+)").find(head)?.groupValues?.get(1) ?: "?"
+                                val phase = Regex("last_phase=([^ ]+)").find(head)?.groupValues?.get(1) ?: "?"
                                 "${f.name}  ${f.length() / 1024} KB  proc=$proc last_phase=$phase"
                             } ?: "none — no crashes recorded",
                             style = MaterialTheme.typography.bodySmall,
@@ -330,7 +330,7 @@ fun ModelsSheet(
                                 val head = runCatching {
                                     f.useLines { ls -> ls.take(10).joinToString(" ") }
                                 }.getOrDefault("")
-                                val phase = Regex("last_phase=(\S+)").find(head)?.groupValues?.get(1) ?: "?"
+                                val phase = Regex("last_phase=([^ ]+)").find(head)?.groupValues?.get(1) ?: "?"
                                 "${f.name}  ${f.length() / 1024} KB  last_phase=$phase"
                             } ?: "none"),
                             style = MaterialTheme.typography.bodySmall,
