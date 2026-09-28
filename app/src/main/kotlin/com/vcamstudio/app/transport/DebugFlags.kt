@@ -70,7 +70,13 @@ object DebugFlags {
         "CONFIG_EFFECTIVE=" + ALL.joinToString(",") {
             val v = if (it == KEY_FEED) feedLive else isOn(ctx, it)
             "$it=${if (v) "on" else "off"}"
-        } + " analysis=" + analysisStr()
+        } + " analysis=" + analysisStr() +
+            // r55: :ai persists the fill()-null reason here once DEGRADED
+            // fires; absent/empty file = none. File-based so the reason
+            // crosses the process boundary.
+            " fill_null=" + runCatching {
+                File(ctx.filesDir, "scrfd_fill_null.txt").readText().trim().ifEmpty { "none" }
+            }.getOrDefault("none")
 
     // ---- r54.2-G2a: the ACTUAL CameraX analysis resolution (first frame) ----
 

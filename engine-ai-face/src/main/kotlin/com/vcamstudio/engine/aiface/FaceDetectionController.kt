@@ -33,7 +33,7 @@ import java.util.concurrent.Executors
  */
 class FaceDetectionController : AutoCloseable {
 
-    enum class Phase { OFF, MODEL_MISSING, SESSION_FAILED, RUNNING }
+    enum class Phase { OFF, MODEL_MISSING, SESSION_FAILED, RUNNING, DEGRADED }
 
     data class Stats(
         val avgMs: Float = 0f,

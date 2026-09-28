@@ -300,6 +300,18 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
     @Volatile private var markedKps = false
     @Volatile private var markedPublish = false
 
+    // r55: fill()-null is no longer swallowed silently. Consecutive
+    // failures are counted; SCRFD_FILL_FAIL logs at most once per second;
+    // 10 in a row flips the state to DEGRADED (dump + badge) instead of
+    // leaving RUNNING while nothing is detected.
+    private var fillFailStreak = 0
+    private var lastFillFailLogMs = 0L
+    @Volatile private var degradedNotified = false
+
+    /** r55: a real inference is never 0 ms (checked on sampled frames). */
+    private var noopStreak = 0
+    private var noopLogged = false
+
     private fun closeDetector() {
         sessionActive = false
         detector?.let { runCatching { it.close() } }
@@ -363,8 +375,40 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
                 detection = det.detectTop(tensor)
                 inferMs = SystemClock.elapsedRealtime() - t1
                 letterbox = lb
+                fillFailStreak = 0
+            } else {
+                // r55: the null is now VISIBLE — count it, log <=1/s, and
+                // after 10 consecutive failures report DEGRADED (state 4)
+                // + persist the reason for CONFIG_EFFECTIVE.
+                fillFailStreak++
+                val reason = ScrfdPreprocess.lastNullReason ?: "unknown"
+                val nowMs = SystemClock.elapsedRealtime()
+                if (nowMs - lastFillFailLogMs >= 1000L) {
+                    lastFillFailLogMs = nowMs
+                    Timber.i("SCRFD_FILL_FAIL reason=%s count=%d", reason, fillFailStreak)
+                }
+                if (fillFailStreak >= 10 && !degradedNotified) {
+                    degradedNotified = true
+                    Timber.i("SCRFD_STATE=DEGRADED reason=fill_null")
+                    runCatching { callback?.onState(4, "fill_null:$reason") }
+                    service.writeReport("degraded", "fill_null:$reason")
+                    runCatching {
+                        java.io.File(service.filesDir, "scrfd_fill_null.txt").writeText(reason)
+                    }
+                }
             }
             preMs = t1 - t0
+            // r55: no-op sanity — zero ms for 20 consecutive frames means
+            // no inference work happened at all.
+            if (inferMs == 0L) {
+                noopStreak++
+                if (noopStreak >= 20 && !noopLogged) {
+                    noopLogged = true
+                    Timber.i("SCRFD_SUSPECT_NOOP frames=%d", noopStreak)
+                }
+            } else {
+                noopStreak = 0
+            }
         }
         framesDone++
         if (recentPreMs.size >= 20) recentPreMs.removeFirst()

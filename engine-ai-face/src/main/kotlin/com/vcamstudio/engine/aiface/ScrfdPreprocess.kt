@@ -1,7 +1,9 @@
 package com.vcamstudio.engine.aiface
 
+import android.util.Log
 import java.nio.ByteBuffer
 import java.nio.FloatBuffer
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
 
 /**
@@ -20,6 +22,22 @@ import kotlin.math.min
  *    upright-frame [FaceBox].
  */
 object ScrfdPreprocess {
+
+    // r55: fill() returning null used to be SILENT — the dump said RUNNING
+    // for 760 frames while nothing was detected. These record WHY.
+    @Volatile
+    var lastNullReason: String? = null
+        private set
+
+    private val enteredLogged = AtomicBoolean(false)
+    private val dimsLogged = AtomicBoolean(false)
+    private val i420Logged = AtomicBoolean(false)
+    private val outLogged = AtomicBoolean(false)
+
+    // android.util.Log is not mocked on the JVM — unit tests call fill(),
+    // so the diagnostics must no-op there (they always work on device).
+    private fun logI(msg: String) = try { Log.i("vcam-scrfd", msg) } catch (_: Throwable) {}
+    private fun logW(msg: String) = try { Log.w("vcam-scrfd", msg) } catch (_: Throwable) {}
 
     /** Letterbox geometry a frame was rasterized with (returned by [fill]). */
     data class Letterbox(
@@ -104,13 +122,44 @@ object ScrfdPreprocess {
         out: FloatBuffer,
         size: Int = 640,
     ): Letterbox? {
-        if (w <= 0 || h <= 0) return null
+        // r55: WHICH guard fires, with the real numbers — logged once per
+        // reason per run (android.util.Log: this must also work in JVM
+        // tests where no Timber tree is planted).
+        if (w <= 0 || h <= 0) {
+            lastNullReason = "dims"
+            if (dimsLogged.compareAndSet(false, true)) {
+                logW("SCRFD_FILL_NULL reason=dims w=$w h=$h")
+            }
+            return null
+        }
         val cw = (w + 1) / 2
         val ch = (h + 1) / 2
         val ySize = w * h
         val cSize = cw * ch
-        if (i420.capacity() < ySize + 2 * cSize) return null
-        if (out.capacity() < 3 * size * size) return null
+        if (enteredLogged.compareAndSet(false, true)) {
+            logI(
+                "SCRFD_FILL_ENTER size=$size i420Cap=${i420.capacity()} i420Need=${ySize + 2 * cSize} " +
+                    "outCapF=${out.capacity()} outNeedF=${3 * size * size}",
+            )
+        }
+        if (i420.capacity() < ySize + 2 * cSize) {
+            lastNullReason = "i420"
+            if (i420Logged.compareAndSet(false, true)) {
+                logW(
+                    "SCRFD_FILL_NULL reason=i420 w=$w h=$h i420Cap=${i420.capacity()} i420Need=${ySize + 2 * cSize}",
+                )
+            }
+            return null
+        }
+        if (out.capacity() < 3 * size * size) {
+            lastNullReason = "out"
+            if (outLogged.compareAndSet(false, true)) {
+                logW(
+                    "SCRFD_FILL_NULL reason=out size=$size outCapF=${out.capacity()} outNeedF=${3 * size * size}",
+                )
+            }
+            return null
+        }
 
         val uprightW = if (rotationDeg == 90 || rotationDeg == 270) h else w
         val uprightH = if (rotationDeg == 90 || rotationDeg == 270) w else h
@@ -157,6 +206,7 @@ object ScrfdPreprocess {
                 out.put(2 * plane + idx, ((rgb and 0xFF) - 127.5f) / 128f)
             }
         }
+        lastNullReason = null // r55: a success clears the sticky reason
         return Letterbox(scale, padX, padY, uprightW, uprightH)
     }
 

@@ -2959,3 +2959,29 @@ since r54/r54.3); D probe bytes unchanged (fp16-Conv, r54).
  MUST reach studio (F1-F4 verdict); confirm camera+fps; paste dump
  (CONFIG_EFFECTIVE now lists 7 keys, all off); then flip B/C on one at a
  time, dump after each.
+
+### Round 55 — ScrfdPreprocess.fill() returns null -> detection never runs (owner dump: letterbox NULL all 760 frames, infer=0ms, RUNNING throughout)
+
+Owner diagnosis CONFIRMED against source: upright=0x0/pad=0.0/scale=0.000
+are the ?: fallbacks at the AI_INFER_SAMPLE site (binder ~378); fill() has
+EXACTLY three null paths, all before any pixel work — consistent with
+pre=0ms. NOTE for next round: static math says all three guards SHOULD
+pass for 640x480/640 (i420 cap 3,110,400 >= 460,800; tensor asFloatBuffer
+capacity = 1,228,800 = 3*640*640 boundary-exact) — so the on-device
+numbers must differ from assumption, or ENTER never logs (upstream gate).
+The instrumentation below settles it either way.
+1 WHICH GUARD: fill() logs SCRFD_FILL_ENTER once per run with REAL caps
+and needs (size, i420Cap, i420Need, outCapF, outNeedF); before each return
+null logs SCRFD_FILL_NULL reason=dims|i420|out once per reason per run
+with the real numbers; android.util.Log via try/catch helpers (Log is not
+mocked on the JVM — ScrfdPreprocessTest calls fill()). lastNullReason
+sticky until a success clears it. 2 REACHED: SCRFD_FILL_ENTER answers it
+(never appears -> upstream gate). 3 NOT SWALLOWED: binder counts
+consecutive fill-null frames; SCRFD_FILL_FAIL reason= count= at most 1/s;
+>=10 consecutive -> Phase.DEGRADED (enum + childState 4 -> VM map ->
+SCRFD_STATE=DEGRADED in the dump), callback.onState(4, "fill_null:<r>"),
+writeReport("degraded", ...), reason persisted to filesDir/
+scrfd_fill_null.txt. 4 NOOP: SCRFD_SUSPECT_NOOP frames= after 20
+consecutive infer==0 (once per run). CONFIG_EFFECTIVE (startup + dump)
+now ends with fill_null=<reason|none> read from the file (cross-process
+safe). NO model/ring/transport/stub changes (owner: nothing else).

@@ -543,6 +543,8 @@ class StudioViewModel @Inject constructor(
                         1 -> com.vcamstudio.engine.aiface.FaceDetectionController.Phase.MODEL_MISSING
                         2 -> com.vcamstudio.engine.aiface.FaceDetectionController.Phase.SESSION_FAILED
                         3 -> com.vcamstudio.engine.aiface.FaceDetectionController.Phase.RUNNING
+                        // r55: 10+ consecutive fill()-null frames -> DEGRADED
+                        4 -> com.vcamstudio.engine.aiface.FaceDetectionController.Phase.DEGRADED
                         else -> return@collect
                     }
                     faceDetection.reportRemotePhase(phase)
