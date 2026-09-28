@@ -7,7 +7,6 @@ import ai.onnxruntime.OrtSession
 import timber.log.Timber
 import java.io.File
 import java.nio.FloatBuffer
-import java.nio.ShortBuffer
 
 /**
  * r52a (debug, :ai child ONLY): loads the tiny fp16/stub probe models with
@@ -46,11 +45,19 @@ object ModelProbes {
         if (!f.exists()) return fail("fp16_io", IllegalStateException("missing file"))
         val env = OrtEnvironment.getEnvironment()
         session(env, f).use { s ->
-            val sb = ShortBuffer.wrap(shortArrayOf(0x3C00.toShort(), 0, 0x4000.toShort(), 0xBC00.toShort()))
-            OnnxTensor.createTensor(env, sb, longArrayOf(1, 4), OnnxJavaType.FLOAT16).use { input ->
+            // fp16 via the verified ByteBuffer+OnnxJavaType overload (ORT
+            // 1.17.1); raw fp16 bits: 1.0, 0.0, 2.0, -2.0.
+            val bb = java.nio.ByteBuffer.allocateDirect(8)
+                .order(java.nio.ByteOrder.nativeOrder())
+            bb.putShort(0x3C00.toShort())
+            bb.putShort(0)
+            bb.putShort(0x4000.toShort())
+            bb.putShort(0xBC00.toShort())
+            bb.position(0)
+            OnnxTensor.createTensor(env, bb, longArrayOf(1, 4), OnnxJavaType.FLOAT16).use { input ->
                 s.run(mapOf("fp16_in" to input)).use { out ->
                     val t = out[0] as OnnxTensor
-                    check(t.tensorInfo.type == OnnxJavaType.FLOAT16) { "output not fp16" }
+                    check(t.info.type == OnnxJavaType.FLOAT16) { "output not fp16" }
                 }
             }
         }
