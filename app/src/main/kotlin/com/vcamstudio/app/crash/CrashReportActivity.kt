@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.Card
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -158,7 +157,7 @@ private fun CrashScreen(crashes: List<CrashEntry>, onClose: () -> Unit) {
                     putExtra(Intent.EXTRA_SUBJECT, "VCamStudio crash report")
                     putExtra(Intent.EXTRA_TEXT, allText)
                 }
-                runCatching { startActivity(Intent.createChooser(i, "Share crash report")) }
+                runCatching { context.startActivity(Intent.createChooser(i, "Share crash report")) }
             }) { Text("SHARE") }
             Button(onClick = onClose) { Text("CONTINUE") }
         }
