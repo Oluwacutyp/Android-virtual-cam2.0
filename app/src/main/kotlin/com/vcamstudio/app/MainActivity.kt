@@ -41,6 +41,15 @@ class MainActivity : ComponentActivity() {
         // no Java stack — LAST_PHASE is the only localisation we get.
         Timber.i("LAST_PHASE=%s", com.vcamstudio.app.crash.PhaseMark.read(this) ?: "none")
         Timber.i("AI_LAST_PHASE=%s", com.vcamstudio.app.crash.PhaseMark.readAi(this) ?: "none")
+        // r54.4-D3: PUSH, not pull — if the previous run crashed, the full
+        // stack is shown BEFORE the permission flow / camera can start. The
+        // marker is updated for THIS launch first, so each crash is shown
+        // exactly once.
+        val newCrashes = com.vcamstudio.app.crash.CrashLogger.newCrashesSince(this)
+        com.vcamstudio.app.crash.CrashLogger.markLaunchOk(this)
+        if (newCrashes.isNotEmpty()) {
+            startActivity(com.vcamstudio.app.crash.CrashReportActivity.intent(this, newCrashes))
+        }
         // Studio screen: keep the compositor visible and hot while foregrounded.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         lifecycleBridge = this

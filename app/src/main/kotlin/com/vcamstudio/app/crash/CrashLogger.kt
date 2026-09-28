@@ -169,8 +169,10 @@ object CrashLogger {
     // ------------------------------------------------------------ crash write
 
     private fun writeCrashFile(context: Context, thread: Thread, throwable: Throwable) {
-        val name = "crash-${System.currentTimeMillis()}.txt"
-        val text = crashText(context, thread, throwable, "files+dcim/$name")
+        // r54.4-D1: the process is IN the filename — main vs :ai raise the
+        // identical dialog, the name disambiguates at a glance.
+        val name = "crash-$processLabel-${System.currentTimeMillis()}.txt"
+        val text = crashText(context, thread, throwable, "files+downloads/$name")
 
         // r54.1-X4 PRIMARY sink: INTERNAL filesDir — needs no permission,
         // always writable, survives the death even when storage grants are
@@ -187,9 +189,18 @@ object CrashLogger {
         // long entries — the file above is the full record).
         Log.e("VCAM-CRASH", text.substringBefore("\n\n---- recent engine log"))
 
-        // DCIM stays best-effort (file-manager reachability when it works).
-        if (writeToDcim(context, CRASH_DIR_REL, name, text)) {
-            Log.i("vcam-engine", "CRASH_LOG_SINK sink=dcim file=$name")
+        // r54.4-D1: PUBLIC Downloads sink on 29+ — no storage permission,
+        // visible in any file manager (Files -> Downloads -> VCamStudio).
+        // This is the sink the owner can actually FIND after a launch crash.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (writeToDownloads(context, name, text)) {
+                Log.i("vcam-engine", "CRASH_LOG_SINK sink=downloads file=Download/VCamStudio/$name")
+            }
+        } else {
+            // r54.4-D1: DCIM direct-path is the <=28 fallback only.
+            if (writeToDcim(context, CRASH_DIR_REL, name, text)) {
+                Log.i("vcam-engine", "CRASH_LOG_SINK sink=dcim file=$name")
+            }
         }
     }
 
@@ -200,10 +211,74 @@ object CrashLogger {
             "sink=$sink\n" +
             "at=${System.currentTimeMillis()}\n" +
             "thread=${thread.name}\n" +
-            "last_phase=" + (PhaseMark.read(context) ?: "none") + "\n" +
+            // r54.4-D6: BOTH processes' phases in every file — the crash
+            // screen picks the one matching proc=.
+            "last_phase_main=" + (PhaseMark.read(context) ?: "none") + "\n" +
+            "last_phase_ai=" + (PhaseMark.readAi(context) ?: "none") + "\n" +
             Log.getStackTraceString(throwable) +
             "\n\n---- recent engine log (last ${RingLog.size()} lines) ----\n" +
             RingLog.dump()
+
+    /**
+     * r54.4-D1: PUBLIC Downloads sink (API 29+ only — callers gate).
+     * MediaStore.Downloads + RELATIVE_PATH "Download/VCamStudio/" — needs
+     * NO storage permission on 29+ and is visible in any file manager.
+     * Never throws.
+     */
+    private fun writeToDownloads(context: Context, displayName: String, content: String): Boolean {
+        return try {
+            val resolver = context.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/VCamStudio/")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            val uri = resolver.insert(
+                MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                values,
+            ) ?: return false
+            try {
+                resolver.openOutputStream(uri)?.use { os ->
+                    os.write(content.toByteArray(Charsets.UTF_8))
+                    os.flush()
+                } ?: return false
+                val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+                resolver.update(uri, done, null, null)
+                true
+            } catch (t: Throwable) {
+                runCatching { resolver.delete(uri, null, null) }
+                Log.w("vcam-engine", "CRASH_LOG_DL_WRITE_FAIL name=$displayName", t)
+                false
+            }
+        } catch (t: Throwable) {
+            Log.w("vcam-engine", "CRASH_LOG_DL_INSERT_FAIL name=$displayName", t)
+            false
+        }
+    }
+
+    // ---- r54.4-D3: new-since-last-launch scan (push, not pull) ----
+
+    private const val LAUNCH_OK_FILE = "last_launch_ok"
+
+    /** Called at EVERY app start, BEFORE any camera/permission work. */
+    fun markLaunchOk(context: Context) {
+        runCatching {
+            File(context.filesDir, LAUNCH_OK_FILE)
+                .writeText(System.currentTimeMillis().toString())
+        }
+    }
+
+    /**
+     * Crash files written AFTER the last recorded launch start — i.e. the
+     * crashes this app has not shown the owner yet, newest first.
+     */
+    fun newCrashesSince(context: Context): List<File> {
+        val marker = runCatching {
+            File(context.filesDir, LAUNCH_OK_FILE).readText().trim().toLongOrNull()
+        }.getOrNull() ?: 0L
+        return crashFiles(context).filter { it.lastModified() > marker }
+    }
 
     // ------------------------------------------------------------ DCIM sinks
 

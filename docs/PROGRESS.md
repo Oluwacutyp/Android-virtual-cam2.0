@@ -2884,3 +2884,30 @@ untouched, not committed here.
  store was reset to 4581e06 (branch point) mid-turn — first commit landed
  on the initial commit and push was rejected; recovered via git reset
  b5bb034 + re-add of exactly the 8 r54.3 paths; remote history intact.
+
+### Round 54.4 — SHOW THE OWNER THE CRASH (owner STOP-work order: no features; D1-D6 only). Note: local .git was re-clobbered to 4581e06 at turn start (second incident) — reset to 3650a6e before any work; tree verified clean vs remote tip.
+
+D1 PUBLIC SINK: crash files renamed crash-<proc>-<epochMs>.txt (proc in
+the NAME — the dialog cannot disambiguate main vs :ai, the filename can).
+API 29+: MediaStore.Downloads, RELATIVE_PATH Download/VCamStudio/,
+text/plain, IS_PENDING 1 -> write -> 0 (NO storage permission, visible in
+any file manager) = the owner-findable sink. DCIM now the <=28 fallback
+only. filesDir/crashes stays the always-sink. D2 was ALREADY satisfied
+(r54-A provider runs in every process incl. :ai; r54.3-H1
+AiInferenceService.onCreate ensureInstalled — verified, no change). D3
+THE NEW PART: filesDir/last_launch_ok marker written at EVERY app start
+BEFORE permission flow; newCrashesSince() = crash files newer than the
+marker; MainActivity.onCreate startActivity(CrashReportActivity) BEFORE
+setContent — camera/permission unreachable until CONTINUE. New
+crash/CrashReportActivity (manifest-registered, exported=false): newest
+first, per-crash Card = D6 summary (proc, exception class, message, first
+3 com.vcamstudio frames, last phase — chosen from last_phase_main /
+last_phase_ai headers by proc) + full monospace selectable text;
+COPY TO CLIPBOARD / SHARE / CONTINUE. D4 ALREADY in place since r54.3
+(MODEL_FILE_RESOLVE -> SESSION_CREATE -> FIRST_INFER -> KPS_DECODE ->
+RESULT_PUBLISH in filesDir/last_phase_ai — split file so :ai cannot
+clobber main's breadcrumbs; owner asked for one last_phase file: the
+split is the deliberate improvement, contents tagged proc=:ai). D5
+ALREADY present (Log.e("VCAM-CRASH", header+stack) both processes).
+NO feature code touched this round: CrashLogger sink/marker, new activity,
+MainActivity 8 lines, manifest 1 entry — nothing else.

@@ -50,6 +50,13 @@
             </intent-filter>
         </activity>
 
+        <!-- r54.4-D3: auto-shown on launch when new crash files exist. -->
+        <activity
+            android:name=".crash.CrashReportActivity"
+            android:exported="false"
+            android:label="Crash report"
+            android:screenOrientation="portrait" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="com.vcamstudio.fileprovider"
