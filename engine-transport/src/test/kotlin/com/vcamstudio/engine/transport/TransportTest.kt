@@ -24,7 +24,7 @@ class TransportTest {
 
     @Test
     fun `no root and no vdm resolves to none with reasons`() {
-        val (route, why) = TransportCapabilities.resolveRoute(probes())
+        val (route, why) = TransportCapabilities.resolveRoute(probes(api = 33))
         assertEquals(TransportRoute.NONE, route)
         assertTrue(why.contains("api<34"))
         assertTrue(why.contains("vdm=null"))
@@ -83,11 +83,11 @@ class TransportTest {
     fun `selinux file parse`() {
         assertEquals(
             "Enforcing",
-            TransportCapabilities.selinuxFromEnforceFile(createTempFile("e", "t").apply { writeText("1") }),
+            TransportCapabilities.selinuxFromEnforceFile(createTempFile("vcam", "txt").apply { writeText("1") }),
         )
         assertEquals(
             "Permissive",
-            TransportCapabilities.selinuxFromEnforceFile(createTempFile("e", "t").apply { writeText("0") }),
+            TransportCapabilities.selinuxFromEnforceFile(createTempFile("vcam", "txt").apply { writeText("0") }),
         )
         assertEquals("unknown", TransportCapabilities.selinuxFromEnforceFile(null))
     }
