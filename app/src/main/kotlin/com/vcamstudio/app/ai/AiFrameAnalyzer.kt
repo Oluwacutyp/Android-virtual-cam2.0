@@ -25,11 +25,33 @@ class AiFrameAnalyzer(
 
     private val nextFrameId = AtomicLong(0)
     private val firstFrameMarked = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val analyzeDrops = AtomicLong(0)
 
     /** Reused compaction scratch (single analyzer thread). */
     private var scratch: ByteBuffer? = null
 
+    /**
+     * r54.2-G1: ANY throw in the analyzer is a DROPPED FRAME, never app
+     * death — this runs on the CameraX analyzer thread. (client.submit
+     * already caught its own half; this closes the rest of the surface and
+     * every future throw.) First 3 + every 100th logged.
+     */
     override fun analyze(proxy: ImageProxy) {
+        try {
+            analyzeInner(proxy)
+        } catch (t: Throwable) {
+            val n = analyzeDrops.incrementAndGet()
+            if (n <= 3 || n % 100 == 0L) {
+                timber.log.Timber.e(t, "ANALYZE_FAIL drops=%d", n)
+            }
+        } finally {
+            // Both finallys are runCatching-guarded; ImageProxy close is
+            // idempotent, so the wrapper's backstop is safe.
+            runCatching { proxy.close() }
+        }
+    }
+
+    private fun analyzeInner(proxy: ImageProxy) {
         try {
             if (proxy.format != ImageFormat.YUV_420_888) return
             val w = proxy.width
@@ -56,6 +78,14 @@ class AiFrameAnalyzer(
             // bracketed (breadcrumb written, then the failing consumer ran).
             if (!firstFrameMarked.getAndSet(true)) {
                 phaseCtx?.let { com.vcamstudio.app.crash.PhaseMark.mark(it, "first_frame") }
+                // r54.2-G2a: the ACTUAL CameraX analysis resolution lands in
+                // CONFIG_EFFECTIVE (dump + AI_ANALYSIS_RES line).
+                if (com.vcamstudio.app.transport.DebugFlags.noteAnalysis(w, h)) {
+                    timber.log.Timber.i(
+                        "AI_ANALYSIS_RES=%dx%d frameBytes=%d cap=%d",
+                        w, h, w * h * 3 / 2, AiDetectorClient.FRAME_PAYLOAD_BYTES,
+                    )
+                }
             }
             sink(buf, w, h, proxy.imageInfo.rotationDegrees, nextFrameId.incrementAndGet(), need)
             // r53: transport tap — the COPY happens inside dispatch (duplicated

@@ -57,5 +57,22 @@ object DebugFlags {
         "CONFIG_EFFECTIVE=" + ALL.joinToString(",") {
             val v = if (it == KEY_FEED) feedLive else isOn(ctx, it)
             "$it=${if (v) "on" else "off"}"
-        }
+        } + " analysis=" + analysisStr()
+
+    // ---- r54.2-G2a: the ACTUAL CameraX analysis resolution (first frame) ----
+
+    @Volatile var analysisW: Int = 0
+        private set
+    @Volatile var analysisH: Int = 0
+        private set
+
+    /** First frame wins; returns true only for that first call. */
+    fun noteAnalysis(w: Int, h: Int): Boolean {
+        if (analysisW != 0) return false
+        analysisW = w
+        analysisH = h
+        return true
+    }
+
+    fun analysisStr(): String = if (analysisW == 0) "unknown" else "${analysisW}x${analysisH}"
 }

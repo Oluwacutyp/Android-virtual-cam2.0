@@ -2815,3 +2815,30 @@ device list).
 artifact 10962307681 (21,389,154 B) — owner protocol 0-3 pending (LAST_PHASE / dialog-vs-vanish
 / devices). No B-F code was reverted; this delta is crash-fix only on top
 of the green r54 base (r54 artifact was 10960243343).
+
+### Round 54.2 — G1+G2 (owner read the exact failure chain off the branch)
+
+G2a CHOICE = RAISE the cap (not clamp): FRAME_PAYLOAD_BYTES 1,382,400 →
+3_110_400 (1920*1080*3/2) — the SAME treatment the transport ring got in
+r53.1 (owner asked: yes, the AI ring needed it — it was at EXACTLY-720p,
+zero headroom). Why not clamp ImageAnalysis: (a) R50 no-engine-capture
+law; (b) ResolutionStrategy is advisory, not a guarantee — the ring must
+tolerate oversize anyway; (c) raising is process-local config, zero
+pipeline change, PRE baseline stays comparable. Frame ring file grows
+2.6→6.2 MB (2 slots, one file, two MAP_SHARED mappings — same pages).
+Actual analysis resolution reported: DebugFlags.noteAnalysis (first
+frame) → CONFIG_EFFECTIVE ... analysis=<w>x<h>|unknown (VM init log +
+TransportManager dump) + one-shot AI_ANALYSIS_RES=<w>x<h>
+frameBytes=<n> cap=<n> from AiFrameAnalyzer.
+G2b AiRing.writePayload: require() REMOVED — oversized/negative length
+returns false, ring stays android-import-free so JVM tests keep running;
+once-per-run AI_RING_DROP need= cap= w= h= log lives at the caller
+(AiProcMonitor.noteRingDrop, Timber) + AI_RING_DROPS=<n> dump field;
+client.submit on false → noteRingDrop + noteFrameDropped + return (picked
+slot never published, stays FREE). G1 analyze() → try{analyzeInner}
+catch(Throwable → ANALYZE_FAIL drops=<n>, first 3 + every 100th)
+finally{close}; NOTE (honest correction): client.submit ALREADY caught
+Throwable, so G1 closes the remaining unguarded surface (compaction,
+TransportTap, breadcrumbs) rather than being the only barrier.
+AiRingTest: new drop-contract test (oversize/negative → false, slot
+untouched, exactly-cap → true). 113 tests total.

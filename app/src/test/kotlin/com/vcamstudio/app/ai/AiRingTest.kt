@@ -116,6 +116,21 @@ class AiRingTest {
     }
 
     @Test
+    fun `oversized or negative payload drops and returns false - never throws`() {
+        // r54.2-G2b: the require() on this path sat under the CameraX
+        // analyzer thread — one byte over the cap must DROP, not throw.
+        val f = File(tmp.root, "oversize.ring")
+        val (slots, slotBytes) = geometry(1, 16)
+        val r = AiRing.create(f, slots, slotBytes)
+        assertTrue(!r.writePayload(0, ByteArray(17), 17, 4, 4)) // one over cap
+        assertTrue(!r.writePayload(0, ByteArray(4), -1, 4, 4)) // negative
+        assertEquals(0, r.payloadSize(0)) // slot untouched by dropped frames
+        assertTrue(r.writePayload(0, ByteArray(16), 16, 4, 4)) // exactly cap: ok
+        assertEquals(16, r.payloadSize(0))
+        r.close()
+    }
+
+    @Test
     fun `create truncates stale content - never reused`() {
         val f = File(tmp.root, "stale.ring")
         val (slots, slotBytes) = geometry(2, 64)

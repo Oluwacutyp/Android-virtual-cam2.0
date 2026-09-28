@@ -30,7 +30,10 @@ class AiDetectorClient(private val context: Context) {
     companion object {
         // Geometry constants — exact numbers keep dumps comparable across rounds.
         const val FRAME_SLOTS = 2
-        const val FRAME_PAYLOAD_BYTES = 1_382_400 // 1280*720*3/2 — 720p headroom
+        // r54.2-G2a: raised 1,382,400 (exact 720p — ZERO headroom, one byte
+        // over tripped writePayload's require) to the 1080p I420 size — the
+        // SAME treatment the transport ring got in r53.1.
+        const val FRAME_PAYLOAD_BYTES = 3_110_400 // 1920*1080*3/2 — 1080p cap
         const val FRAME_SLOT_BYTES = AiRing.META_BYTES + FRAME_PAYLOAD_BYTES
         const val BOX_SLOTS = 8
         const val BOX_PAYLOAD_BYTES = 64
@@ -223,7 +226,13 @@ class AiDetectorClient(private val context: Context) {
             }
             payload.position(0)
             payload.get(frameBytes, 0, length)
-            fr.writePayload(slot, frameBytes, length)
+            // r54.2-G2b: oversized frames DROP (false), never throw. The
+            // slot was only picked, never published — it stays FREE.
+            if (!fr.writePayload(slot, frameBytes, length, width, height)) {
+                AiProcMonitor.noteRingDrop(length, FRAME_PAYLOAD_BYTES, width, height)
+                AiProcMonitor.noteFrameDropped()
+                return
+            }
             fr.setTag(slot, frameId)
             fr.publish(slot, AiRing.STATE_FULL)
             notePending(frameId, now)

@@ -88,6 +88,8 @@ object AiProcMonitor {
         append(AiDetectorClient.FRAME_SLOTS).append('x').append(AiDetectorClient.FRAME_PAYLOAD_BYTES)
         append(" boxes=")
         append(AiDetectorClient.BOX_SLOTS).append('x').append(AiDetectorClient.BOX_PAYLOAD_BYTES)
+        // r54.2-G2c: oversized-frame drops (writePayload false).
+        append("\nAI_RING_DROPS=").append(ringDrops)
         // Round 50-A0.2: death context — system memory at bind/death and
         // the child's scheduler importance while bound. Separates LMKD
         // (avail < threshold at death) from an OEM/policy kill (plenty of
@@ -275,6 +277,19 @@ object AiProcMonitor {
     /** r54-C: force a child session rebuild (debug toggle side effect). */
     fun reofferSession() {
         runCatching { client?.reofferSession() }
+    }
+
+    /** r54.2-G2c: ring-level oversized-frame drops, logged ONCE per run. */
+    @Volatile var ringDrops: Long = 0
+        private set
+    @Volatile private var ringDropLogged = false
+
+    fun noteRingDrop(need: Int, cap: Int, w: Int, h: Int) {
+        ringDrops++
+        if (!ringDropLogged) {
+            ringDropLogged = true
+            Timber.i("AI_RING_DROP need=%d cap=%d w=%d h=%d", need, cap, w, h)
+        }
     }
 
     fun noteFrameDropped() {

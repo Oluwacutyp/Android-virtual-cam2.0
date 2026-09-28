@@ -71,13 +71,21 @@ class AiRing private constructor(
 
     // ---- payload ----
 
-    fun writePayload(slot: Int, bytes: ByteArray, length: Int) {
-        require(length >= 0 && length <= payloadBytes) { "writePayload len=$length > $payloadBytes" }
+    /**
+     * r54.2-G2b: returns false on oversized/negative length instead of
+     * throwing — the require() sat on the per-frame analyzer path and any
+     * throw escaped toward the CameraX thread. The caller logs (once per
+     * run) and counts via this return value; the ring itself stays free of
+     * android imports so the JVM ring tests keep running.
+     */
+    fun writePayload(slot: Int, bytes: ByteArray, length: Int, width: Int = 0, height: Int = 0): Boolean {
+        if (length < 0 || length > payloadBytes) return false
         synchronized(lock) {
             map.position(payloadBase(slot))
             map.put(bytes, 0, length)
             map.putInt(slotBase(slot) + OFF_SIZE, length)
         }
+        return true
     }
 
     /** Returns the number of bytes copied (at most [length]). */
