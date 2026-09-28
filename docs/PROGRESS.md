@@ -2953,3 +2953,9 @@ analyzer catch is NOT toggle-gated — disabling a crash-catch can only
 reintroduce the crash it fixes; it is passive instrumentation, same bucket
 as H1-H4 (owner: default ON). B/C/H1-H4 code unchanged (already green
 since r54/r54.3); D probe bytes unchanged (fp16-Conv, r54).
+
+**r54.5 ledger**: b63078f = HEAD, GREEN run 36435440791 (7m41s), artifact
+ 10976350136 (21,420,091 B). Owner protocol: install -> open -> grant ->
+ MUST reach studio (F1-F4 verdict); confirm camera+fps; paste dump
+ (CONFIG_EFFECTIVE now lists 7 keys, all off); then flip B/C on one at a
+ time, dump after each.
