@@ -330,10 +330,12 @@ object SwapTest {
         walkFields(bytes, gs, ge) { field, wire, start, len ->
             if (field == 5 && wire == 2) {
                 val t = parseTensor(bytes, start, start + len)
-                if (t != null && t.dtype == 1 && t.dims.size == 2 && t.dims[0] == 512L && t.dims[1] == 512L &&
-                    t.raw != null && t.raw.size == 1_048_576
+                val raw = t?.raw
+                if (t != null && raw != null && t.dtype == 1 &&
+                    t.dims.size == 2 && t.dims[0] == 512L && t.dims[1] == 512L &&
+                    raw.size == 1_048_576
                 ) {
-                    result = t.raw
+                    result = raw
                     true // stop
                 } else {
                     false
