@@ -17,10 +17,14 @@ import java.util.concurrent.atomic.AtomicLong
  * r39 ring discipline).
  */
 class AiFrameAnalyzer(
+    // r54.1-X3: optional context for the first_frame breadcrumb. LEADING
+    // position so the two existing trailing-lambda call sites compile.
+    private val phaseCtx: android.content.Context? = null,
     private val sink: (payload: ByteBuffer, width: Int, height: Int, rotationDeg: Int, frameId: Long, length: Int) -> Unit,
 ) : ImageAnalysis.Analyzer {
 
     private val nextFrameId = AtomicLong(0)
+    private val firstFrameMarked = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /** Reused compaction scratch (single analyzer thread). */
     private var scratch: ByteBuffer? = null
@@ -47,6 +51,12 @@ class AiFrameAnalyzer(
                 w, h, buf!!,
             )
             if (!ok) return
+            // r54.1-X3: first frame reached the analyzer — the pipeline is
+            // delivering. Marked BEFORE the sink so a consumer crash is
+            // bracketed (breadcrumb written, then the failing consumer ran).
+            if (!firstFrameMarked.getAndSet(true)) {
+                phaseCtx?.let { com.vcamstudio.app.crash.PhaseMark.mark(it, "first_frame") }
+            }
             sink(buf, w, h, proxy.imageInfo.rotationDegrees, nextFrameId.incrementAndGet(), need)
             // r53: transport tap — the COPY happens inside dispatch (duplicated
             // buffer) so the AI ring is untouched and never blocked by it.

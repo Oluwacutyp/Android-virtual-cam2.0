@@ -293,6 +293,52 @@ fun ModelsSheet(
                                 Text("Feed: ${if (debugFlags["feed"] ?: true) "on" else "off"}")
                             }
                         }
+                        // r54.1-X4: DEV crash-log access without a PC —
+                        // filesDir/crashes is invisible to file managers on
+                        // Android 11+ and the DCIM sink needs storage a
+                        // launch crash prevents.
+                        val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+                        var crashEpoch by remember { mutableStateOf(0) }
+                        val crashFiles = remember(crashEpoch) {
+                            com.vcamstudio.app.crash.CrashLogger.crashFiles(context)
+                        }
+                        Text(
+                            "Crash logs (${crashFiles.size})",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                        )
+                        Text(
+                            crashFiles.firstOrNull()?.let { "${it.name}  ${it.length() / 1024} KB" }
+                                ?: "none — no crashes recorded",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = {
+                                runCatching {
+                                    clipboard.setText(
+                                        androidx.compose.ui.text.AnnotatedString(
+                                            crashFiles.firstOrNull()?.readText() ?: "no crash files",
+                                        ),
+                                    )
+                                }
+                            }) { Text("COPY") }
+                            TextButton(onClick = {
+                                runCatching {
+                                    val f = crashFiles.firstOrNull() ?: return@TextButton
+                                    val i = android.content.Intent(android.content.Intent.ACTION_SEND)
+                                        .apply {
+                                            type = "text/plain"
+                                            putExtra(android.content.Intent.EXTRA_SUBJECT, f.name)
+                                            putExtra(android.content.Intent.EXTRA_TEXT, f.readText())
+                                        }
+                                    context.startActivity(
+                                        android.content.Intent.createChooser(i, "Share crash log"),
+                                    )
+                                }
+                            }) { Text("SHARE") }
+                            TextButton(onClick = { crashEpoch++ }) { Text("Refresh") }
+                        }
                     }
                 }
             }

@@ -246,7 +246,7 @@ object AiProcMonitor {
 
     fun analyzer(): AiFrameAnalyzer? {
         client ?: return null
-        return analyzerInstance ?: AiFrameAnalyzer { payload, w, h, rot, frameId, len ->
+        return analyzerInstance ?: AiFrameAnalyzer(appContext) { payload, w, h, rot, frameId, len ->
             onFrame(payload, w, h, rot, frameId, len)
         }.also { analyzerInstance = it }
     }

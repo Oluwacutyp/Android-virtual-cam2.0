@@ -53,6 +53,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.util.UUID
@@ -224,7 +225,19 @@ class StudioViewModel @Inject constructor(
      *  DEV on at boot AND bound to :ai AND model READY AND a camera layer
      *  on the active scene. The analyzer only COMPACTS YUV in this
      *  process; preprocessing + inference live in :ai. */
+    /** r54.1-X1: analyzer mode last applied (idempotence guard). */
+    @Volatile
+    private var lastAnalyzerMode: String? = null
+
     private fun syncDetection() {
+        // r54.1-X1: never bind before the permission gate reports granted
+        // (MainActivity mounts the studio inside PermissionsGate, so this
+        // is belt-and-braces for partial/denied states).
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.CAMERA,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!granted) return
+        var mode = "?"
         runCatching {
             val chainUp = scrfdSessionDev.value &&
                 com.vcamstudio.app.ai.AiProcMonitor.isBound() &&
@@ -234,18 +247,37 @@ class StudioViewModel @Inject constructor(
             // force the AI chain on. AI on -> AI analyzer (AI + tap);
             // transport only -> a no-op-sink analyzer (transport tap only),
             // so the AI counters stay clean.
-            val analyzer = when {
-                chainUp -> com.vcamstudio.app.ai.AiProcMonitor.analyzer()
-                transportDev.value -> transportOnlyAnalyzer
-                else -> null
+            mode = when {
+                chainUp -> "ai"
+                transportDev.value -> "transport"
+                else -> "none"
             }
-            cameraSource.setAnalysisAnalyzer(analyzer)
-        }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=syncDetection") }
+            // r54.1-X1: ONE guarded bind — unchanged configuration is a
+            // no-op. The r53.1 collectors each emit their CURRENT value on
+            // collection; without this guard they queue redundant rebinds
+            // on top of each other right after the permission grant.
+            if (mode == lastAnalyzerMode) return
+            when (mode) {
+                "ai" -> {
+                    com.vcamstudio.app.crash.PhaseMark.mark(context, "ai_chain_up")
+                    cameraSource.setAnalysisAnalyzer(com.vcamstudio.app.ai.AiProcMonitor.analyzer())
+                }
+                "transport" -> {
+                    com.vcamstudio.app.crash.PhaseMark.mark(context, "transport_attached")
+                    cameraSource.setAnalysisAnalyzer(transportOnlyAnalyzer)
+                }
+                else -> cameraSource.setAnalysisAnalyzer(null)
+            }
+            lastAnalyzerMode = mode
+        }.onFailure { t ->
+            lastAnalyzerMode = null // force re-apply on the next sync
+            Timber.e(t, "SYNC_DETECTION_FAIL mode=$mode")
+        }
     }
 
     /** r53: analyzer that feeds ONLY the transport ring (no AI submits). */
     private val transportOnlyAnalyzer by lazy {
-        com.vcamstudio.app.ai.AiFrameAnalyzer { _, _, _, _, _, _ -> }
+        com.vcamstudio.app.ai.AiFrameAnalyzer(context) { _, _, _, _, _, _ -> }
     }
 
     private val videoControllers = LinkedHashMap<String, VideoLayerController>()
@@ -469,7 +501,10 @@ class StudioViewModel @Inject constructor(
         viewModelScope.launch {
             // r53: feed toggle re-runs the analyzer gate (transport-only mode
             // needs no AI chain).
-            transportDev.collect { syncDetection() }
+            // r54.1-X2: drop(1) — StateFlow replays its CURRENT value to a
+            // new collector, which re-triggered a bind at startup right
+            // after the permission grant (the r53.1 prime suspect).
+            transportDev.drop(1).collect { syncDetection() }
         }
         viewModelScope.launch {
             // Round 49: results from the :ai child -> the EXISTING stats
@@ -1444,7 +1479,12 @@ class StudioViewModel @Inject constructor(
                 return
             }
             val controls = cameraControls.value[sourceId] ?: ProControls()
+            // r54.1-X3: the engine handed us the camera surface; the bind
+            // below (CameraX/HAL/GL init) is the prime crash window. If the
+            // app dies here, the next launch logs LAST_PHASE=source_created.
+            com.vcamstudio.app.crash.PhaseMark.mark(context, "source_created")
             cameraSource.bind(surface, controls, owner)
+            com.vcamstudio.app.crash.PhaseMark.mark(context, "analyzer_bound")
             return
         }
         val videoLayer = scene.layers.filterIsInstance<LayerDefinition.Video>().firstOrNull { it.sourceId == sourceId }
@@ -1625,6 +1665,9 @@ class StudioViewModel @Inject constructor(
     private fun newId(prefix: String) = "$prefix-${UUID.randomUUID().toString().take(8)}"
 
     override fun onCleared() {
+        // r54.1-X3: the run completed — the breadcrumbs served their
+        // purpose; the next crash starts from a clean slate.
+        com.vcamstudio.app.crash.PhaseMark.clear(context)
         // Round 49: release the :ai binder with the VM (BIND_AUTO_CREATE
         // lets the child linger if the service still holds a start).
         runCatching { com.vcamstudio.app.ai.AiProcMonitor.unbind() }

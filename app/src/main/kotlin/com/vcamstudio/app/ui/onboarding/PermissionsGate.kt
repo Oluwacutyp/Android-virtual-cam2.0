@@ -47,6 +47,11 @@ fun PermissionsGate(content: @Composable () -> Unit) {
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { result ->
+        // r54.1-X3: first breadcrumb of the crash window — everything below
+        // (studio mount, camera bind, analyzer wire) happens after Allow.
+        if (result[Manifest.permission.CAMERA] == true) {
+            com.vcamstudio.app.crash.PhaseMark.mark(context, "permission_granted")
+        }
         cameraGranted = result[Manifest.permission.CAMERA] == true
     }
 

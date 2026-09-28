@@ -82,6 +82,13 @@ object CrashLogger {
         return if (external != null) File(external, "launch.log") else File(context.filesDir, "launch.log")
     }
 
+    /** r54.1-X4: internal crash files, newest first (DEV Crash-logs UI). */
+    fun crashFiles(context: Context): List<File> =
+        File(context.filesDir, "crashes")
+            .listFiles { f -> f.name.startsWith("crash-") }
+            ?.sortedByDescending { it.name }
+            ?: emptyList()
+
     /** r54-A4: installable from the provider (process start) AND the app — once. */
     @Volatile private var installed = false
 
@@ -140,18 +147,27 @@ object CrashLogger {
 
     private fun writeCrashFile(context: Context, thread: Thread, throwable: Throwable) {
         val name = "crash-${System.currentTimeMillis()}.txt"
+        val text = crashText(context, thread, throwable, "files+dcim/$name")
 
-        // Primary sink: public DCIM (MediaStore on 29+, direct path below).
-        if (writeToDcim(context, CRASH_DIR_REL, name, crashText(context, thread, throwable, "DCIM/VCamStudio/crashes/$name"))) {
-            Log.i("vcam-engine", "CRASH_LOG_SINK sink=dcim file=$name")
-            return
+        // r54.1-X4 PRIMARY sink: INTERNAL filesDir — needs no permission,
+        // always writable, survives the death even when storage grants are
+        // absent (the DCIM sink needs permissions a launch crash prevents,
+        // and Android/data is invisible to file managers on Android 11+;
+        // the DEV Crash-logs UI reads this dir with COPY/SHARE instead).
+        runCatching {
+            val dir = File(context.filesDir, "crashes")
+            dir.mkdirs()
+            File(dir, name).writeText(text)
+            Log.i("vcam-engine", "CRASH_LOG_SINK sink=files file=${File(dir, name).absolutePath}")
         }
-        // Fallback sink: r42 app-specific dir (better than nothing).
-        val fb = crashDir(context)
-        fb.mkdirs()
-        val f = File(fb, name)
-        f.writeText(crashText(context, thread, throwable, "fallback:${f.absolutePath}"))
-        Log.i("vcam-engine", "CRASH_LOG_SINK sink=fallback file=${f.absolutePath}")
+        // Logcat copy so adb bug reports carry the trace (logcat truncates
+        // long entries — the file above is the full record).
+        Log.e("VCAM-CRASH", text.substringBefore("\n\n---- recent engine log"))
+
+        // DCIM stays best-effort (file-manager reachability when it works).
+        if (writeToDcim(context, CRASH_DIR_REL, name, text)) {
+            Log.i("vcam-engine", "CRASH_LOG_SINK sink=dcim file=$name")
+        }
     }
 
     private fun crashText(context: Context, thread: Thread, throwable: Throwable, sink: String): String =
@@ -160,6 +176,7 @@ object CrashLogger {
             "sink=$sink\n" +
             "at=${System.currentTimeMillis()}\n" +
             "thread=${thread.name}\n" +
+            "last_phase=" + (PhaseMark.read(context) ?: "none") + "\n" +
             Log.getStackTraceString(throwable) +
             "\n\n---- recent engine log (last ${RingLog.size()} lines) ----\n" +
             RingLog.dump()

@@ -2777,3 +2777,36 @@ logged once at VM init AND included in TRANSPORT_SECTION.
  10960243343 (21,382,207 B). Items A–F reported to owner; device protocol
  steps 0–5 attached; C keep/revert + B idle-death verdicts PENDING owner
  device runs.
+
+### Round 54.1 — MINIMAL CRASH-ONLY (owner: app OPENS, dies right AFTER camera/mic permission grant → NOT the provider path; prime suspect r53.1 transportDev initial-emission rebind; no Java stack ⇒ maybe native ⇒ breadcrumbs mandatory)
+
+X1 syncDetection TOTAL+IDEMPOTENT (StudioViewModel): early-return unless
+CAMERA granted (ContextCompat); @Volatile lastAnalyzerMode ("ai"|
+"transport"|"none") — unchanged mode = no-op; whole body runCatching,
+failure logs SYNC_DETECTION_FAIL mode=<m> and clears the guard (next sync
+re-applies). X2 transportDev.drop(1).collect — the StateFlow initial
+replay no longer re-triggers a bind at startup. X3 PhaseMark
+(app/crash/PhaseMark.kt): filesDir/last_phase one-line breadcrumbs,
+app-side only (engine untouched): permission_granted (PermissionsGate
+callback) -> source_created (VM onExternalSourceReady, pre-bind) ->
+analyzer_bound (post cameraSource.bind) -> ai_chain_up /
+transport_attached (syncDetection branches) -> first_frame
+(AiFrameAnalyzer.analyze, BEFORE sink, once-flag; analyzer ctor gained a
+LEADING phaseCtx param so the two trailing-lambda sites compile). Read:
+MainActivity.onCreate logs LAST_PHASE=<phase|none> before setContent
+(before anything can re-mark). Clear: VM.onCleared only — survives every
+crash. Crash file embeds last_phase= too. X4 CrashLogger: INTERNAL
+filesDir/crashes/crash-<epoch>.txt is now the PRIMARY sink (permission-
+free; DCIM was unreachable for launch crashes + Android/data gated on
+11+); DCIM stays best-effort; Log.e("VCAM-CRASH", header+stack) for
+logcat/bugreports; crashFiles() helper; DEV "Crash logs" block in
+ModelsSheet (count + latest name/KB, COPY to clipboard, SHARE chooser,
+Refresh). X5 verified: attach() already capture-only (r54-A2); ring
+allocates ONLY in ensureRing() <- enableFeed()/selfTest (feed defaults
+OFF, TransportTap inert); fixed enableFeed() calling refreshCaps (su
+exec) synchronously on the caller (main) thread — now a daemon thread
+(A2 law: probes never main).
+
+Owner device protocol 0-3 attached (install+grant must not crash; else
+relaunch + report LAST_PHASE verbatim; dialog=Java vs vanish=native;
+device list).

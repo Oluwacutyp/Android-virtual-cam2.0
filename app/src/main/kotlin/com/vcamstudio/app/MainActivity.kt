@@ -15,6 +15,7 @@ import androidx.lifecycle.ViewModelProvider
 import com.vcamstudio.app.ui.studio.StudioViewModel
 import com.vcamstudio.app.ui.theme.StudioTheme
 import dagger.hilt.android.AndroidEntryPoint
+import timber.log.Timber
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -34,6 +35,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // r54.1-X3: if the previous run died mid-sequence, THIS line names
+        // the step (logged before anything can re-mark; cleared only when a
+        // run completes in StudioViewModel.onCleared). Native deaths leave
+        // no Java stack — LAST_PHASE is the only localisation we get.
+        Timber.i("LAST_PHASE=%s", com.vcamstudio.app.crash.PhaseMark.read(this) ?: "none")
         // Studio screen: keep the compositor visible and hot while foregrounded.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         lifecycleBridge = this

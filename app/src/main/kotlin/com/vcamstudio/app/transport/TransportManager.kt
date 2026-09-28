@@ -47,7 +47,9 @@ object TransportManager {
     fun enableFeed() {
         ensureRing()
         feeding = true
-        refreshCaps()
+        // r54.1 (A2 standing law): probing NEVER runs on the caller thread —
+        // the feed toggle used to su-exec synchronously on main here.
+        Thread { runCatching { refreshCaps() } }.start()
         Timber.i("TRANSPORT_FEED_ON route=%s", caps?.route?.name?.lowercase() ?: "?")
     }
 
