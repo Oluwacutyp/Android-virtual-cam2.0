@@ -463,6 +463,15 @@ class StudioViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
+            // r52a: child keypoints -> FACE_KPS dump line (binder channel;
+            // the boxes ring is untouched).
+            com.vcamstudio.app.ai.AiProcMonitor.remoteKps.collect { k ->
+                runCatching {
+                    faceDetection.reportRemoteKps(k.kps, k.uprightW, k.uprightH)
+                }.onFailure { t -> Timber.e(t, "MODEL_OBSERVE_FAIL src=remoteKps") }
+            }
+        }
+        viewModelScope.launch {
             // Round 50: the child's onState -> the SCRFD badge (r49 only
             // surfaced state 3; model-missing / session-failed / idle were
             // invisible in the dump).
@@ -1126,6 +1135,60 @@ class StudioViewModel @Inject constructor(
         overlayExpiryJob = viewModelScope.launch {
             delay(1500)
             _faceOverlay.value = null
+        }
+    }
+
+    // ------------------------------------------------------- r52a model tools
+
+    /** r52a: debug-only actions live in ModelsSheet when this is true. */
+    val isDebug: Boolean =
+        (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+
+    /** r52a: non-null model id = a download is blocked by a metered network. */
+    val meteredBlocked = modelManager.meteredBlocked
+
+    fun proceedMeteredDownload() = modelManager.proceedMetered()
+
+    fun dismissMeteredWarning() = modelManager.dismissMetered()
+
+    /** r52a (debug): stub assets -> filesDir/models under real names, re-scan. */
+    fun installStubModels() {
+        viewModelScope.launch(dispatchers.io) {
+            runCatching {
+                val n = com.vcamstudio.app.models.DebugModelTools.installStubs(context)
+                modelManager.scanAdoptions()
+                n
+            }.onSuccess { n ->
+                toast.value = "Stubs installed ($n) — size-mismatch warning expected"
+            }.onFailure { t ->
+                toast.value = "Stub install failed: ${t.message}"
+            }
+        }
+    }
+
+    /** r52a (debug): probes run in the :ai child (never ORT in this process). */
+    fun runModelProbes() {
+        com.vcamstudio.app.ai.AiProcMonitor.requestModelProbes()
+        toast.value = "Model probes running in :ai — see AI_PROC_CHILD_LOG"
+    }
+
+    /** r52a (debug): child writes the next face's 112/128 align crops. */
+    fun dumpAlignCrops() {
+        com.vcamstudio.app.ai.AiProcMonitor.requestDebugCrops()
+        toast.value = "Align crops dumped on next detected face"
+    }
+
+    fun exportModels(treeUri: android.net.Uri) {
+        viewModelScope.launch(dispatchers.io) {
+            val n = modelManager.exportModels(treeUri)
+            toast.value = "Backed up $n model file(s)"
+        }
+    }
+
+    fun importModels(treeUri: android.net.Uri) {
+        viewModelScope.launch(dispatchers.io) {
+            val n = modelManager.importModels(treeUri)
+            toast.value = "Restored $n model file(s)"
         }
     }
 

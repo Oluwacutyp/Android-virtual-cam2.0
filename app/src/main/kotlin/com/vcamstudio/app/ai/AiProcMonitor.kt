@@ -265,6 +265,33 @@ object AiProcMonitor {
         framesDropped.incrementAndGet()
     }
 
+    /** r52a: keypoints from the :ai child (upright pixels) for FACE_KPS. */
+    data class RemoteKps(
+        val frameId: Long,
+        val kps: FloatArray,
+        val uprightW: Int,
+        val uprightH: Int,
+    )
+
+    private val _remoteKps = MutableSharedFlow<RemoteKps>(
+        replay = 1, extraBufferCapacity = 4,
+    )
+    val remoteKps: SharedFlow<RemoteKps> = _remoteKps
+
+    fun noteRemoteKps(frameId: Long, kps: FloatArray, uprightW: Int, uprightH: Int) {
+        _remoteKps.tryEmit(RemoteKps(frameId, kps, uprightW, uprightH))
+    }
+
+    /** r52a debug: ask the child to run the fp16/stub model probes. */
+    fun requestModelProbes() {
+        runCatching { client?.requestModelProbes() }
+    }
+
+    /** r52a debug: ask the child to dump the next face's align crops. */
+    fun requestDebugCrops() {
+        runCatching { client?.requestDebugCrops() }
+    }
+
     fun noteResult(frameId: Long, box: FaceBox?, preMs: Long, inferMs: Long, rttMs: Long) {
         resultsReceived.incrementAndGet()
         lastRttMs.set(rttMs)

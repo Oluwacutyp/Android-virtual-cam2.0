@@ -166,7 +166,26 @@ class FaceDetectionController : AutoCloseable {
         // next to SCRFD_STATE=OFF).
         _phase.value = Phase.RUNNING
         _stats.value = _stats.value.copy(box = box)
+        // r52a: FACE_KPS follows FACE_BOX — a no-face run clears both.
+        if (box == null) latestKpsNorm = null
         recordRun(now, preprocessMs + inferMs)
+    }
+
+    /**
+     * r52a ADDITIVE: 5 keypoints in upright PIXEL coordinates (binder
+     * onKps — the boxes ring is untouched). Stored upright-normalized,
+     * the same space as FACE_BOX, for the FACE_KPS dump line only.
+     */
+    @Volatile private var latestKpsNorm: FloatArray? = null
+
+    fun reportRemoteKps(kps: FloatArray, uprightW: Int, uprightH: Int) {
+        if (kps.size < 10 || uprightW <= 0 || uprightH <= 0) return
+        val n = FloatArray(10)
+        for (j in 0 until 5) {
+            n[2 * j] = kps[2 * j] / uprightW
+            n[2 * j + 1] = kps[2 * j + 1] / uprightH
+        }
+        latestKpsNorm = n
     }
 
     /**
@@ -212,6 +231,13 @@ class FaceDetectionController : AutoCloseable {
             append("\nSCRFD_NNAPI=").append(useNnapi)
             append("\nFACE_BOX=").append(boxLine)
             s.box?.let { append(" score=%.3f".format(it.score)) }
+            // r52a ADDITIVE: 5 landmarks, upright normalized (same space
+            // as FACE_BOX), order Leye Reye nose Lmouth Rmouth.
+            append("\nFACE_KPS=").append(
+                latestKpsNorm?.joinToString(
+                    ",", "[", "]",
+                ) { "%.3f".format(it) } ?: "none",
+            )
         }
     }
 

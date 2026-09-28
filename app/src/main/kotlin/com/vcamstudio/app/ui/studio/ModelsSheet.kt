@@ -19,6 +19,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.content.Context
+import android.net.Uri
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -42,8 +47,48 @@ fun ModelsSheet(
     licenseSeen: (String) -> Boolean,
     onMarkLicenseSeen: (String) -> Unit,
     onDismiss: () -> Unit,
+    // r52a additions
+    isDebug: Boolean = false,
+    meteredBlocked: String? = null,
+    onMeteredProceed: () -> Unit = {},
+    onMeteredDismiss: () -> Unit = {},
+    onInstallStubs: () -> Unit = {},
+    onRunProbes: () -> Unit = {},
+    onDumpCrops: () -> Unit = {},
+    onBackup: (Uri) -> Unit = {},
+    onRestore: (Uri) -> Unit = {},
 ) {
     var licenseFor by remember { mutableStateOf<ModelManager.ModelState?>(null) }
+
+    // r52a: SAF launchers for model backup / restore (owner has no PC).
+    val context = LocalContext.current
+    val backupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri: Uri? ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            }
+            onBackup(uri)
+        }
+    }
+    val restoreLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri: Uri? ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+            onRestore(uri)
+        }
+    }
 
     fun request(ms: ModelManager.ModelState) {
         if (licenseSeen(ms.model.id)) {
@@ -149,7 +194,49 @@ fun ModelsSheet(
                     modifier = Modifier.padding(vertical = 12.dp),
                 )
             }
+            if (isDebug) {
+                item {
+                    Column(Modifier.fillMaxWidth()) {
+                        HorizontalDivider()
+                        Text(
+                            "r52a debug tools (0 MB)",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = onInstallStubs) { Text("Install stub models") }
+                            TextButton(onClick = onRunProbes) { Text("Run model probes") }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = onDumpCrops) { Text("Dump align crops") }
+                            TextButton(onClick = { backupLauncher.launch(null) }) { Text("Back up models") }
+                            TextButton(onClick = { restoreLauncher.launch(null) }) { Text("Restore models") }
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    meteredBlocked?.let { id ->
+        AlertDialog(
+            onDismissRequest = onMeteredDismiss,
+            title = { Text("Metered network") },
+            text = {
+                Text(
+                    "Downloading this model uses metered data " +
+                        "(id=$id). Continue anyway?",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = onMeteredProceed) { Text("Download anyway") }
+            },
+            dismissButton = {
+                TextButton(onClick = onMeteredDismiss) { Text("Wait for Wi-Fi") }
+            },
+        )
     }
 
     licenseFor?.let { ms ->

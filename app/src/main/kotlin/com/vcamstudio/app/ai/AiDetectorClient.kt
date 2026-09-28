@@ -108,6 +108,12 @@ class AiDetectorClient(private val context: Context) {
             AiProcMonitor.noteResult(frameId, box, preprocessMs, inferMs, rtt)
         }
 
+        // r52a ADDITIVE: keypoints in upright pixels — routed to the same
+        // monitor surface the boxes use (no ring involvement).
+        override fun onKps(frameId: Long, kps: FloatArray?, uprightW: Int, uprightH: Int) {
+            if (kps != null) AiProcMonitor.noteRemoteKps(frameId, kps, uprightW, uprightH)
+        }
+
         override fun onState(state: Int, detail: String?) {
             Timber.i("AI_CHILD_STATE_REPORT state=%d detail=%s", state, detail)
             // Round 50: all states route to the badge (VM maps onto
@@ -206,6 +212,16 @@ class AiDetectorClient(private val context: Context) {
             Timber.w(t, "AI_FRAME_FAIL frameId=%d", frameId)
             AiProcMonitor.noteFrameDropped()
         }
+    }
+
+    /** r52a debug: child loads + runs the fp16/stub probes (its ORT). */
+    fun requestModelProbes() {
+        runCatching { api?.runModelProbes() }
+    }
+
+    /** r52a debug: child writes the next face's 112/128 align crops. */
+    fun requestDebugCrops() {
+        runCatching { api?.dumpDebugCrops() }
     }
 
     fun shutdown() {

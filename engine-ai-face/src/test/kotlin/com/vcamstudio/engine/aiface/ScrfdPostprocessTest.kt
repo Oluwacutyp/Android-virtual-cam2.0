@@ -131,13 +131,49 @@ class ScrfdPostprocessTest {
             longArrayOf(1, 12800, 4), longArrayOf(1, 3200, 4), longArrayOf(1, 800, 4),
             longArrayOf(1, 12800, 10), longArrayOf(1, 3200, 10), longArrayOf(1, 800, 10),
         )
-        val (scores, boxes) = ScrfdPostprocess.groupOutputs(shapes) { idx ->
+        val g = ScrfdPostprocess.groupOutputs(shapes) { idx ->
             FloatArray(shapes[idx][1].toInt() * shapes[idx][2].toInt())
         }
-        assertEquals(3, scores.size)
-        assertEquals(3, boxes.size)
-        assertEquals(12800, scores[0].size)
-        assertEquals(800, scores[2].size)
-        assertEquals(12800 * 4, boxes[0].size)
+        assertEquals(3, g.scores.size)
+        assertEquals(3, g.boxes.size)
+        assertEquals(3, g.kps.size)
+        assertEquals(12800, g.scores[0].size)
+        assertEquals(800, g.scores[2].size)
+        assertEquals(12800 * 4, g.boxes[0].size)
+        assertEquals(25600, g.kps[0].size)
+    }
+
+    @Test
+    fun `decode attaches five keypoints to the scoring anchor`() {
+        // r52a: stride-16, 2 anchors — the layout the real export uses.
+        // Anchor at gx=10, gy=25; kps distances in stride units per point:
+        // (-2,-1) (2,-1) (0,0) (-1,2) (1,2).
+        val n = 3200
+        val grid = 40
+        val scores = FloatArray(n)
+        val boxes = FloatArray(n * 4)
+        val kps = FloatArray(n * 2)
+        val i = (25 * grid + 10) * 2
+        scores[i] = 0.8f
+        val k = i * 10
+        val offs = arrayOf(
+            floatArrayOf(-2f, -1f), floatArrayOf(2f, -1f), floatArrayOf(0f, 0f),
+            floatArrayOf(-1f, 2f), floatArrayOf(1f, 2f),
+        )
+        for (j in 0 until 5) {
+            kps[k + 2 * j] = offs[j][0]
+            kps[k + 2 * j + 1] = offs[j][1]
+        }
+        val dets = ScrfdPostprocess.decode(listOf(scores), listOf(boxes), 640, listOf(kps))
+        assertEquals(1, dets.size)
+        val cx = (10 + 0.5f) * 16
+        val cy = (25 + 0.5f) * 16
+        val lm = dets[0].landmarks
+        for (j in 0 until 5) {
+            assertEquals(cx + offs[j][0] * 16, lm[2 * j], 0.01f)
+            assertEquals(cy + offs[j][1] * 16, lm[2 * j + 1], 0.01f)
+        }
+        // Anchor centre = (168, 408): eyes above nose above mouth on y.
+        assertTrue(lm[1] < lm[5] && lm[5] < lm[7])
     }
 }

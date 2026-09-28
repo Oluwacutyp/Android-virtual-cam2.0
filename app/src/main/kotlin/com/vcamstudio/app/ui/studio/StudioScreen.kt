@@ -278,6 +278,15 @@ fun StudioScreen(
             licenseSeen = vm::licenseSeen,
             onMarkLicenseSeen = vm::markLicenseSeen,
             onDismiss = { vm.setSheet(StudioViewModel.Sheet.NONE) },
+            isDebug = vm.isDebug,
+            meteredBlocked = vm.meteredBlocked.collectAsStateWithLifecycle().value,
+            onMeteredProceed = vm::proceedMeteredDownload,
+            onMeteredDismiss = vm::dismissMeteredWarning,
+            onInstallStubs = vm::installStubModels,
+            onRunProbes = vm::runModelProbes,
+            onDumpCrops = vm::dumpAlignCrops,
+            onBackup = vm::exportModels,
+            onRestore = vm::importModels,
         )
         StudioViewModel.Sheet.NONE -> Unit
     }

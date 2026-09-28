@@ -1,6 +1,9 @@
 package com.vcamstudio.engine.aicore
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Uri
+import android.provider.DocumentsContract
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -55,21 +58,130 @@ class ModelManager(private val context: Context) {
     fun catalog(): List<CatalogModel> = ModelCatalog.load(context)
 
     init {
-        // Adopt pre-existing verified files (app restart, upgrade).
+        scanAdoptions()
+    }
+
+    /**
+     * Adopt pre-existing files (app restart, upgrade, stub install, SAF
+     * restore). r52a: an adopted file whose size does not match the
+     * catalogue is NO LONGER silently READY — a stub or truncation must
+     * not masquerade as a real model.
+     */
+    fun scanAdoptions() {
         val initial = catalog().associate { m ->
             val exists = runCatching { fileOf(m).exists() }.getOrDefault(false)
-            if (exists) Timber.i("MODEL_ADOPT name=%s -> READY", m.fileName)
+            val len = if (exists) safeLength(fileOf(m)) else 0L
+            val sizeMismatch = exists && m.sizeBytes > 0L && len != m.sizeBytes
+            if (exists && sizeMismatch) {
+                Timber.w(
+                    "MODEL_ADOPT_SIZE_MISMATCH name=%s expected=%d actual=%d",
+                    m.fileName, m.sizeBytes, len,
+                )
+            } else if (exists) {
+                Timber.i("MODEL_ADOPT name=%s -> READY", m.fileName)
+            }
             m.id to ModelState(
                 model = m,
-                state = if (exists) State.READY else State.NOT_DOWNLOADED,
+                state = if (exists && !sizeMismatch) State.READY else State.NOT_DOWNLOADED,
                 // r48: adopted files report their REAL size — "bytes=0" on
                 // an adopted row was an init-path artifact, not evidence of
                 // truncation (SCRFD_MODEL_FILE is the authoritative check).
-                downloadedBytes = if (exists) safeLength(fileOf(m)) else 0L,
-                message = if (m.url.isBlank()) "No verified mirror yet" else null,
+                downloadedBytes = len,
+                message = when {
+                    sizeMismatch -> "MODEL_ADOPT_SIZE_MISMATCH expected=${m.sizeBytes} actual=$len"
+                    m.url.isBlank() -> "No verified mirror yet"
+                    else -> null
+                },
             )
         }
         _states.value = initial
+    }
+
+    /** r52a: metered-network guard — non-null model id when a download was blocked. */
+    private val _meteredBlocked = MutableStateFlow<String?>(null)
+    val meteredBlocked: StateFlow<String?> = _meteredBlocked
+
+    private fun isMetered(): Boolean = runCatching {
+        (context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager)
+            .isActiveNetworkMetered
+    }.getOrDefault(false)
+
+    /** r52a: UI dismissed the metered warning without downloading. */
+    fun dismissMetered() {
+        _meteredBlocked.value = null
+    }
+
+    /** r52a: UI confirmed the metered download. */
+    fun proceedMetered() {
+        val id = _meteredBlocked.value ?: return
+        _meteredBlocked.value = null
+        download(id, allowMetered = true)
+    }
+
+    /**
+     * r52a: copy every present model file into a user-picked SAF tree
+     * (the owner has no PC — this is how 452 MB survives an uninstall).
+     * Returns the number of files written.
+     */
+    fun exportModels(treeUri: Uri): Int {
+        val resolver = context.contentResolver
+        var n = 0
+        for (m in catalog()) {
+            val f = fileOf(m)
+            if (!f.exists()) continue
+            val child = runCatching {
+                DocumentsContract.createDocument(resolver, treeUri, "application/octet-stream", m.fileName)
+            }.getOrNull() ?: continue
+            runCatching {
+                resolver.openInputStream(Uri.fromFile(f))?.use { input ->
+                    resolver.openOutputStream(child)?.use { output -> input.copyTo(output) }
+                } ?: error("no input stream for ${f.name}")
+            }.onFailure {
+                Timber.e(it, "MODEL_EXPORT_FAIL name=%s", m.fileName)
+                runCatching { DocumentsContract.deleteDocument(resolver, child) }
+            }.onSuccess { n++ }
+        }
+        Timber.i("MODEL_EXPORT_OK count=%d", n)
+        return n
+    }
+
+    /** r52a: copy models back from a SAF tree, then re-scan adoptions. */
+    fun importModels(treeUri: Uri): Int {
+        val resolver = context.contentResolver
+        val root = DocumentsContract.getTreeDocumentId(treeUri)
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, root)
+        val names = HashMap<String, Uri>()
+        resolver.query(
+            childrenUri,
+            arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+            null, null, null,
+        )?.use { c ->
+            while (c.moveToNext()) {
+                names[c.getString(1)] = DocumentsContract.buildDocumentUriUsingTree(treeUri, c.getString(0))
+            }
+        }
+        var n = 0
+        for (m in catalog()) {
+            val src = names[m.fileName] ?: continue
+            runCatching {
+                resolver.openInputStream(src)?.use { input ->
+                    val tmp = File(modelsDir, "${m.fileName}.import")
+                    tmp.outputStream().use { output -> input.copyTo(output) }
+                    check(tmp.length() == m.sizeBytes || m.sizeBytes <= 0L) {
+                        "size mismatch ${tmp.length()} != ${m.sizeBytes}"
+                    }
+                    if (!tmp.renameTo(fileOf(m))) {
+                        fileOf(m).delete()
+                        check(tmp.renameTo(fileOf(m))) { "rename failed" }
+                    }
+                } ?: error("no stream for ${m.fileName}")
+            }.onFailure {
+                Timber.e(it, "MODEL_IMPORT_FAIL name=%s", m.fileName)
+            }.onSuccess { n++ }
+        }
+        Timber.i("MODEL_IMPORT_OK count=%d", n)
+        scanAdoptions()
+        return n
     }
 
     fun fileOf(model: CatalogModel): File = File(modelsDir, model.fileName)
@@ -88,7 +200,7 @@ class ModelManager(private val context: Context) {
         prefs.edit().putBoolean("seen_$id", true).apply()
     }
 
-    fun download(id: String) {
+    fun download(id: String, allowMetered: Boolean = false) {
         val ms = _states.value[id] ?: return
         if (ms.state == State.DOWNLOADING) {
             Timber.i("MODEL_DOWNLOAD_SKIP name=%s reason=already-downloading", ms.model.fileName)
@@ -97,6 +209,12 @@ class ModelManager(private val context: Context) {
         if (ms.model.url.isBlank()) {
             Timber.w("MODEL_DOWNLOAD_SKIP name=%s reason=no-mirror", ms.model.fileName)
             transition(ms.model, State.NO_MIRROR, message = ms.message)
+            return
+        }
+        // r52a: refuse on a metered network unless the UI confirmed.
+        if (!allowMetered && isMetered()) {
+            Timber.w("MODEL_DOWNLOAD_METERED name=%s blocked=true", ms.model.fileName)
+            _meteredBlocked.value = id
             return
         }
         transition(ms.model, State.DOWNLOADING, pct = 0, bytes = ms.downloadedBytes, message = ms.message)

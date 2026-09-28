@@ -120,8 +120,10 @@ class ScrfdDetector(
                     i++
                 }
                 val used = payloads.copyOf(i)
-                val (scores, boxes) = ScrfdPostprocess.groupOutputs(shapes) { idx -> used[idx]!! }
-                return ScrfdPostprocess.decode(scores, boxes).maxByOrNull { it.score }
+                val grouped = ScrfdPostprocess.groupOutputs(shapes) { idx -> used[idx]!! }
+                return ScrfdPostprocess.decode(
+                    grouped.scores, grouped.boxes, 640, grouped.kps,
+                ).maxByOrNull { it.score }
             }
         }
     }

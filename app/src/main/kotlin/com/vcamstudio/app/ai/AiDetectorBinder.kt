@@ -139,6 +139,17 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
     /** For the service report (`model=` line). */
     fun lastRequestedModelPath(): String? = lastRequestedPath
 
+    override fun runModelProbes() {
+        probesRequested = true
+        synchronized(probeLock) { probeLock.notifyAll() }
+    }
+
+    override fun dumpDebugCrops() {
+        // Consumed by the worker on the next frame WITH a detection.
+        debugCropsRequested = true
+        Timber.i("AI_CROP_DUMP_REQUESTED")
+    }
+
     override fun submitFrame(slot: Int, width: Int, height: Int, rotationDeg: Int, frameId: Long) {
         synchronized(pendingLock) {
             // Keep-only-latest: drop the older frame and release its slot so
@@ -157,6 +168,10 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
     private val probeLock = java.lang.Object()
     private var probeTask: String? = null
     private var probeTaskIsSet = false
+    // r52a debug: one-shot child-side model probes (probe thread owns ORT).
+    @Volatile private var probesRequested = false
+    // r52a debug: one-shot aligned-crop dump on the next detected face.
+    @Volatile private var debugCropsRequested = false
 
     private fun offerProbe(path: String?) {
         synchronized(probeLock) {
@@ -185,16 +200,25 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
     private fun probeLoopBody() {
         while (running) {
             val path: String?
+            var runProbes = false
             synchronized(probeLock) {
-                while (!probeTaskIsSet && running) {
+                while (!probeTaskIsSet && !probesRequested && running) {
                     probeLock.wait()
                 }
                 path = probeTask
                 probeTask = null
                 probeTaskIsSet = false
+                runProbes = probesRequested
+                probesRequested = false
             }
             if (!running) break
             if (path != null) Timber.i("AI_PROBE_WAKE path=%s", path)
+            if (runProbes) {
+                // r52a debug: fp16/stub probes run HERE — the thread that
+                // owns ORT session creation (isolation law).
+                ModelProbes.runAll(java.io.File(service.filesDir, "models"))
+                continue
+            }
             if (path == null) {
                 // Model removed: drop the session, stay in :ai.
                 closeDetector()
@@ -361,6 +385,21 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
         br.setPayloadSize(slot, AiDetectorClient.BOX_PAYLOAD_BYTES)
         br.publish(slot, AiRing.STATE_FULL)
         callback?.onResult(task.frameId, slot, box != null, preMs, inferMs)
+        // r52a ADDITIVE: keypoints ride the binder (boxes ring stays 8x64).
+        val lm640 = detection?.landmarks
+        val lb2 = letterbox
+        if (box != null && lm640 != null && lb2 != null && lb2.scale > 0f) {
+            val px = FloatArray(10)
+            for (j in 0 until 5) {
+                px[2 * j] = (lm640[2 * j] - lb2.padX) / lb2.scale
+                px[2 * j + 1] = (lm640[2 * j + 1] - lb2.padY) / lb2.scale
+            }
+            runCatching { callback?.onKps(task.frameId, px, lb2.uprightW, lb2.uprightH) }
+        }
+        if (debugCropsRequested && box != null && lm640 != null && lb2 != null) {
+            debugCropsRequested = false
+            DebugCrops.dumpAlignCrops(service, i420, task.width, task.height, lm640, lb2)
+        }
     }
 
     // ------------------------------------------------------------ teardown

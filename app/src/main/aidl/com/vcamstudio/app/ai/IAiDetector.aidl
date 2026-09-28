@@ -20,4 +20,13 @@ interface IAiDetector {
 
     /** Frame payload already in frame ring slot [slot]; child copies + releases. */
     oneway void submitFrame(int slot, int width, int height, int rotationDeg, long frameId);
+
+    // r52a ADDITIVE (debug): child loads the fp16/stub probe models ON ITS
+    // OWN ORT (the main process must never touch ORT) and logs
+    // MODEL_PROBE_* lines into its durable child log.
+    oneway void runModelProbes();
+
+    // r52a ADDITIVE (debug): child writes the 112/128 aligned crops of the
+    // next detected face to DCIM/VCamStudio/debug_crops/ (MediaStore).
+    oneway void dumpDebugCrops();
 }

@@ -27,7 +27,21 @@ data class Detection(
     val x2: Float,
     val y2: Float,
     val score: Float,
-)
+    /**
+     * r52a: 5 keypoints, same 640-letterbox pixel space as the box, order
+     * left eye, right eye, nose, left mouth corner, right mouth corner.
+     * ADDITIVE — zeros when the model emitted no kps tensor for the pair.
+     */
+    val landmarks: FloatArray = FloatArray(10),
+) {
+    // landmarks is an array: exclude it from equals/hashCode so the existing
+    // value-semantics of Detection (box/score only) are unchanged.
+    override fun equals(other: Any?): Boolean =
+        other is Detection && other.x1 == x1 && other.y1 == y1 &&
+            other.x2 == x2 && other.y2 == y2 && other.score == score
+
+    override fun hashCode(): Int = java.util.Objects.hash(x1, y1, x2, y2, score)
+}
 
 /**
  * Pure SCRFD decode + NMS (owner mandate: three strides, NMS 0.45,
@@ -78,6 +92,7 @@ object ScrfdPostprocess {
         scores: List<FloatArray>,
         boxes: List<FloatArray>,
         inputSize: Int = 640,
+        keypoints: List<FloatArray> = emptyList(),
     ): List<Detection> {
         val out = ArrayList<Detection>(256)
         for (s in scores.indices) {
@@ -87,6 +102,10 @@ object ScrfdPostprocess {
             val n = minOf(sc.size, bx.size / 4)
             val (stride, anchors) = resolveLayout(n, inputSize) ?: continue
             val grid = inputSize / stride
+            // r52a: the kps tensor for this pair carries n*2 floats (5
+            // landmarks x 2). Matched by ENTRY COUNT — the r51.1 lesson:
+            // never by output position.
+            val kp = keypoints.firstOrNull { it.size == n * 2 }
             var i = 0
             while (i < n) {
                 val score = sc[i]
@@ -96,6 +115,14 @@ object ScrfdPostprocess {
                     val cx = (gx + 0.5f) * stride
                     val cy = (gy + 0.5f) * stride
                     val d = i * 4
+                    val lm = FloatArray(10)
+                    if (kp != null) {
+                        val k = i * 10
+                        for (j in 0 until 5) {
+                            lm[2 * j] = cx + kp[k + 2 * j] * stride
+                            lm[2 * j + 1] = cy + kp[k + 2 * j + 1] * stride
+                        }
+                    }
                     out.add(
                         Detection(
                             x1 = cx - bx[d] * stride,
@@ -103,6 +130,7 @@ object ScrfdPostprocess {
                             x2 = cx + bx[d + 2] * stride,
                             y2 = cy + bx[d + 3] * stride,
                             score = score,
+                            landmarks = lm,
                         ),
                     )
                 }
@@ -143,26 +171,35 @@ object ScrfdPostprocess {
         return if (union <= 0f) 0f else inter / union
     }
 
+    /** Scores, boxes and r52a keypoints, grouped by last-dim size. */
+    data class Grouped(
+        val scores: List<FloatArray>,
+        val boxes: List<FloatArray>,
+        val kps: List<FloatArray>,
+    )
+
     /**
-     * Splits ONNX outputs into (scores, boxes) lists by last-dim size.
-     * [tensorShapes] entries are the shapes; [getters] materialize the
-     * float payload for the matching index. Tensors with last-dim 10
-     * (keypoints) are ignored this round.
+     * Splits ONNX outputs into score/box/kps lists by last-dim size.
+     * [tensorShapes] entries are the shapes; [floats] materializes the
+     * float payload for the matching index. Last-dim 10 = r52a keypoints
+     * (5 landmarks x 2), previously discarded.
      */
     fun groupOutputs(
         shapes: List<LongArray>,
         floats: (index: Int) -> FloatArray,
-    ): Pair<List<FloatArray>, List<FloatArray>> {
+    ): Grouped {
         val scores = ArrayList<FloatArray>(3)
         val boxes = ArrayList<FloatArray>(3)
+        val kps = ArrayList<FloatArray>(3)
         shapes.forEachIndexed { i, shape ->
             val last = shape.last().toInt()
             when (last) {
                 1 -> scores.add(floats(i))
                 4 -> boxes.add(floats(i))
-                else -> Unit // keypoints (10) — later rounds
+                10 -> kps.add(floats(i))
+                else -> Unit
             }
         }
-        return scores to boxes
+        return Grouped(scores, boxes, kps)
     }
 }
