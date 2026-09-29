@@ -270,7 +270,7 @@ object SwapTest {
      * STAGE 1: carve the UNUSED FLOAT [512,512] initializer (raw_data,
      * exactly 1,048,576 B) out of the inswapper model. Idempotent: an
      * existing right-sized emap.bin is hashed and reused. The sha256 is
-     * LOGGED, never gated (no verified reference hash exists yet).
+     * a HARD GATE (owner-verified from the real file).
      */
     private fun carveEmap(insw: File, modelsDir: File): FloatArray? {
         val dst = File(modelsDir, "emap.bin")
@@ -347,148 +347,123 @@ object SwapTest {
     }.getOrNull()
 
     /**
-     * Minimal ONNX protobuf walker (same wire-format approach as the
-     * StubContractsTest parser, production side): ModelProto.graph=7 ->
-     * GraphProto.initializer=5 -> TensorProto{dims=1 varint, data_type=2
-     * varint, name=8 string, raw_data=9 bytes}. Returns raw_data of the
-     * FLOAT tensor with dims [512,512], or null.
+     * r59/r60: STREAMING emap carve. inswapper_128_fp16.onnx is 277,680,829 B and the
+     * :ai heap growth limit is 268,435,456 B, so the previous
+     * `val bytes = modelFile.readBytes()` OOM'd 100% of the time (device-verified:
+     * "Failed to allocate a 277680848 byte allocation ... growth limit 268435456").
+     * We only want 1,048,576 B of that file, so we never materialise more than a
+     * 256 KiB scan window plus the 1 MiB result.
+     *
+     * Signature: ONNX TensorProto raw_data is field 9, wire type 2 -> tag byte 0x4A;
+     * length 1,048,576 as a varint -> 0x80 0x80 0x40 (64 shl 14 = 1048576).
+     * The 1,048,576 bytes after the tag are the emap: little-endian float32,
+     * row-major [512,512].
+     *
+     * name / dtype / dims are SYNTHESISED here (a byte scan cannot see them);
+     * carveEmap() then hard-gates every one of them against the owner-verified
+     * contract, and the sha256 below is the ultimate gate.
      */
     private fun findEmapRawData(modelFile: File): TensorInfo? {
-        val bytes = modelFile.readBytes()
-        // graph = ModelProto field 7 (length-delimited)
-        var graph: Pair<Int, Int>? = null // (start, end)
-        walkFields(bytes, 0, bytes.size) { field, wire, start, len ->
-            if (field == 7 && wire == 2 && graph == null) graph = start to (start + len)
-            false // keep walking (one top-level graph, but be safe)
-        } ?: return null
-        val (gs, ge) = graph ?: return null
-        // each initializer = GraphProto field 5 (length-delimited).
-        // r58 ADDENDUM: FLOAT32 is the robust selector (every weight in
-        // this file is FLOAT16, the emap is the only fp32 initializer) —
-        // no graph connectivity check needed. Name/shape/bytes/sha are
-        // then ASSERTED by the caller (hard gates).
-        var result: TensorInfo? = null
-        walkFields(bytes, gs, ge) { field, wire, start, len ->
-            if (field == 5 && wire == 2) {
-                val t = parseTensor(bytes, start, start + len)
-                if (t != null && t.dtype == 1 &&
-                    t.dims.size == 2 && t.dims[0] == 512L && t.dims[1] == 512L &&
-                    t.raw != null && t.raw!!.size == 1_048_576
-                ) {
-                    result = t
-                    true // stop
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
+        val tag = byteArrayOf(0x4A.toByte(), 0x80.toByte(), 0x80.toByte(), 0x40.toByte())
+        val window = 1 shl 18 // 256 KiB
+        val buf = ByteArray(window)
+        val tail = ByteArray(tag.size - 1)
+
+        // Pre-flight: refuse to start if the 1 MiB result could not fit anyway, so we
+        // fail with a readable log instead of an OOM.
+        val rt = Runtime.getRuntime()
+        val budget = rt.maxMemory() - (rt.totalMemory() - rt.freeMemory())
+        if (budget < SwapMath.EMAP_BYTES + (8L shl 20)) {
+            Timber.i("EMAP_CARVE=fail:no_heap_budget budget=%d need=%d", budget, SwapMath.EMAP_BYTES)
+            return null
         }
-        return result
-    }
 
-    private class TensorInfo {
-        val dims = ArrayList<Long>()
-        var dtype: Int = 0
-        var name: String? = null
-        var raw: ByteArray? = null
-    }
-
-    private fun parseTensor(b: ByteArray, s: Int, e: Int): TensorInfo? {
-        val t = TensorInfo()
-        var ok = false
-        walkFields(b, s, e) { field, wire, start, len ->
-            ok = true
-            when (field) {
-                1 -> if (wire == 0) t.dims.add(readVarint(b, start, len))
-                2 -> if (wire == 0) t.dtype = readVarint(b, start, len).toInt()
-                8 -> if (wire == 2 && t.name == null) t.name = String(b, start, len, Charsets.UTF_8)
-                9 -> if (wire == 2 && t.raw == null) t.raw = b.copyOfRange(start, start + len)
-            }
-            false
-        }
-        return if (ok) t else null
-    }
-
-    private inline fun readVarint(b: ByteArray, s: Int, len: Int): Long {
-        var v = 0L
-        var shift = 0
-        var i = s
-        val e = s + len
-        while (i < e) {
-            v = v or ((b[i].toLong() and 0x7F) shl shift)
-            if (b[i].toInt() and 0x80 == 0) break
-            shift += 7
-            i++
-        }
-        return v
-    }
-
-    /**
-     * Generic protobuf wire walker: invokes [on] for every field; returns
-     * the first non-false result or null when the walk completed. Handles
-     * varint(0), fixed64(1), length-delimited(2), fixed32(5); skips groups
-     * defensively (never produced by modern protoc).
-     */
-    private inline fun walkFields(
-        b: ByteArray,
-        start: Int,
-        end: Int,
-        on: (field: Int, wire: Int, payloadStart: Int, payloadLen: Int) -> Boolean,
-    ): Boolean? {
-        var i = start
-        while (i < end) {
-            // key varint
-            var key = 0L
-            var shift = 0
-            while (i < end) {
-                val byte = b[i].toInt() and 0xFF
-                i++
-                key = key or ((byte and 0x7F).toLong() shl shift)
-                if (byte and 0x80 == 0) break
-                shift += 7
-                if (shift > 63) return null
-            }
-            val field = (key ushr 3).toInt()
-            val wire = (key and 0x7).toInt()
-            when (wire) {
-                0 -> {
-                    val vs = i
-                    while (i < end && (b[i].toInt() and 0x80) != 0) i++
-                    i++
-                    if (on(field, wire, vs, i - vs)) return true
-                }
-                1 -> {
-                    if (i + 8 > end) return null
-                    val r = on(field, wire, i, 8)
-                    i += 8
-                    if (r) return true
-                }
-                2 -> {
-                    var l = 0L
-                    var sh = 0
-                    while (i < end) {
-                        val byte = b[i].toInt() and 0xFF
+        // ---- pass 1: every offset of the 4-byte signature -----------------
+        val candidates = ArrayList<Long>(4)
+        var base = 0L
+        var tailLen = 0
+        runCatching {
+            modelFile.inputStream().use { input ->
+                while (candidates.size < 64) {
+                    val n = input.read(buf, 0, window)
+                    if (n <= 0) break
+                    // virtual window = tail (carried from previous chunk) + this chunk
+                    val winLen = tailLen + n
+                    val winBase = base - tailLen
+                    var i = 0
+                    while (i + tag.size <= winLen) {
+                        if (winByte(buf, tail, tailLen, i) == tag[0] &&
+                            winByte(buf, tail, tailLen, i + 1) == tag[1] &&
+                            winByte(buf, tail, tailLen, i + 2) == tag[2] &&
+                            winByte(buf, tail, tailLen, i + 3) == tag[3]
+                        ) {
+                            candidates.add(winBase + i)
+                            if (candidates.size >= 64) break
+                        }
                         i++
-                        l = l or ((byte and 0x7F).toLong() shl sh)
-                        if (byte and 0x80 == 0) break
-                        sh += 7
-                        if (sh > 63) return null
                     }
-                    if (i + l > end) return null
-                    if (on(field, wire, i, l.toInt())) return true
-                    i += l.toInt()
+                    // rolling tail = last 3 bytes of this chunk (handles a signature
+                    // straddling the chunk boundary)
+                    tailLen = if (n >= tag.size - 1) tag.size - 1 else n
+                    for (k in 0 until tailLen) tail[k] = buf[n - tailLen + k]
+                    base += n.toLong()
                 }
-                3, 4 -> return null // groups: not produced by modern protoc
-                5 -> {
-                    if (i + 4 > end) return null
-                    val r = on(field, wire, i, 4)
-                    i += 4
-                    if (r) return true
-                }
-                else -> return null
             }
+        }.onFailure {
+            Timber.i("EMAP_CARVE=fail:scan_%s", it.message ?: "io")
+            return null
         }
-        return false
+        if (candidates.isEmpty()) {
+            Timber.i("EMAP_CARVE=fail:tag_not_found bytes=%d", modelFile.length())
+            return null
+        }
+
+        // ---- pass 2: hash each candidate, first match wins ----------------
+        for (off in candidates) {
+            val raw = ByteArray(SwapMath.EMAP_BYTES)
+            var filled = 0
+            runCatching {
+                modelFile.inputStream().use { input ->
+                    var toSkip = off + tag.size
+                    while (toSkip > 0) {
+                        val s = input.skip(toSkip)
+                        if (s <= 0) break
+                        toSkip -= s
+                    }
+                    while (filled < SwapMath.EMAP_BYTES) {
+                        val r = input.read(raw, filled, SwapMath.EMAP_BYTES - filled)
+                        if (r <= 0) break
+                        filled += r
+                    }
+                }
+            }.onFailure {
+                Timber.i("EMAP_CARVE=fail:read_%s", it.message ?: "io")
+                return null
+            }
+            if (filled != SwapMath.EMAP_BYTES) {
+                Timber.i("EMAP_CARVE=skip_candidate off=%d bytes=%d", off, filled)
+                continue
+            }
+            val got = sha256Hex(raw)
+            if (got != EMAP_SHA256) {
+                Timber.i("EMAP_CARVE=skip_candidate off=%d sha256=%s", off, got)
+                continue
+            }
+            val t = TensorInfo()
+            t.dims.add(512L)
+            t.dims.add(512L)
+            t.dtype = 1 // FLOAT
+            t.name = EMAP_INIT_NAME
+            t.raw = raw
+            Timber.i("EMAP_CARVE=tag_found off=%d bytes=%d sha256=%s", off, filled, got)
+            return t
+        }
+        Timber.i("EMAP_CARVE=fail:no_candidate_matched_sha n=%d", candidates.size)
+        return null
     }
+
+    /** Byte i of the virtual window [tail(0..tailLen-1)] ++ [buf(0..n-1)]. */
+    private fun winByte(buf: ByteArray, tail: ByteArray, tailLen: Int, i: Int): Byte =
+        if (i < tailLen) tail[i] else buf[i - tailLen]
+
 }

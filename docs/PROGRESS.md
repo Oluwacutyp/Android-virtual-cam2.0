@@ -3126,3 +3126,30 @@ fp16 weights-only, opset 11/15, "None" string batch dim.
  artifact 10998346889 (21,443,936 B). Device test unchanged from r58 (swap block + crop
  criterion + Phase-1 unchanged); EMAP_CARVE=ok now additionally proves
  the hash gate passed.
+
+### Round 59 — emap carve OOM fix: STREAMING carve (never read the file whole)
+
+DEVICE EVIDENCE (:ai pid 21646): OutOfMemoryError allocating 277,680,848 B
+with growth limit 268,435,456 — :ai heap is 256 MB, the model is 278 MB;
+findEmapRawData's modelFile.readBytes() could NEVER succeed on any device.
+DEAD ENDS excluded by owner: largeHeap/manifest, mmap-then-copy,
+chunk-then-concat (same 278 MB destination), downloading emap (no mirror,
+catalog scaffolding), skipping emap (silent wrong identity).
+REPLACEMENT (owner-verified algorithm, applied verbatim): two-pass
+signature scan over the raw file — TensorProto raw_data tag 0x4A + varint
+1,048,576 = 0x80 0x80 0x40 (4-byte signature; round-tripped by owner);
+pass 1 streams 256 KiB chunks with a 3-byte rolling tail (signature
+straddling a boundary is handled; owner tested all 6 alignments) and
+records candidate offsets (cap 64; random fp16 collisions ~0.07 expected,
+harmless — hash rejects them); pass 2 seeks to each candidate, reads
+exactly 1 MiB, sha256s it, first match against EMAP_SHA256 wins.
+Pre-flight heap-budget check -> EMAP_CARVE=fail:no_heap_budget (readable
+log instead of an OOM). New logs: EMAP_CARVE=tag_found off= bytes=
+sha256= | fail:scan_|read_|tag_not_found|no_candidate_matched_sha |
+skip_candidate off= (decoys). TensorInfo stays (name/dims/dtype
+synthesised — a byte scan cannot see them; carveEmap still hard-gates all
++ sha256). Old protobuf walker (findEmapRawData reader + parseTensor +
+readVarint + walkFields) deleted; carveEmap untouched except the stale
+KDoc sentence: sha256 is a HARD GATE (owner-verified), not logged-only.
+Max allocation: 256 KiB window + 1 MiB result. No manifest/deps/toggle
+changes; nothing outside the one-shot.
