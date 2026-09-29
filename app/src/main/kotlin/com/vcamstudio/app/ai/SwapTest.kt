@@ -466,4 +466,11 @@ object SwapTest {
     private fun winByte(buf: ByteArray, tail: ByteArray, tailLen: Int, i: Int): Byte =
         if (i < tailLen) tail[i] else buf[i - tailLen]
 
+    private class TensorInfo {
+        val dims = ArrayList<Long>()
+        var dtype: Int = 0
+        var name: String? = null
+        var raw: ByteArray? = null
+    }
+
 }
