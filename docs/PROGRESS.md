@@ -3153,3 +3153,9 @@ readVarint + walkFields) deleted; carveEmap untouched except the stale
 KDoc sentence: sha256 is a HARD GATE (owner-verified), not logged-only.
 Max allocation: 256 KiB window + 1 MiB result. No manifest/deps/toggle
 changes; nothing outside the one-shot.
+
+**r59 ledger**: b7ef9a2 (RED: TensorInfo sat inside the replaced span —
+ my cut span error, restored) -> 8c55cd1 = HEAD, GREEN run 36550753562
+ (7m42s), artifact 11025540113 (21,439,357 B). Owner dump request: EMAP_CARVE=tag_found
+ off= bytes=1048576 sha256=370af5bf... (or the exact fail/skip line) +
+ the post-carve stages + confirm NO OutOfMemoryError in AI_PROC_CHILD_LOG.
