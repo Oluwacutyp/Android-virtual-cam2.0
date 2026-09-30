@@ -3253,3 +3253,11 @@ a 452 MB CPU-ORT stack must never be auto-on), ModelsSheet button.
 DEV NOTES: first live frame carries the ~4 s session-build stall (logged
 SWAP_SESSION_BEGIN (live)); SCRFD keeps running (shares 2 threads —
 expect SCRFD fps dip while swap runs, recovers on toggle-off).
+
+**r61 ledger**: 18713b6 (RED: asStateFlow unimported + nullable collector)
+ -> a0bd828 = HEAD, GREEN run 36691142501 (7m30s), artifact
+ 11085659456 (21,451,900 B).
+ OWNER: this build is the finish line for the swap phase — install, dump
+ (swap verdict), then flip swap_live on with a face in frame: the swapped
+ crop should appear INSIDE the cyan box ~3 s per frame. SCRFD fps dips
+ while live swap runs (shared threads) — expected, recovers on toggle-off.
