@@ -1293,28 +1293,22 @@ class StudioViewModel @Inject constructor(
         cam: com.vcamstudio.engine.render.model.LayerTransform,
     ): com.vcamstudio.engine.render.model.LayerTransform? {
         val res = sceneResolution.value
-        if (frameW <= 0 || frameH <= 0 || boxNorm.size < 4) return null
-        val sceneW = res.width.toFloat()
-        val sceneH = res.height.toFloat()
-        val layerW = cam.width * sceneW
-        val layerH = cam.height * sceneH
-        if (layerW <= 0f || layerH <= 0f) return null
-        val scale = maxOf(layerW / frameW, layerH / frameH)
-        val offX = cam.centerX * sceneW - layerW / 2f + (layerW - frameW * scale) / 2f
-        val offY = cam.centerY * sceneH - layerH / 2f + (layerH - frameH * scale) / 2f
-        val x1 = offX + boxNorm[0] * frameW * scale
-        val y1 = offY + boxNorm[1] * frameH * scale
-        val x2 = offX + boxNorm[2] * frameW * scale
-        val y2 = offY + boxNorm[3] * frameH * scale
-        val size = maxOf(x2 - x1, y2 - y1) * 1.25f
-        if (size <= 0f) return null
+        // r64.1: math lives in SwapPatchMath (unit-tested). Mirror parity
+        // comes from the CAMERA LAYER's mirrorX — the stage content is the
+        // mirrored upright frame when that flag is set, so the patch must
+        // be placed at the mirrored x and its texture flipped once.
+        val p = SwapPatchMath.patch(
+            boxNorm, frameW, frameH,
+            cam.centerX, cam.centerY, cam.width, cam.height, cam.mirrorX,
+            res.width, res.height,
+        ) ?: return null
         return com.vcamstudio.engine.render.model.LayerTransform(
-            centerX = ((x1 + x2) / 2f) / sceneW,
-            centerY = ((y1 + y2) / 2f) / sceneH,
-            width = size / sceneW,
-            height = size / sceneH,
+            centerX = p.centerX,
+            centerY = p.centerY,
+            width = p.width,
+            height = p.height,
             fitMode = com.vcamstudio.engine.render.model.FitMode.FILL,
-            mirrorX = overlayMirrored,
+            mirrorX = p.mirrorX,
         )
     }
 
