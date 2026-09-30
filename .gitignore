@@ -15,3 +15,4 @@ captures/
 *.keystore
 !debug.keystore
 reports/
+arena-session-memory.md

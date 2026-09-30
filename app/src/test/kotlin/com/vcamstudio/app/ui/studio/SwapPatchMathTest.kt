@@ -1,7 +1,6 @@
 package com.vcamstudio.app.ui.studio
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -34,7 +33,7 @@ class SwapPatchMathTest {
 
     @Test
     fun `unmirrored full-frame camera maps the box through the fill-crop`() {
-        val p = assertNotNull(fullCam())
+        val p = fullCam()!!
         assertEquals(0.6133333f, p.centerX, d)
         assertEquals(0.814f, p.centerY, d)
         assertEquals(0.8266667f, p.width, d)
@@ -44,19 +43,17 @@ class SwapPatchMathTest {
 
     @Test
     fun `patch is square regardless of box aspect`() {
-        val p = assertNotNull(fullCam())
+        val p = fullCam()!!
         assertEquals(p.width, p.height, 1e-5f)
     }
 
     @Test
     fun `mirrored camera places the patch at the mirrored x and flips the texture`() {
-        val p = assertNotNull(
-            SwapPatchMath.patch(
-                box, 480, 640,
-                camCenterX = 0.5f, camCenterY = 0.5f, camWidth = 1f, camHeight = 1f,
-                camMirrorX = true, sceneW = 720, sceneH = 1280,
-            ),
-        )
+        val p = SwapPatchMath.patch(
+            box, 480, 640,
+            camCenterX = 0.5f, camCenterY = 0.5f, camWidth = 1f, camHeight = 1f,
+            camMirrorX = true, sceneW = 720, sceneH = 1280,
+        )!!
         assertEquals(0.3866667f, p.centerX, d)
         assertEquals(0.814f, p.centerY, d)
         assertEquals(0.8266667f, p.width, d)
@@ -68,26 +65,22 @@ class SwapPatchMathTest {
         // camCenterX=0.25, camWidth=0.5 -> layerW=360, offX = (0 - (360-960)/2) = -300
         // x1px = -300 + 351.36 = 51.36  x2px = -300 + 771.84 = 471.84
         // cx = 261.6/720 = 0.3633333
-        val p = assertNotNull(
-            SwapPatchMath.patch(
-                box, 480, 640,
-                camCenterX = 0.25f, camCenterY = 0.5f, camWidth = 0.5f, camHeight = 1f,
-                camMirrorX = false, sceneW = 720, sceneH = 1280,
-            ),
-        )
+        val p = SwapPatchMath.patch(
+            box, 480, 640,
+            camCenterX = 0.25f, camCenterY = 0.5f, camWidth = 0.5f, camHeight = 1f,
+            camMirrorX = false, sceneW = 720, sceneH = 1280,
+        )!!
         assertEquals(0.3633333f, p.centerX, d)
         assertEquals(0.814f, p.centerY, d)
     }
 
     @Test
     fun `grow multiplier scales the square`() {
-        val p = assertNotNull(
-            SwapPatchMath.patch(
-                box, 480, 640,
-                camCenterX = 0.5f, camCenterY = 0.5f, camWidth = 1f, camHeight = 1f,
-                camMirrorX = false, sceneW = 720, sceneH = 1280, grow = 1f,
-            ),
-        )
+        val p = SwapPatchMath.patch(
+            box, 480, 640,
+            camCenterX = 0.5f, camCenterY = 0.5f, camWidth = 1f, camHeight = 1f,
+            camMirrorX = false, sceneW = 720, sceneH = 1280, grow = 1f,
+        )!!
         assertEquals(476.16f / 720f, p.width, d)
     }
 
