@@ -3309,3 +3309,34 @@ NEXT DUMP: SOURCE_FACE=ok, SWAP_LIVE_SRC=identity in child log, the
 PICKED face upright inside the box; swap one-shot verdict (7/8+selftest)
 now that stage 4/5/6 pass (ARCFACE_EMBED=ok, LATENT ok, SWAP_RUN=ok all
 seen in r62 dump; window ended mid-stage-6).
+
+### Round 63 — the verdict landed: SWAP_STAGE=stage=8_done result=ok (PIPELINE PROVEN); r63 makes the live view trustworthy
+
+OWNER DUMP (3rd image = intended source, a white woman): stage=8_done
+result=ok — the ONE-SHOT passed IN FULL on device, INCLUDING the
+self-test ratio gate => carve+emap+ArcFace+projection+inswapper+ratios
+all PROVEN with real data. SOURCE_FACE=ok score=0.82 (photo embedded).
+SWAP_LIVE_SRC=identity (stored embedding used in liveFrame).
+OWNER-VISIBLE ISSUES r63 FIXES:
+1. "Didn't change to her / weird angle": the screenshot was a SELF-swap
+   frame (inswapper self-swap = smoothed YOU — uncanny, easy to misread
+   as a glitch) + r62.1 upright had landed but identity frames only
+   started after the pick. Frames now TAGGED: SWAP_LIVE_FRAME ... src=
+   self|identity + identity frames log a latent FINGERPRINT (fp=) so the
+   dump proves which embedding fed each frame. EXIF orientation honoured
+   on the picked photo (rotated gallery JPEGs previously produced
+   sideways crops -> garbage identity, silently).
+2. BLINKING: SCRFD drops to ~1 fps while live swap shares its threads
+   and the overlay expired with the SCRFD box. Fix: swap frames carry
+   their OWN upright box (AIDL onSwapFrame +frameW/frameH); the swap
+   draw no longer depends on the SCRFD box; image holds 12 s between
+   updates; cyan box expiry 5 s while a swap frame is shown; stroke/%
+   are SCRFD-only visuals.
+3. Cadence: idle sleep 3 s -> 2 s (identity frames ~5-7 s end-to-end).
+**r63 ledger**: e1783b3 (RED: try-scoped 'stored') -> 66624dc = HEAD,
+GREEN run 36715168940 (7m39s), artifact 11096091476 (21,463,029 B).
+NEXT: owner installs, re-picks the photo (or keeps), live swap ON:
+box holds steady, face upright, src=identity frames show HER. Then the
+quality phases: (V1) blend into the camera feed instead of a boxed
+overlay, (V2) GPU/NNAPI experiment for inswapper speed, (V3) virtual-
+camera output integration.
