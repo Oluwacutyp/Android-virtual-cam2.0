@@ -81,6 +81,7 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
     @Volatile private var snapLen = 0
     @Volatile private var snapW = 0
     @Volatile private var snapH = 0
+    @Volatile private var snapRot = 0
     @Volatile private var snapLm: FloatArray? = null
     @Volatile private var snapLb: ScrfdPreprocess.Letterbox? = null
     @Volatile private var snapBox: FloatArray? = null
@@ -321,7 +322,7 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
         if (snapLen == 0 || lm == null || lb == null || bx == null) {
             null
         } else {
-            FaceSnapshot(snapBuf.copyOf(snapLen), snapLen, snapW, snapH, lm, lb, bx)
+            FaceSnapshot(snapBuf.copyOf(snapLen), snapLen, snapW, snapH, lm, lb, bx, snapRot)
         }
     }
 
@@ -699,6 +700,7 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
                 snapLen = cn
                 snapW = task.width
                 snapH = task.height
+                snapRot = task.rotationDeg
                 snapLm = lm640.copyOf()
                 snapLb = lb2
                 snapBox = floatArrayOf(

@@ -42,6 +42,8 @@ data class FaceSnapshot(
     val lm640: FloatArray,
     val lb: com.vcamstudio.engine.aiface.ScrfdPreprocess.Letterbox,
     val box: FloatArray,
+    /** r62.1: sensor rotation — the live crop must be uprighted before align. */
+    val rotDeg: Int = 0,
 )
 
 object SwapTest {
@@ -292,7 +294,19 @@ object SwapTest {
             val swapS = cachedSwap ?: return null
 
             val buf = java.nio.ByteBuffer.wrap(snap.i420, 0, snap.len)
-            val frame = DebugCrops.i420ToBitmap(buf, snap.w, snap.h)
+            // r62.1: the raw ring frame is SIDEWAYS (640x480 for this cam,
+            // rot=270) while the landmarks/letterbox live in upright space —
+            // rendering crops without uprighting sampled out of bounds
+            // (device proof: rotated face + black lower half in the box).
+            // postRotate(rotationDeg) is the exact inverse of
+            // ScrfdPreprocess's upright->sensor map (90/270 cases).
+            var frame = DebugCrops.i420ToBitmap(buf, snap.w, snap.h)
+            if (snap.rotDeg % 360 != 0) {
+                val m = android.graphics.Matrix().apply { postRotate(snap.rotDeg.toFloat()) }
+                val up = Bitmap.createBitmap(frame, 0, 0, snap.w, snap.h, m, true)
+                if (up !== frame) frame.recycle()
+                frame = up
+            }
             val swapped: Bitmap
             try {
                 val src = FloatArray(10)
