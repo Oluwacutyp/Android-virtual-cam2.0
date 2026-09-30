@@ -285,6 +285,7 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
                 continue
             }
             if (path == null) {
+                writeNoInfer("path_null")
                 // Model removed: drop the session, stay in :ai.
                 closeDetector()
                 Timber.i("AI_CHILD_STATE state=model-missing")
@@ -333,6 +334,7 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
                 // r54.3-H3: NAMED failure — path, bytes, OrtException
                 // message. The AI chain stays DOWN; the child lives.
                 Timber.e(t, "AI_MODEL_LOAD_FAIL path=%s size=%dB", path, mSize)
+                writeNoInfer("session_build_failed:" + (t.message ?: t.javaClass.simpleName))
                 Timber.i("AI_CHILD_STATE state=session-failed")
                 callback?.onState(2, t.message ?: "session failed")
                 service.writeReport("fail", t.message)
@@ -360,6 +362,23 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
     /** r55: a real inference is never 0 ms (checked on sampled frames). */
     private var noopStreak = 0
     private var noopLogged = false
+
+    // ---- r60: persist "no inference ran" across the process boundary ------
+    // Exact r55 scrfd_fill_null.txt pattern: :ai writes, main process reads.
+    @Volatile private var noInferSet = false
+
+    private fun writeNoInfer(reason: String) {
+        if (noInferSet) return
+        noInferSet = true
+        Timber.i("AI_NO_INFER=%s", reason)
+        runCatching { java.io.File(service.filesDir, "ai_no_infer.txt").writeText(reason) }
+    }
+
+    private fun clearNoInfer() {
+        if (!noInferSet) return
+        noInferSet = false
+        runCatching { java.io.File(service.filesDir, "ai_no_infer.txt").delete() }
+    }
 
     private fun closeDetector() {
         sessionActive = false
@@ -414,6 +433,8 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
         var letterbox: ScrfdPreprocess.Letterbox? = null // kept for the box conversion
         val det = detector
         if (det != null && n > 0) {
+            // r60: inference is running again — retract any persisted reason.
+            clearNoInfer()
             i420.clear()
             i420.put(frameScratch, 0, n)
             i420.position(0)
@@ -458,6 +479,9 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
             } else {
                 noopStreak = 0
             }
+        } else {
+            // r60: NOTHING ran — no preprocess, no inference. Persist why.
+            writeNoInfer(if (det == null) "detector_null" else "empty_payload(n=$n)")
         }
         framesDone++
         if (recentPreMs.size >= 20) recentPreMs.removeFirst()

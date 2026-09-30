@@ -507,10 +507,20 @@ class ModelManager(private val context: Context) {
     fun dumpSection(): String = buildString {
         append("MODEL_STATES")
         for (ms in _states.value.values.sortedBy { it.model.id }) {
+            val f = File(modelsDir, ms.model.fileName)
+            val onDisk = safeLength(f)
             append("\nMODEL name=").append(ms.model.fileName)
                 .append(" state=").append(ms.state)
                 .append(" pct=").append(ms.progressPct)
                 .append(" bytes=").append(ms.downloadedBytes)
+                // r60: ACTUAL file size. `bytes=` above is the download record and
+                // happily said 174383860 while the file was a 6406-byte stub.
+                .append(" file=").append(onDisk)
+            // Skip for catalogue entries with no known size (emap.bin is carved).
+            val expected = ms.model.sizeBytes
+            if (expected > 0L && onDisk != expected) {
+                append(" MISMATCH=expected_").append(expected)
+            }
             ms.message?.let { append(" msg=").append(it) }
         }
     }

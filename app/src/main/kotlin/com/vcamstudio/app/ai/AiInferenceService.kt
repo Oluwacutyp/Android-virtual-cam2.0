@@ -77,14 +77,18 @@ class AiInferenceService : Service() {
         // stubs (they are not catalogue models — export/import never
         // carries them), and re-running the install action by hand is easy
         // to forget. Small files only; never on release.
+        // r60: restore ONLY the probe file. The old code called installStubs() here,
+        // which unconditionally overwrote w600k_r50.onnx (174 MB) and
+        // inswapper_128_fp16.onnx (278 MB) with 6.4 KB / 256 B stubs on every :ai
+        // start whenever the probe file was missing — silently destroying 452 MB.
         if (com.vcamstudio.app.BuildConfig.DEBUG &&
             !java.io.File(filesDir, "models/probe_fp16_conv.onnx").exists()
         ) {
             runCatching {
-                val n = com.vcamstudio.app.models.DebugModelTools.installStubs(this)
-                Timber.i("AI_STUBS_AUTO_INSTALL n=%d", n)
+                val ok = com.vcamstudio.app.models.DebugModelTools.installProbeFile(this)
+                Timber.i("AI_PROBE_AUTO_INSTALL ok=%s", ok)
             }.onFailure { t ->
-                Timber.w("AI_STUBS_AUTO_INSTALL_FAIL=%s", t.message ?: t.javaClass.simpleName)
+                Timber.w("AI_PROBE_AUTO_INSTALL_FAIL=%s", t.message ?: t.javaClass.simpleName)
             }
         }
         Timber.i("AI_PROC_START pid=%d", Process.myPid())
@@ -265,7 +269,7 @@ object AiChildLogTree : Timber.Tree() {
                 if (stack.isNullOrBlank()) {
                     f.appendText(head + "\n")
                 } else {
-                    f.appendText(head + "\n" + stack.split('\n').take(12).joinToString("\n") + "\n")
+                    f.appendText(head + "\n" + stack.split('\n').take(40).joinToString("\n") + "\n")
                 }
             }
         }

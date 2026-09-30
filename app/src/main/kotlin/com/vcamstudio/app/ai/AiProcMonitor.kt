@@ -106,6 +106,22 @@ object AiProcMonitor {
         append("\nAI_MODEL_SIZE=").append(modelSizeBytes).append("B")
         append("\nAI_CHILD_LAST_PHASE=")
             .append(appContext?.let { com.vcamstudio.app.crash.PhaseMark.readAi(it) } ?: "unknown")
+        // r60: :ai persists the reason it ran NO inference at all.
+        // Absent or empty file => "none" (healthy).
+        append("\nAI_NO_INFER=").append(
+            appContext?.let { c ->
+                runCatching {
+                    File(c.filesDir, "ai_no_infer.txt").readText().trim().ifEmpty { "none" }
+                }.getOrDefault("none")
+            } ?: "no-context",
+        )
+        // r60: durable swap-test outcome written by :ai to swap_last.txt.
+        val swapTxt = appContext?.let { c ->
+            runCatching { File(c.filesDir, "swap_last.txt").readText() }.getOrDefault("")
+        } ?: ""
+        val swapLines = swapTxt.lineSequence().filter { it.isNotBlank() }.toList()
+        append("\nSWAP_STAGE=").append(swapLines.firstOrNull() ?: "none")
+        swapLines.drop(1).take(6).forEach { append("\nSWAP_TRACE=").append(it) }
         // Round 50-A0.2: death context — system memory at bind/death and
         // the child's scheduler importance while bound. Separates LMKD
         // (avail < threshold at death) from an OEM/policy kill (plenty of

@@ -3159,3 +3159,37 @@ changes; nothing outside the one-shot.
  (7m42s), artifact 11025540113 (21,439,357 B). Owner dump request: EMAP_CARVE=tag_found
  off= bytes=1048576 sha256=370af5bf... (or the exact fail/skip line) +
  the post-carve stages + confirm NO OutOfMemoryError in AI_PROC_CHILD_LOG.
+
+### Round 60 — stub auto-install DATA LOSS fix + probe OOM fix + durable swap evidence
+
+PART 1 (data loss, fix first): installStubs() had NO existence/size check and
+truncated whatever was there; the :ai startup auto-install fired it whenever
+probe_fp16_conv.onnx was missing — but that file is not a catalogue model, so
+export/import never restores it, and the guard was TRUE on every :ai start:
+w600k_r50.onnx (174,383,860 B) overwritten with the 6,406 B stub and
+inswapper_128_fp16.onnx (277,680,829 B) with the 256 B stub. Invisible
+because MODEL bytes= reported ms.downloadedBytes (the DOWNLOAD RECORD), not
+the file. 1a: installStubs now reads the (tiny) asset first and SKIPS when
+the destination exists at a different size (MODEL_STUB_SKIP dest= reason=
+present_not_stub file= stub=); NEW installProbeFile() writes ONLY
+probe_fp16_conv.onnx. 1b: the :ai auto-install now calls installProbeFile
+(AI_PROBE_AUTO_INSTALL ok=) — restoring the probe file can never touch the
+452 MB pair. 1c: MODEL dump rows gain file=<actual on-disk size> (safeLength)
++ MISMATCH=expected_<n> when the catalogue size differs (emap has none —
+carved). PART 2: ModelProbes.session was env.createSession(f.readBytes())
+— a whole-file byte[]; 277,680,848 B vs the 268,435,456 B growth limit =
+guaranteed OOM once the real model returns (currently masked BY the Part-1
+stub). Now createSession(f.absolutePath) — no byte[], both callers served.
+PART 3: swap-test evidence is durable now: swap_last.txt written at
+beginRun, before each of the 8 stages (mark("1_carve_emap".."8_done")),
+and on endRun with the FULL stack (no take(12) truncation); run() keeps the
+SWAP_TEST=fail log. PART 4: dump gains AI_NO_INFER=<reason|none> (:ai
+persists detector_null|empty_payload|session_build_failed|path_null to
+ai_no_infer.txt; retracted on the next real inference — transient
+path_null during download/restore is the point) + SWAP_STAGE=first line +
+SWAP_TRACE= next 6 lines of swap_last.txt. AiChildLogTree stacks take(12)
+-> take(40). Owner's VERIFY checks done: assets at app/src/debug/assets/
+stubs/ (probe_fp16_conv.onnx, stub_inswapper_128.onnx,
+stub_w600k_r50.onnx) and MAPPING names match. No CI/deps/device-specific/
+toggle/largeHeap/math changes. r59 self-heal NOT included (owner: detector
+alive).

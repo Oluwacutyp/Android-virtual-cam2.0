@@ -57,10 +57,53 @@ object SwapTest {
     private const val EMAP_INIT_NAME = "initializer"
     private const val EMAP_SHA256 = "370af5bf707dafdbea8a40448d697d9697610bd223ecf92887af9c9cc7055ac8"
 
+    // ---- r60: durable swap-test evidence --------------------------------
+    @Volatile private var stageName: String = "init"
+    private var stageFile: File? = null
+    private var stageStartMs: Long = 0L
+
+    private fun beginRun(service: AiInferenceService) {
+        stageFile = java.io.File(service.filesDir, "swap_last.txt")
+        stageStartMs = SystemClock.elapsedRealtime()
+        stageName = "init"
+        writeStage(null)
+    }
+
+    /** Call BEFORE each stage so a crash mid-stage names the stage. */
+    private fun mark(stage: String) {
+        stageName = stage
+        writeStage(null)
+    }
+
+    private fun endRun(t: Throwable?) {
+        writeStage(t)
+    }
+
+    private fun writeStage(t: Throwable?) {
+        val f = stageFile ?: return
+        runCatching {
+            val ms = SystemClock.elapsedRealtime() - stageStartMs
+            val sb = StringBuilder()
+            sb.append("stage=").append(stageName)
+                .append(" ms=").append(ms)
+                .append(" result=").append(if (t == null) "ok" else "fail")
+            if (t != null) {
+                sb.append('\n').append(t.javaClass.name)
+                    .append(": ").append(t.message ?: "-")
+                // FULL stack — the 12-line / 24-line truncation is what hid this.
+                for (fr in t.stackTrace) sb.append('\n').append("    at ").append(fr)
+            }
+            f.writeText(sb.toString())
+        }
+    }
+
     fun run(service: AiInferenceService, snapIn: FaceSnapshot?) {
+        beginRun(service)
         try {
             runInner(service, snapIn)
+            endRun(null)
         } catch (t: Throwable) {
+            endRun(t)
             Timber.e(t, "SWAP_TEST=fail:%s", t.message ?: t.javaClass.simpleName)
         }
     }
@@ -86,18 +129,23 @@ object SwapTest {
         }
 
         // ---- STAGE 1: carve emap.bin ------------------------------------
+        mark("1_carve_emap")
         val emap = carveEmap(insw, modelsDir) ?: return
 
+        mark("2_sessions")
         val env = OrtEnvironment.getEnvironment()
         var arc: OrtSession? = null
         var swap: OrtSession? = null
         var full: Bitmap? = null
         try {
+            mark("2a_arcface_session")
             arc = createSession(env, w600k)
+            mark("2b_inswapper_session")
             swap = createSession(env, insw)
 
             // Face geometry from the snapshot (same math as DebugCrops).
             val buf = java.nio.ByteBuffer.wrap(snap.i420, 0, snap.len)
+            mark("3_crops")
             val frame = DebugCrops.i420ToBitmap(buf, snap.w, snap.h)
             full = frame
             val src = FloatArray(10)
@@ -120,6 +168,7 @@ object SwapTest {
 
             // ---- STAGE 2: ArcFace embedding -----------------------------
             val in112 = FloatArray(3 * SwapMath.ARC_SIZE * SwapMath.ARC_SIZE)
+            mark("4_arcface_infer")
             SwapMath.arcfacePreprocess(argb112, in112)
             val t0 = SystemClock.elapsedRealtime()
             val emb = FloatArray(SwapMath.EMBED_DIM)
@@ -137,6 +186,7 @@ object SwapTest {
             val normAfter = SwapMath.l2norm(emb)
             Timber.i("ARCFACE_EMBED=ok dim=512 norm=%.6f ms=%d", normAfter, SystemClock.elapsedRealtime() - t0)
 
+            mark("5_project")
             // ---- STAGE 3: latent projection -----------------------------
             val p0 = SystemClock.elapsedRealtime()
             val latentRaw = FloatArray(SwapMath.EMBED_DIM)
@@ -145,6 +195,7 @@ object SwapTest {
             val lnorm = SwapMath.l2norm(latent)
             Timber.i("LATENT_PROJECT=ok norm=%.6f ms=%d", lnorm, SystemClock.elapsedRealtime() - p0)
 
+            mark("6_inswapper_infer")
             // ---- STAGE 4 + 6: INSwapper self-swap + control -------------
             val target = FloatArray(3 * SwapMath.SWAP_SIZE * SwapMath.SWAP_SIZE)
             SwapMath.swapPreprocess(argb128, target)
@@ -161,6 +212,7 @@ object SwapTest {
                 selfMae, ctrlMae, ratio,
             )
 
+            mark("7_pasteback")
             // ---- STAGE 5: paste-back ------------------------------------
             val p1 = SystemClock.elapsedRealtime()
             val swappedBitmap = bitmapFromBgrPlanes(selfOut)
@@ -186,6 +238,7 @@ object SwapTest {
             swappedBitmap.recycle()
             crop112.recycle()
             crop128.recycle()
+            mark("8_done")
             Timber.i("SWAP_TEST=done")
         } finally {
             runCatching { arc?.close() }

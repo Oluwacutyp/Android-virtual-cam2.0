@@ -45,7 +45,11 @@ object ModelProbes {
 
     private fun session(env: OrtEnvironment, f: File): OrtSession {
         val opts = OrtSession.SessionOptions()
-        return env.createSession(f.readBytes(), opts)
+        // r60: was env.createSession(f.readBytes(), opts) — a whole-file byte[].
+        // 277,680,848 B allocation vs a 268,435,456 B growth limit: guaranteed OOM.
+        // ORT opens the model from the path itself — exactly what
+        // SwapTest.createSession (SwapTest.kt:242) already does. No Java byte[].
+        return env.createSession(f.absolutePath, opts)
     }
 
     /**
