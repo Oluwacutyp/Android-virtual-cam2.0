@@ -3193,3 +3193,12 @@ stubs/ (probe_fp16_conv.onnx, stub_inswapper_128.onnx,
 stub_w600k_r50.onnx) and MAPPING names match. No CI/deps/device-specific/
 toggle/largeHeap/math changes. r59 self-heal NOT included (owner: detector
 alive).
+
+**r60 ledger**: 73b0914 = HEAD, GREEN run 36684359177 (7m31s) FIRST TRY,
+ artifact 11083019261 (21,442,360 B). Owner reading guide: MODEL
+ file=174383860 / 277680829 = real; file=6406 / 256 = still stubbed;
+ SWAP_STAGE=stage=init result=ok = a gate rejected (stubs);
+ stage=<1..8_done> result=ok = full pipeline; stage=<name> result=fail +
+ SWAP_TRACE= = died there. Owner wants: MODEL file= for both,
+ MODEL_PROBE_inswapper_stub=ok, AI_NO_INFER=none, SWAP_STAGE/TRACE if run,
+ NO MODEL_STUB_INSTALLED for w600k/inswapper, Phase-1 unchanged.
