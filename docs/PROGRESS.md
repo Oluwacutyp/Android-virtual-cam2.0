@@ -3340,3 +3340,28 @@ box holds steady, face upright, src=identity frames show HER. Then the
 quality phases: (V1) blend into the camera feed instead of a boxed
 overlay, (V2) GPU/NNAPI experiment for inswapper speed, (V3) virtual-
 camera output integration.
+
+### Round 64 — V1 landed: the swap is a SCENE LAYER (inside the feed, not a sticker)
+Owner verdict r63: works, but the boxed overlay "is not the end product we
+are aiming for". So r64 composes the swap patch INTO the scene itself:
+1. StudioViewModel.commit() now appends a top LayerDefinition.Image
+   (stable ids vcam-swap-src / vcam-swap-layer) to the effective scene
+   handed to the engine. Texture re-registered per frame via
+   registerBitmapSource (getOrPut+setBitmap = replace semantics).
+2. Placement uses the SAME proven geometry as the r61-r63 overlay: frame
+   -> camera-layer quad fill-crop -> scene-normalized. The patch is a
+   SQUARE (the 128 model output) sized to the longer box side x1.25,
+   FitMode.FILL (square->square = exact 1:1), mirrorX for the front cam.
+3. Never stored in scene state: not editable, not persisted, not exported;
+   removed when swap_live turns OFF (debugFlags collector). No TTL -> no
+   blinking; the patch holds until the next frame or toggle-off.
+4. Because it rides the scene, the swap now shows in the preview AND
+   everything derived from the scene (stage recording, transport taps).
+   JPEG q88->92 for a crisper patch.
+**r64 ledger**: 7d1c9da = HEAD, GREEN run 36731637216, artifact
+vcam-studio-debug-apk 11104684777 (21,464,566 B), probe-wedge 11105661811.
+NOTE: sandbox rebuilt from a fresh clone between turns (local git history
+reset to base 4581e06); recovered via origin (43ef042) + saved files;
+bad-parent commit a48ef44 abandoned.
+NEXT: owner installs r64, re-picks photo, live swap ON -> patch inside
+the feed, no cyan box. Then V2 speed + V3 virtual-camera output.
