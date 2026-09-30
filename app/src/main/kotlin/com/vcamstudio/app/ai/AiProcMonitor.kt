@@ -310,6 +310,22 @@ object AiProcMonitor {
     @Volatile private var lastSubmitAtMs: Long = -1L
     @Volatile private var childFg: Int = 0
 
+    /** r61: one live-swap frame from :ai (decoded + drawn by the VM). */
+    data class SwapFrame(
+        val jpeg: ByteArray,
+        val w: Int,
+        val h: Int,
+        val boxNorm: FloatArray,
+        val ts: Long,
+    )
+
+    private val _swapFrame = MutableStateFlow<SwapFrame?>(null)
+    val swapFrame: StateFlow<SwapFrame?> = _swapFrame.asStateFlow()
+
+    fun noteSwapFrame(jpeg: ByteArray, w: Int, h: Int, boxNorm: FloatArray) {
+        _swapFrame.value = SwapFrame(jpeg, w, h, boxNorm, System.currentTimeMillis())
+    }
+
     /** r54-C: force a child session rebuild (debug toggle side effect). */
     fun reofferSession() {
         runCatching { client?.reofferSession() }

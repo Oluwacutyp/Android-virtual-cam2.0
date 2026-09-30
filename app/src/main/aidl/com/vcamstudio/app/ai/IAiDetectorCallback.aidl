@@ -10,4 +10,9 @@ oneway interface IAiDetectorCallback {
     // left eye, right eye, nose, left mouth corner, right mouth corner).
     // The boxes ring stays 8x64 - landmarks ride the binder only.
     void onKps(long frameId, in float[] kps, int uprightW, int uprightH);
+
+    // r61 ADDITIVE (live swap): the swapped 128x128 crop as JPEG bytes +
+    // its normalized box in upright-frame coordinates. Small payload
+    // (tens of KB), oneway like the rest. Drives the preview overlay.
+    void onSwapFrame(in byte[] jpeg, int w, int h, in float[] boxNorm);
 }

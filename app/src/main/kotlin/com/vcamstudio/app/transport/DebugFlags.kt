@@ -28,6 +28,11 @@ object DebugFlags {
     const val KEY_MODEL_PROBES = "model_probes"
     const val KEY_CROP_DUMP = "crop_dump"
 
+    // r61: live swap — :ai runs the swap pipeline on its own thread at a
+    // throttled interval and streams the swapped crop to the preview
+    // overlay. DEFAULT OFF (452 MB CPU-ORT stack; never auto-on).
+    const val KEY_SWAP_LIVE = "swap_live"
+
     val ALL = listOf(
         KEY_TRANSPORT_ATTACH,
         KEY_TRANSPORT_PROBE,
@@ -36,6 +41,7 @@ object DebugFlags {
         KEY_FEED,
         KEY_MODEL_PROBES,
         KEY_CROP_DUMP,
+        KEY_SWAP_LIVE,
     )
 
     private fun file(ctx: Context): File = File(ctx.filesDir, "transport_debug_flags.properties")

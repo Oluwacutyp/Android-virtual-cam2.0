@@ -304,6 +304,9 @@ fun ModelsSheet(
                             TextButton(onClick = { onToggleFlag("crop_dump") }) {
                                 Text("Crops: ${if (debugFlags["crop_dump"] ?: false) "on" else "off"}")
                             }
+                            TextButton(onClick = { onToggleFlag("swap_live") }) {
+                                Text("Live swap: ${if (debugFlags["swap_live"] ?: false) "on" else "off"}")
+                            }
                         }
                         // r54.1-X4: DEV crash-log access without a PC —
                         // filesDir/crashes is invisible to file managers on

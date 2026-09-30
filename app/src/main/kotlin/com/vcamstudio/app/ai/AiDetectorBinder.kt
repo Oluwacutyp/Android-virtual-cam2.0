@@ -191,19 +191,49 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
                 swapTestRequested.also { swapTestRequested = false }
             }
             if (!go || !running) break
-            val snap = synchronized(snapLock) {
-                val lm = snapLm
-                val lb = snapLb
-                val bx = snapBox
-                if (snapLen == 0 || lm == null || lb == null || bx == null) {
-                    null
-                } else {
-                    FaceSnapshot(snapBuf.copyOf(snapLen), snapLen, snapW, snapH, lm, lb, bx)
-                }
-            }
+            val snap = snapshotCopy()
             runCatching { SwapTest.run(service, snap) }.onFailure {
                 Timber.w(it, "AI_SWAP_TEST_FAIL")
             }
+            // r61: live swap — after the one-shot, keep going at a throttled
+            // interval while the toggle is on. Same thread, cached sessions.
+            if (running && com.vcamstudio.app.transport.DebugFlags.isOn(
+                    service, com.vcamstudio.app.transport.DebugFlags.KEY_SWAP_LIVE,
+                )
+            ) {
+                Timber.i("SWAP_LIVE=on")
+                while (running && com.vcamstudio.app.transport.DebugFlags.isOn(
+                        service, com.vcamstudio.app.transport.DebugFlags.KEY_SWAP_LIVE,
+                    )
+                ) {
+                    val ls = snapshotCopy()
+                    if (ls != null) {
+                        val out = runCatching { SwapTest.liveFrame(service, ls) }.getOrNull()
+                        if (out != null) {
+                            runCatching { callback?.onSwapFrame(out.jpeg, out.w, out.h, out.boxNorm) }
+                            Timber.i("SWAP_LIVE_FRAME bytes=%d", out.jpeg.size)
+                        }
+                    }
+                    try {
+                        Thread.sleep(3000)
+                    } catch (_: InterruptedException) {
+                        break
+                    }
+                }
+                SwapTest.closeCachedSessions()
+                Timber.i("SWAP_LIVE=off")
+            }
+        }
+    }
+
+    private fun snapshotCopy(): FaceSnapshot? = synchronized(snapLock) {
+        val lm = snapLm
+        val lb = snapLb
+        val bx = snapBox
+        if (snapLen == 0 || lm == null || lb == null || bx == null) {
+            null
+        } else {
+            FaceSnapshot(snapBuf.copyOf(snapLen), snapLen, snapW, snapH, lm, lb, bx)
         }
     }
 
@@ -606,7 +636,9 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
         runCatching { probeThread.join(1_000) }
         runCatching { workerThread.join(1_000) }
         synchronized(swapLock) { swapLock.notifyAll() }
+        runCatching { swapThread.interrupt() }
         runCatching { swapThread.join(1_000) }
+        SwapTest.closeCachedSessions()
         closeDetector()
         frameRing?.close()
         boxRing?.close()

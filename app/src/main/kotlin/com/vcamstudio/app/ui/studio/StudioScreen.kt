@@ -438,6 +438,7 @@ private fun StageArea(state: StudioViewModel.UiState, vm: StudioViewModel, modif
                         rawMode = state.rawMode,
                         scene = scene,
                         sceneRes = state.sceneResolution,
+                        swap = vm.swapOverlay.collectAsStateWithLifecycle().value,
                     )
                 }
             }

@@ -10,6 +10,7 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import timber.log.Timber
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.FloatBuffer
 import java.security.MessageDigest
@@ -244,6 +245,116 @@ object SwapTest {
             runCatching { arc?.close() }
             runCatching { swap?.close() }
             runCatching { full?.recycle() }
+        }
+    }
+
+    // ---- r61: live-swap support ----------------------------------------
+    // Sessions are built ONCE and reused across live frames (a 452 MB
+    // session build per 3 s frame would be absurd). Closed on toggle-off
+    // and binder shutdown. SCRFD is untouched; this is the swap thread's
+    // own ORT use, in :ai, behind a default-off toggle.
+    @Volatile private var cachedArc: OrtSession? = null
+    @Volatile private var cachedSwap: OrtSession? = null
+
+    fun closeCachedSessions() {
+        runCatching { cachedArc?.close() }
+        runCatching { cachedSwap?.close() }
+        cachedArc = null
+        cachedSwap = null
+    }
+
+    /** Live-swap output: JPEG of the swapped 128 crop + normalized box. */
+    data class SwapFrameOut(val jpeg: ByteArray, val w: Int, val h: Int, val boxNorm: FloatArray)
+
+    /**
+     * ONE live frame. Same stages as the one-shot (same SwapMath — the
+     * landmine math has exactly one source), no selftest/paste-back. Null
+     * on any skip/failure (reason already logged).
+     */
+    fun liveFrame(service: AiInferenceService, snap: FaceSnapshot): SwapFrameOut? {
+        try {
+            val modelsDir = File(service.filesDir, "models")
+            val w600k = File(modelsDir, "w600k_r50.onnx")
+            val insw = File(modelsDir, "inswapper_128_fp16.onnx")
+            if (w600k.length() != W600K_BYTES || insw.length() != INSWAPPER_BYTES) {
+                Timber.i("SWAP_LIVE_SKIP reason=model_not_ready")
+                return null
+            }
+            val emap = carveEmap(insw, modelsDir) ?: return null // cached after first run
+            val env = OrtEnvironment.getEnvironment()
+            if (cachedArc == null || cachedSwap == null) {
+                Timber.i("SWAP_SESSION_BEGIN file=w600k_r50.onnx bytes=%d (live)", w600k.length())
+                Timber.i("SWAP_SESSION_BEGIN file=inswapper_128_fp16.onnx bytes=%d (live)", insw.length())
+                cachedArc = createSession(env, w600k)
+                cachedSwap = createSession(env, insw)
+            }
+            val arc = cachedArc ?: return null
+            val swapS = cachedSwap ?: return null
+
+            val buf = java.nio.ByteBuffer.wrap(snap.i420, 0, snap.len)
+            val frame = DebugCrops.i420ToBitmap(buf, snap.w, snap.h)
+            val swapped: Bitmap
+            try {
+                val src = FloatArray(10)
+                for (j in 0 until 5) {
+                    src[2 * j] = (snap.lm640[2 * j] - snap.lb.padX) / snap.lb.scale
+                    src[2 * j + 1] = (snap.lm640[2 * j + 1] - snap.lb.padY) / snap.lb.scale
+                }
+                val aff112 = FaceAlign.estimate(src, SwapMath.ARC_SIZE)
+                if (aff112 == null) {
+                    frame.recycle()
+                    Timber.i("SWAP_LIVE_SKIP reason=degenerate_landmarks")
+                    return null
+                }
+                val crop112 = renderCrop(frame, aff112, SwapMath.ARC_SIZE)
+                val argb112 = IntArray(SwapMath.ARC_SIZE * SwapMath.ARC_SIZE)
+                crop112.getPixels(argb112, 0, SwapMath.ARC_SIZE, 0, 0, SwapMath.ARC_SIZE, SwapMath.ARC_SIZE)
+                crop112.recycle()
+                val in112 = FloatArray(3 * SwapMath.ARC_SIZE * SwapMath.ARC_SIZE)
+                SwapMath.arcfacePreprocess(argb112, in112)
+                val emb = FloatArray(SwapMath.EMBED_DIM)
+                OnnxTensor.createTensor(env, FloatBuffer.wrap(in112), longArrayOf(1, 3, 112L, 112L)).use { t ->
+                    arc.run(mapOf("input.1" to t)).use { out ->
+                        val o = out.get("683") as OnnxTensor
+                        val fb = o.floatBuffer
+                        for (i in 0 until SwapMath.EMBED_DIM) emb[i] = fb.get(i)
+                    }
+                }
+                SwapMath.l2norm(emb) // MANDATORY (BN tail — see the one-shot)
+                val latent = FloatArray(SwapMath.EMBED_DIM)
+                SwapMath.project(emb, emap, latent)
+                SwapMath.l2norm(latent)
+                val aff128 = FaceAlign.estimate(src, SwapMath.SWAP_SIZE)
+                if (aff128 == null) {
+                    frame.recycle()
+                    Timber.i("SWAP_LIVE_SKIP reason=degenerate_landmarks")
+                    return null
+                }
+                val crop128 = renderCrop(frame, aff128, SwapMath.SWAP_SIZE)
+                val argb128 = IntArray(SwapMath.SWAP_SIZE * SwapMath.SWAP_SIZE)
+                crop128.getPixels(argb128, 0, SwapMath.SWAP_SIZE, 0, 0, SwapMath.SWAP_SIZE, SwapMath.SWAP_SIZE)
+                crop128.recycle()
+                val target = FloatArray(3 * SwapMath.SWAP_SIZE * SwapMath.SWAP_SIZE)
+                SwapMath.swapPreprocess(argb128, target)
+                val outPlanes = runSwap(env, swapS, target, latent)
+                swapped = bitmapFromBgrPlanes(outPlanes)
+            } finally {
+                frame.recycle()
+            }
+            val jpg = ByteArrayOutputStream().also { bos ->
+                swapped.compress(Bitmap.CompressFormat.JPEG, 88, bos)
+            }.toByteArray()
+            swapped.recycle()
+            val boxNorm = floatArrayOf(
+                snap.box[0] / snap.lb.uprightW.coerceAtLeast(1),
+                snap.box[1] / snap.lb.uprightH.coerceAtLeast(1),
+                snap.box[2] / snap.lb.uprightW.coerceAtLeast(1),
+                snap.box[3] / snap.lb.uprightH.coerceAtLeast(1),
+            )
+            return SwapFrameOut(jpg, SwapMath.SWAP_SIZE, SwapMath.SWAP_SIZE, boxNorm)
+        } catch (t: Throwable) {
+            Timber.i("SWAP_LIVE=fail:%s", t.message ?: t.javaClass.simpleName)
+            return null
         }
     }
 

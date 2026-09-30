@@ -13,8 +13,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.vcamstudio.engine.aiface.FaceBox
 import com.vcamstudio.engine.aiface.FaceDetectionController
@@ -37,6 +41,7 @@ fun FaceDebugOverlay(
     scene: com.vcamstudio.engine.render.model.SceneDefinition?,
     sceneRes: com.vcamstudio.app.settings.SceneResolution,
     modifier: Modifier = Modifier,
+    swap: StudioViewModel.SwapOverlay? = null,
 ) {
     val hasCamLayer = scene?.layers?.any { it is LayerDefinition.Camera } == true
     if (!hasCamLayer) return
@@ -109,6 +114,23 @@ fun FaceDebugOverlay(
             cornerRadius = androidx.compose.ui.geometry.CornerRadius(radiusPx, radiusPx),
             style = Stroke(width = strokePx),
         )
+        // r61: live swap — the swapped 128 crop drawn INTO the detected box
+        // rect (same geometry the cyan box uses). The crop corresponds to
+        // the sensor frame; the front-camera preview is mirrored, so flip
+        // horizontally around the rect centre when the overlay is mirrored.
+        swap?.let { sw ->
+            withTransform({
+                if (sw.mirrored) {
+                    scale(-1f, 1f, pivot = rect.center)
+                }
+            }) {
+                drawImage(
+                    sw.bitmap.asImageBitmap(),
+                    dstOffset = IntOffset(rect.left.toInt(), rect.top.toInt()),
+                    dstSize = IntSize(rect.width.toInt().coerceAtLeast(1), rect.height.toInt().coerceAtLeast(1)),
+                )
+            }
+        }
         drawIntoCanvas { canvas ->
             val paint = android.graphics.Paint().apply {
                 color = android.graphics.Color.rgb(0x22, 0xD3, 0xEE)

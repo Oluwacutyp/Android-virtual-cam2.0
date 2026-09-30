@@ -648,6 +648,19 @@ class StudioViewModel @Inject constructor(
                 ),
             )
         }
+        viewModelScope.launch {
+            // r61: live-swap frames from :ai -> decode -> overlay. The OLD
+            // bitmap is intentionally NOT recycled (the overlay canvas may
+            // still hold it for a frame); 64 KB per 3 s is negligible.
+            com.vcamstudio.app.ai.AiProcMonitor.swapFrame.collect { f ->
+                runCatching {
+                    val bmp = android.graphics.BitmapFactory.decodeByteArray(
+                        f.jpeg, 0, f.jpeg.size,
+                    ) ?: return@collect
+                    _swapOverlay.value = SwapOverlay(bmp, f.boxNorm, overlayMirrored)
+                }.onFailure { t -> Timber.e(t, "SWAP_OVERLAY_FAIL") }
+            }
+        }
         Timber.i("VM_READY") // r54.5-F4
     }
 
@@ -1218,6 +1231,16 @@ class StudioViewModel @Inject constructor(
 
     /** r53: transport feed toggle (DEV). */
     val transportDev = MutableStateFlow(false)
+
+    /** r61: the latest live-swap crop, drawn by FaceDebugOverlay. */
+    data class SwapOverlay(
+        val bitmap: android.graphics.Bitmap,
+        val boxNorm: FloatArray,
+        val mirrored: Boolean,
+    )
+
+    private val _swapOverlay = MutableStateFlow<SwapOverlay?>(null)
+    val swapOverlay: StateFlow<SwapOverlay?> = _swapOverlay.asStateFlow()
 
     /** r53: user-chosen target app (debug UI lists CAMERA-permission apps). */
     private val transportTarget = MutableStateFlow<String?>(null)

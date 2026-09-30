@@ -3230,3 +3230,26 @@ noInferSet=false). FIX: clearNoInfer() now always deletes (idempotent,
  tapping) — expect SWAP_STAGE=stage=8_done result=ok (or the failing
  stage + SWAP_TRACE full stack), AI_NO_INFER=none (r60.1 fix), and the
  SWAP_* stage lines in AI_PROC_CHILD_LOG.
+
+### Round 61 — LIVE SWAP (the last build piece of the swap phase): :ai streams the swapped crop into the preview overlay
+
+DATA PATH: SwapTest.liveFrame() (same SwapMath as the one-shot — one
+source for the landmine math; same size gates; carve served from the
+hash-gated cache; ARC/INSW sessions built ONCE and cached in SwapTest,
+closed on toggle-off + binder shutdown) -> JPEG q88 of the swapped 128
+crop + normalized box -> NEW oneway AIDL callback onSwapFrame(in byte[]
+jpeg, int w, int h, in float[] boxNorm) (tens of KB — binder-safe) ->
+AiProcMonitor.noteSwapFrame -> swapFrame StateFlow -> VM decodes ->
+SwapOverlay state -> FaceDebugOverlay draws the crop INTO the detected
+box rect (identical geometry to the cyan box; mirrored horizontally
+around the rect centre when the camera is front/mirrored — the crop is
+sensor-frame while the preview is mirrored). Old bitmap deliberately NOT
+recycled (canvas may hold it a frame; 64 KB per 3 s is negligible).
+LOOP: after the one-shot completes, the binder swap thread enters live
+mode while DebugFlags swap_live is on: latest face snapshot -> liveFrame
+-> emit -> sleep 3 s. swapThread.interrupt() + closeCachedSessions on
+shutdown. TOGGLE: swap_live (8th key, DEFAULT OFF per the r54.5 law —
+a 452 MB CPU-ORT stack must never be auto-on), ModelsSheet button.
+DEV NOTES: first live frame carries the ~4 s session-build stall (logged
+SWAP_SESSION_BEGIN (live)); SCRFD keeps running (shares 2 threads —
+expect SCRFD fps dip while swap runs, recovers on toggle-off).

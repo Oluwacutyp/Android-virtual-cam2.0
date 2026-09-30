@@ -117,6 +117,13 @@ class AiDetectorClient(private val context: Context) {
             if (kps != null) AiProcMonitor.noteRemoteKps(frameId, kps, uprightW, uprightH)
         }
 
+        // r61: live-swap frames (:ai -> main, small JPEG payloads).
+        override fun onSwapFrame(jpeg: ByteArray?, w: Int, h: Int, boxNorm: FloatArray?) {
+            if (jpeg != null && boxNorm != null) {
+                AiProcMonitor.noteSwapFrame(jpeg, w, h, boxNorm)
+            }
+        }
+
         override fun onState(state: Int, detail: String?) {
             Timber.i("AI_CHILD_STATE_REPORT state=%d detail=%s", state, detail)
             // Round 50: all states route to the badge (VM maps onto
