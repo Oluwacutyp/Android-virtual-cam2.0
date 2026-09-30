@@ -3365,3 +3365,30 @@ reset to base 4581e06); recovered via origin (43ef042) + saved files;
 bad-parent commit a48ef44 abandoned.
 NEXT: owner installs r64, re-picks photo, live swap ON -> patch inside
 the feed, no cyan box. Then V2 speed + V3 virtual-camera output.
+
+### Round 64.1 — audit round: MIRROR PARITY FIX + unit-tested swap placement (no device needed)
+Owner asked to "keep going or check well first" -> chose a hard self-audit
+of r64 before V2. Findings, all from code-only review:
+1. MIRROR BUG (inherited from r61-r63): the stage camera layer renders the
+   upright frame MIRRORED when the layer's mirrorX is set (front cam), but
+   the patch/box was placed at RAW box x while only the TEXTURE was
+   flipped -> visible x offset. Fix: SwapPatchMath mirrors the box x once
+   when the camera layer mirrors; patch texture mirrorX now follows the
+   CAMERA LAYER's mirrorX. One position flip + one texture flip, never two.
+2. Placement math extracted to SwapPatchMath (pure floats, no imports) +
+   SwapPatchMathTest: 6 JVM tests, HAND-COMPUTED expected values on the
+   device's real geometry (720x1280 scene, 480x640 frame, r63 FACE_BOX):
+   fill-crop mapping, mirror parity, off-center layer, grow, pixel-square,
+   degenerate->null.
+3. CI caught two r64.1 test bugs (JUnit4 assertNotNull returns void;
+   square-in-fractions is per-axis: 595.2px = 0.8267w x 0.465h) — the
+   placement asserts (centerX/centerY/width) passed from the first run.
+4. Housekeeping: arena-session-memory.md untracked + gitignored (was swept
+   into b414c50).
+**r64.1 chain**: b414c50 (RED 36762044357: void assertNotNull) -> c5f9267
+(RED 36762913165: wrong hfrac expectation) -> fde27dc = HEAD, GREEN run
+36763780502. NOTE: r63's "box offset" screenshots are now partly EXPLAINED
+(mirror parity + stale-box lag); r64.1 should land visibly straighter.
+NEXT: owner device test r64.1 (fresh install, re-pick photo, live swap ON).
+V2 (speed) waits for that verdict so pipeline changes don't stack on an
+unproven base.
