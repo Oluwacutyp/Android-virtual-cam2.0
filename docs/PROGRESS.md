@@ -3224,3 +3224,9 @@ return is process-local — a file written by a PREVIOUS :ai incarnation
 is never retracted by the new one (fresh process starts with
 noInferSet=false). FIX: clearNoInfer() now always deletes (idempotent,
 <=5 Hz); the WRITE guard (one write per failure) is unchanged.
+
+**r60.1 ledger**: e3b209d = HEAD, GREEN run 36687237969 (7m12s), artifact
+ 11084411647 (21,442,376 B). NEXT: owner re-dumps AFTER the swap test settles (~1 min after
+ tapping) — expect SWAP_STAGE=stage=8_done result=ok (or the failing
+ stage + SWAP_TRACE full stack), AI_NO_INFER=none (r60.1 fix), and the
+ SWAP_* stage lines in AI_PROC_CHILD_LOG.
