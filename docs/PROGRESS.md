@@ -3297,3 +3297,15 @@ identity to swap IN. r62 adds it:
 11092449880 (21,460,023 B). OWNER FLOW: pick photo with one clear face -> "Face: ok
 score=0.xx" -> Live swap on -> the picked identity appears on your head
 inside the cyan box (~3 s refresh, first frame ~5 s).
+
+**r62.1 ledger**: b1a7c33 = HEAD, GREEN run 36710846828 (6m54s), artifact
+ 11094238231 (21,460,096 B). r62.1 = live-crop upright fix: FaceSnapshot.rotDeg (binder
+captures task.rotationDeg); liveFrame postRotates the decoded I420
+bitmap before align/crops — device proof: rotated face + black band =
+out-of-bounds sampling of the sideways 640x480 frame in upright space.
+postRotate(rot) == inverse of ScrfdPreprocess upright->sensor (verified
+90 + 270). One-shot untouched.
+NEXT DUMP: SOURCE_FACE=ok, SWAP_LIVE_SRC=identity in child log, the
+PICKED face upright inside the box; swap one-shot verdict (7/8+selftest)
+now that stage 4/5/6 pass (ARCFACE_EMBED=ok, LATENT ok, SWAP_RUN=ok all
+seen in r62 dump; window ended mid-stage-6).
