@@ -377,7 +377,8 @@ object SwapTest {
     class ArcLease(private val s: OrtSession?, val owns: Boolean) {
         val session: OrtSession get() = s!!
         fun close() {
-            if (owns && s != null) runCatching { s.close() }
+            val sess = s
+            if (owns && sess != null) runCatching { sess.close() }
         }
     }
 
