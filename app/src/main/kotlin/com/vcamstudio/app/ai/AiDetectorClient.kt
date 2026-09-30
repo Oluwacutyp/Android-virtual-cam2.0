@@ -261,6 +261,11 @@ class AiDetectorClient(private val context: Context) {
         runCatching { api?.runSwapTest() }
     }
 
+    /** r62: hand the source-face JPEG (or empty = clear) to :ai. */
+    fun setSourceFace(bytes: ByteArray) {
+        runCatching { api?.setSourceFace(bytes) }
+    }
+
     /** r52a debug: child writes the next face's 112/128 align crops. */
     fun requestDebugCrops() {
         runCatching { api?.dumpDebugCrops() }

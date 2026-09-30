@@ -120,6 +120,13 @@ object AiProcMonitor {
             runCatching { File(c.filesDir, "swap_last.txt").readText() }.getOrDefault("")
         } ?: ""
         val swapLines = swapTxt.lineSequence().filter { it.isNotBlank() }.toList()
+        append("\nSOURCE_FACE=").append(
+            appContext?.let { c ->
+                runCatching {
+                    File(c.filesDir, "ai_source_face.txt").readText().trim().ifEmpty { null }
+                }.getOrNull() ?: "none"
+            } ?: "no-context",
+        )
         append("\nSWAP_STAGE=").append(swapLines.firstOrNull() ?: "none")
         swapLines.drop(1).take(6).forEach { append("\nSWAP_TRACE=").append(it) }
         // Round 50-A0.2: death context — system memory at bind/death and
@@ -378,6 +385,19 @@ object AiProcMonitor {
     /** r58 (debug): one-shot face-swap self-test in :ai. */
     fun requestSwapTest() {
         runCatching { client?.requestSwapTest() }
+    }
+
+    /** r62: set/clear the source identity (:ai embeds the photo). */
+    fun setSourceFace(bytes: ByteArray) {
+        runCatching { client?.setSourceFace(bytes) }
+    }
+
+    /** r62: null until :ai has written a verdict for the current pick. */
+    fun sourceFaceStatus(): String? {
+        val c = appContext ?: return null
+        return runCatching {
+            File(c.filesDir, "ai_source_face.txt").readText().trim().ifEmpty { null }
+        }.getOrNull()
     }
 
     fun requestDebugCrops() {

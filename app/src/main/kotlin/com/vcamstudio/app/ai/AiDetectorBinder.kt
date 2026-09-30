@@ -69,6 +69,11 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
     private var swapTestRequested = false
     private val swapThread = Thread({ swapLoop() }, "vcam-ai-swap")
 
+    // r62: source-face jobs run here (never on a binder thread, never on the
+    // detector thread).
+    private val srcFaceThread = android.os.HandlerThread("vcam-ai-srcface").apply { start() }
+    private val srcFaceHandler = android.os.Handler(srcFaceThread.looper)
+
     // r58: latest detected face (raw I420 + geometry) for the one-shot.
     // Cheap copy on the worker; the swap thread builds bitmaps lazily.
     private val snapBuf = ByteArray(AiDetectorClient.FRAME_PAYLOAD_BYTES)
@@ -223,6 +228,89 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
                 SwapTest.closeCachedSessions()
                 Timber.i("SWAP_LIVE=off")
             }
+        }
+    }
+
+    // ---- r62: source face (the identity to swap IN) ----------------------
+    override fun setSourceFace(jpegBytes: ByteArray?) {
+        val bytes = jpegBytes ?: ByteArray(0)
+        srcFaceHandler.post {
+            runCatching { applySourceFace(bytes) }.onFailure {
+                val msg = it.message ?: it.javaClass.simpleName
+                Timber.i("SOURCE_FACE=fail:%s", msg)
+                writeSourceFaceFile("fail:$msg")
+            }
+        }
+    }
+
+    private fun writeSourceFaceFile(text: String) {
+        runCatching { java.io.File(service.filesDir, "ai_source_face.txt").writeText(text) }
+    }
+
+    private fun applySourceFace(bytes: ByteArray) {
+        if (bytes.isEmpty()) {
+            SwapTest.sourceEmbedding = null
+            runCatching { java.io.File(service.filesDir, "ai_source_face.txt").delete() }
+            Timber.i("SOURCE_FACE=cleared")
+            return
+        }
+        val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        if (bmp == null) {
+            writeSourceFaceFile("fail:decode")
+            Timber.i("SOURCE_FACE=fail:decode")
+            return
+        }
+        try {
+            val srcW = bmp.width.toFloat()
+            val srcH = bmp.height.toFloat()
+            val scaled = android.graphics.Bitmap.createScaledBitmap(bmp, 640, 640, true)
+            val argb = IntArray(640 * 640)
+            scaled.getPixels(argb, 0, 640, 0, 0, 640, 640)
+            if (scaled !== bmp) scaled.recycle()
+            // Same normalization as the camera path: (x - 127.5) / 128, CHW RGB.
+            val buf = java.nio.ByteBuffer.allocateDirect(3 * 640 * 640 * 4)
+                .order(java.nio.ByteOrder.nativeOrder())
+            val fb = buf.asFloatBuffer()
+            val plane = 640 * 640
+            for (i in 0 until plane) {
+                val px = argb[i]
+                fb.put(i, ((px shr 16 and 0xFF) - 127.5f) / 128f)
+                fb.put(plane + i, ((px shr 8 and 0xFF) - 127.5f) / 128f)
+                fb.put(2 * plane + i, ((px and 0xFF) - 127.5f) / 128f)
+            }
+            val det = detector
+            if (det == null) {
+                writeSourceFaceFile("fail:no_detector")
+                Timber.i("SOURCE_FACE=fail:no_detector")
+                return
+            }
+            val d = det.detectTop(fb)
+            if (d == null || d.landmarks.size < 10) {
+                writeSourceFaceFile("fail:no_face")
+                Timber.i("SOURCE_FACE=fail:no_face")
+                return
+            }
+            // 640-squeeze back to the photo's own pixel space.
+            val pts = FloatArray(10)
+            for (j in 0 until 5) {
+                pts[2 * j] = d.landmarks[2 * j] * srcW / 640f
+                pts[2 * j + 1] = d.landmarks[2 * j + 1] * srcH / 640f
+            }
+            val t0 = android.os.SystemClock.elapsedRealtime()
+            val emb = SwapTest.embedFace(service, bmp, pts)
+            if (emb == null) {
+                writeSourceFaceFile("fail:embed")
+                Timber.i("SOURCE_FACE=fail:embed")
+                return
+            }
+            SwapTest.sourceEmbedding = emb
+            writeSourceFaceFile("ok score=%.2f".format(d.score))
+            Timber.i(
+                "SOURCE_FACE=ok score=%.2f ms=%d",
+                d.score, android.os.SystemClock.elapsedRealtime() - t0,
+            )
+        } finally {
+            bmp.recycle()
         }
     }
 
@@ -639,6 +727,7 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
         runCatching { swapThread.interrupt() }
         runCatching { swapThread.join(1_000) }
         SwapTest.closeCachedSessions()
+        runCatching { srcFaceThread.quitSafely() }
         closeDetector()
         frameRing?.close()
         boxRing?.close()

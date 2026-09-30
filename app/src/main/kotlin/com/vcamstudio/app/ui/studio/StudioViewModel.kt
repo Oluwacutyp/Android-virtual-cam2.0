@@ -1377,6 +1377,58 @@ class StudioViewModel @Inject constructor(
         toast.value = "Swap test running in :ai (needs BOTH real models) — see AI_PROC_CHILD_LOG"
     }
 
+    // ---- r62: source face (the identity swapped INTO your live face) ----
+
+    private val _swapFaceStatus = MutableStateFlow<String?>(null)
+    val swapFaceStatus: StateFlow<String?> = _swapFaceStatus.asStateFlow()
+
+    /** Pick a photo with ONE clear face; :ai embeds it as the swap identity. */
+    fun onSwapFacePicked(uri: android.net.Uri) {
+        viewModelScope.launch(dispatchers.io) {
+            _swapFaceStatus.value = "working…"
+            val bytes = runCatching {
+                val src = context.contentResolver.openInputStream(uri)?.use {
+                    android.graphics.BitmapFactory.decodeStream(it)
+                } ?: error("open failed")
+                val s = minOf(640f / src.width, 640f / src.height).coerceAtMost(1f)
+                val scaled = if (s < 1f) {
+                    android.graphics.Bitmap.createScaledBitmap(
+                        src,
+                        (src.width * s).toInt().coerceAtLeast(1),
+                        (src.height * s).toInt().coerceAtLeast(1),
+                        true,
+                    )
+                } else {
+                    src
+                }
+                if (scaled !== src) src.recycle()
+                val bos = java.io.ByteArrayOutputStream()
+                scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 88, bos)
+                scaled.recycle()
+                bos.toByteArray()
+            }.getOrElse {
+                _swapFaceStatus.value = "fail:read_photo"
+                return@launch
+            }
+            com.vcamstudio.app.ai.AiProcMonitor.setSourceFace(bytes)
+            repeat(30) {
+                delay(400)
+                val st = com.vcamstudio.app.ai.AiProcMonitor.sourceFaceStatus()
+                if (st != null) {
+                    _swapFaceStatus.value = st
+                    toast.value = if (st.startsWith("ok")) "Source face set — flip Live swap on" else "Source face failed: $st"
+                    return@launch
+                }
+            }
+            _swapFaceStatus.value = "fail:timeout"
+        }
+    }
+
+    fun clearSwapFace() {
+        com.vcamstudio.app.ai.AiProcMonitor.setSourceFace(ByteArray(0))
+        _swapFaceStatus.value = null
+    }
+
     fun exportModels(treeUri: android.net.Uri) {
         viewModelScope.launch(dispatchers.io) {
             val n = modelManager.exportModels(treeUri)

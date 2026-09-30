@@ -69,6 +69,10 @@ fun ModelsSheet(
     onSelfTest: () -> Unit = {},
     debugFlags: Map<String, Boolean> = emptyMap(),
     onToggleFlag: (String) -> Unit = {},
+    // r62 source face
+    onPickSwapFace: (android.net.Uri) -> Unit = {},
+    onClearSwapFace: () -> Unit = {},
+    swapFaceStatus: String? = null,
 ) {
     val context = LocalContext.current
     // r53: installed apps holding CAMERA permission (runtime choice, no
@@ -89,6 +93,10 @@ fun ModelsSheet(
     var licenseFor by remember { mutableStateOf<ModelManager.ModelState?>(null) }
 
     // r52a: SAF launchers for model backup / restore (owner has no PC).
+    // r62: photo picker for the swap source face.
+    val pickFaceLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri -> if (uri != null) onPickSwapFace(uri) }
     val backupLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri: Uri? ->
@@ -306,6 +314,16 @@ fun ModelsSheet(
                             }
                             TextButton(onClick = { onToggleFlag("swap_live") }) {
                                 Text("Live swap: ${if (debugFlags["swap_live"] ?: false) "on" else "off"}")
+                            }
+                            TextButton(onClick = { pickFaceLauncher.launch("image/*") }) {
+                                Text("Swap face: pick photo…")
+                            }
+                            if (swapFaceStatus != null) {
+                                Text(
+                                    "Face: $swapFaceStatus",
+                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                )
+                                TextButton(onClick = onClearSwapFace) { Text("Clear source face") }
                             }
                         }
                         // r54.1-X4: DEV crash-log access without a PC —

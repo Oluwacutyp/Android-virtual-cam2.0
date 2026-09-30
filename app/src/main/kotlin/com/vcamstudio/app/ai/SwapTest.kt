@@ -175,7 +175,7 @@ object SwapTest {
             val emb = FloatArray(SwapMath.EMBED_DIM)
             OnnxTensor.createTensor(env, FloatBuffer.wrap(in112), longArrayOf(1, 3, 112L, 112L)).use { t ->
                 arc.run(mapOf("input.1" to t)).use { out ->
-                    val o = out.get("683") as OnnxTensor
+                    val o = out.get(0) as OnnxTensor // r62: get(0) — Result.get(String) returns Optional
                     val fb = o.floatBuffer
                     for (i in 0 until SwapMath.EMBED_DIM) emb[i] = fb.get(i)
                 }
@@ -300,30 +300,39 @@ object SwapTest {
                     src[2 * j] = (snap.lm640[2 * j] - snap.lb.padX) / snap.lb.scale
                     src[2 * j + 1] = (snap.lm640[2 * j + 1] - snap.lb.padY) / snap.lb.scale
                 }
-                val aff112 = FaceAlign.estimate(src, SwapMath.ARC_SIZE)
-                if (aff112 == null) {
-                    frame.recycle()
-                    Timber.i("SWAP_LIVE_SKIP reason=degenerate_landmarks")
-                    return null
-                }
-                val crop112 = renderCrop(frame, aff112, SwapMath.ARC_SIZE)
-                val argb112 = IntArray(SwapMath.ARC_SIZE * SwapMath.ARC_SIZE)
-                crop112.getPixels(argb112, 0, SwapMath.ARC_SIZE, 0, 0, SwapMath.ARC_SIZE, SwapMath.ARC_SIZE)
-                crop112.recycle()
-                val in112 = FloatArray(3 * SwapMath.ARC_SIZE * SwapMath.ARC_SIZE)
-                SwapMath.arcfacePreprocess(argb112, in112)
-                val emb = FloatArray(SwapMath.EMBED_DIM)
-                OnnxTensor.createTensor(env, FloatBuffer.wrap(in112), longArrayOf(1, 3, 112L, 112L)).use { t ->
-                    arc.run(mapOf("input.1" to t)).use { out ->
-                        val o = out.get("683") as OnnxTensor
-                        val fb = o.floatBuffer
-                        for (i in 0 until SwapMath.EMBED_DIM) emb[i] = fb.get(i)
-                    }
-                }
-                SwapMath.l2norm(emb) // MANDATORY (BN tail — see the one-shot)
+                // r62: identity to swap IN — stored source when picked,
+                // otherwise self (own face -> own face, looks unchanged).
+                val stored = sourceEmbedding
                 val latent = FloatArray(SwapMath.EMBED_DIM)
-                SwapMath.project(emb, emap, latent)
-                SwapMath.l2norm(latent)
+                if (stored != null && stored.size == SwapMath.EMBED_DIM) {
+                    SwapMath.project(stored, emap, latent)
+                    SwapMath.l2norm(latent)
+                    Timber.i("SWAP_LIVE_SRC=identity")
+                } else {
+                    val aff112 = FaceAlign.estimate(src, SwapMath.ARC_SIZE)
+                    if (aff112 == null) {
+                        frame.recycle()
+                        Timber.i("SWAP_LIVE_SKIP reason=degenerate_landmarks")
+                        return null
+                    }
+                    val crop112 = renderCrop(frame, aff112, SwapMath.ARC_SIZE)
+                    val argb112 = IntArray(SwapMath.ARC_SIZE * SwapMath.ARC_SIZE)
+                    crop112.getPixels(argb112, 0, SwapMath.ARC_SIZE, 0, 0, SwapMath.ARC_SIZE, SwapMath.ARC_SIZE)
+                    crop112.recycle()
+                    val in112 = FloatArray(3 * SwapMath.ARC_SIZE * SwapMath.ARC_SIZE)
+                    SwapMath.arcfacePreprocess(argb112, in112)
+                    val emb = FloatArray(SwapMath.EMBED_DIM)
+                    OnnxTensor.createTensor(env, FloatBuffer.wrap(in112), longArrayOf(1, 3, 112L, 112L)).use { t ->
+                        arc.run(mapOf("input.1" to t)).use { out ->
+                            val o = out.get(0) as OnnxTensor
+                            val fb = o.floatBuffer
+                            for (i in 0 until SwapMath.EMBED_DIM) emb[i] = fb.get(i)
+                        }
+                    }
+                    SwapMath.l2norm(emb) // MANDATORY (BN tail — see the one-shot)
+                    SwapMath.project(emb, emap, latent)
+                    SwapMath.l2norm(latent)
+                }
                 val aff128 = FaceAlign.estimate(src, SwapMath.SWAP_SIZE)
                 if (aff128 == null) {
                     frame.recycle()
@@ -358,6 +367,57 @@ object SwapTest {
         }
     }
 
+    // ---- r62: source identity -------------------------------------------
+    // The face to swap IN. Null = self-swap (own face, identity-preserving —
+    // looks like nothing changes ON PURPOSE; that was the r58 validation
+    // mode). Set by the binder from a picked photo via [embedFace].
+    @Volatile var sourceEmbedding: FloatArray? = null
+
+    /** ArcFace session for one-off embeds: reuse the live cache or open a temp. */
+    class ArcLease(private val s: OrtSession?, val owns: Boolean) {
+        val session: OrtSession get() = s!!
+        fun close() {
+            if (owns && s != null) runCatching { s.close() }
+        }
+    }
+
+    fun acquireArc(service: AiInferenceService): ArcLease? {
+        cachedArc?.let { return ArcLease(it, owns = false) }
+        val f = File(File(service.filesDir, "models"), "w600k_r50.onnx")
+        if (f.length() != W600K_BYTES) return null
+        return ArcLease(createSession(OrtEnvironment.getEnvironment(), f), owns = true)
+    }
+
+    /** Embed a face from a STILL photo. pts = 5 kps in bmp pixel coords. */
+    fun embedFace(service: AiInferenceService, bmp: Bitmap, pts: FloatArray): FloatArray? {
+        val lease = acquireArc(service) ?: run {
+            Timber.i("SOURCE_FACE=fail:model_not_ready")
+            return null
+        }
+        try {
+            val aff = FaceAlign.estimate(pts, SwapMath.ARC_SIZE) ?: return null
+            val crop = renderCrop(bmp, aff, SwapMath.ARC_SIZE)
+            val argb = IntArray(SwapMath.ARC_SIZE * SwapMath.ARC_SIZE)
+            crop.getPixels(argb, 0, SwapMath.ARC_SIZE, 0, 0, SwapMath.ARC_SIZE, SwapMath.ARC_SIZE)
+            crop.recycle()
+            val in112 = FloatArray(3 * SwapMath.ARC_SIZE * SwapMath.ARC_SIZE)
+            SwapMath.arcfacePreprocess(argb, in112)
+            val emb = FloatArray(SwapMath.EMBED_DIM)
+            val env = OrtEnvironment.getEnvironment()
+            OnnxTensor.createTensor(env, FloatBuffer.wrap(in112), longArrayOf(1, 3, 112L, 112L)).use { t ->
+                lease.session.run(mapOf("input.1" to t)).use { out ->
+                    val o = out.get(0) as OnnxTensor
+                    val fbo = o.floatBuffer
+                    for (i in 0 until SwapMath.EMBED_DIM) emb[i] = fbo.get(i)
+                }
+            }
+            SwapMath.l2norm(emb) // MANDATORY (BN tail)
+            return emb
+        } finally {
+            lease.close()
+        }
+    }
+
     /** STAGE 4: one inswapper run; returns clip(255*pred) as BGR planes. */
     private fun runSwap(
         env: OrtEnvironment,
@@ -370,7 +430,7 @@ object SwapTest {
         OnnxTensor.createTensor(env, FloatBuffer.wrap(target), longArrayOf(1, 3, 128L, 128L)).use { t ->
             OnnxTensor.createTensor(env, FloatBuffer.wrap(source), longArrayOf(1, 512L)).use { s ->
                 swap.run(mapOf("target" to t, "source" to s)).use { r ->
-                    val o = (r.get("output") as OnnxTensor).floatBuffer
+                    val o = (r.get(0) as OnnxTensor).floatBuffer // r62: get(0), not Optional get(String)
                     val plane = SwapMath.SWAP_SIZE * SwapMath.SWAP_SIZE
                     var mn = Float.MAX_VALUE
                     var mx = -Float.MAX_VALUE

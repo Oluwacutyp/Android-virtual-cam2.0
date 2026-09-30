@@ -34,4 +34,10 @@ interface IAiDetector {
     // (emap carve -> ArcFace -> INSwapper -> self-swap gate). Never
     // per-frame; no toggle by owner mandate (button only).
     oneway void runSwapTest();
+
+    // r62 ADDITIVE: set the SOURCE face (the identity to swap IN) from a
+    // picked photo's JPEG bytes; :ai detects, aligns and embeds it, then
+    // keeps the 512-d embedding. Empty array = clear. Result lands in
+    // ai_source_face.txt (surfaces as SOURCE_FACE= in the dump).
+    oneway void setSourceFace(in byte[] jpegBytes);
 }
