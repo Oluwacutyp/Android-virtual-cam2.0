@@ -649,24 +649,37 @@ class StudioViewModel @Inject constructor(
             )
         }
         viewModelScope.launch {
-            // r61: live-swap frames from :ai -> decode -> overlay. The OLD
-            // bitmap is intentionally NOT recycled (the overlay canvas may
-            // still hold it for a frame); 64 KB per 3 s is negligible.
+            // r64: live-swap frames from :ai -> decode -> SCENE LAYER. The
+            // patch is composed into the scene in commit(), so it renders in
+            // the preview AND everything derived from the scene (stage
+            // recording, VD/transport taps) — not as a Compose sticker.
+            // The bitmap is NOT recycled (the GL source may still reference
+            // it); tens of KB per ~5 s is negligible.
             com.vcamstudio.app.ai.AiProcMonitor.swapFrame.collect { f ->
                 val fr = f ?: return@collect
                 runCatching {
                     val bmp = android.graphics.BitmapFactory.decodeByteArray(
                         fr.jpeg, 0, fr.jpeg.size,
                     ) ?: return@collect
-                    _swapOverlay.value = SwapOverlay(bmp, fr.boxNorm, overlayMirrored, fr.frameW, fr.frameH)
-                    // r63: hold the frame on screen BETWEEN updates (live
-                    // cadence is seconds, not 60 fps) — no more blinking.
-                    swapOverlayTtl?.cancel()
-                    swapOverlayTtl = viewModelScope.launch {
-                        delay(12_000)
-                        _swapOverlay.value = null
-                    }
-                }.onFailure { t -> Timber.e(t, "SWAP_OVERLAY_FAIL") }
+                    val cam = scenes.value.firstOrNull { it.id == activeSceneId.value }
+                        ?.layers?.filterIsInstance<LayerDefinition.Camera>()
+                        ?.firstOrNull()?.transform ?: return@collect
+                    val t = swapPatchTransform(fr.boxNorm, fr.frameW, fr.frameH, cam)
+                        ?: return@collect
+                    swapPatch = SwapPatch(bmp, t)
+                    commit()
+                }.onFailure { t2 -> Timber.e(t2, "SWAP_SCENE_FAIL") }
+            }
+        }
+        viewModelScope.launch {
+            // r64: toggle-off removes the patch from the scene.
+            debugFlags.collect { m ->
+                if (!(m[com.vcamstudio.app.transport.DebugFlags.KEY_SWAP_LIVE] ?: false) &&
+                    swapPatch != null
+                ) {
+                    swapPatch = null
+                    commit()
+                }
             }
         }
         Timber.i("VM_READY") // r54.5-F4
@@ -1253,7 +1266,57 @@ class StudioViewModel @Inject constructor(
 
     private val _swapOverlay = MutableStateFlow<SwapOverlay?>(null)
     val swapOverlay: StateFlow<SwapOverlay?> = _swapOverlay.asStateFlow()
-    private var swapOverlayTtl: kotlinx.coroutines.Job? = null
+
+    // r64: the swap patch as an engine layer. Composed in commit(); never
+    // part of the user's scene state (not editable, not persisted, removed
+    // on toggle-off).
+    private data class SwapPatch(
+        val bitmap: android.graphics.Bitmap,
+        val transform: com.vcamstudio.engine.render.model.LayerTransform,
+    )
+
+    @Volatile private var swapPatch: SwapPatch? = null
+    private val swapSourceId = newId("vcam-swap-src")
+    private val swapLayerId = newId("vcam-swap-layer")
+
+    /**
+     * r64: map the swap frame's normalized box (upright camera frame) into
+     * scene-normalized coords through the SAME geometry the debug overlay
+     * uses: frame -> camera layer quad (fill-crop) -> scene. The patch is
+     * a SQUARE (the 128 model output) sized to the longer box side x1.25,
+     * mirrorX'd for the front camera like the overlay did.
+     */
+    private fun swapPatchTransform(
+        boxNorm: FloatArray,
+        frameW: Int,
+        frameH: Int,
+        cam: com.vcamstudio.engine.render.model.LayerTransform,
+    ): com.vcamstudio.engine.render.model.LayerTransform? {
+        val res = sceneResolution.value
+        if (frameW <= 0 || frameH <= 0 || boxNorm.size < 4) return null
+        val sceneW = res.width.toFloat()
+        val sceneH = res.height.toFloat()
+        val layerW = cam.width * sceneW
+        val layerH = cam.height * sceneH
+        if (layerW <= 0f || layerH <= 0f) return null
+        val scale = maxOf(layerW / frameW, layerH / frameH)
+        val offX = cam.centerX * sceneW - layerW / 2f + (layerW - frameW * scale) / 2f
+        val offY = cam.centerY * sceneH - layerH / 2f + (layerH - frameH * scale) / 2f
+        val x1 = offX + boxNorm[0] * frameW * scale
+        val y1 = offY + boxNorm[1] * frameH * scale
+        val x2 = offX + boxNorm[2] * frameW * scale
+        val y2 = offY + boxNorm[3] * frameH * scale
+        val size = maxOf(x2 - x1, y2 - y1) * 1.25f
+        if (size <= 0f) return null
+        return com.vcamstudio.engine.render.model.LayerTransform(
+            centerX = ((x1 + x2) / 2f) / sceneW,
+            centerY = ((y1 + y2) / 2f) / sceneH,
+            width = size / sceneW,
+            height = size / sceneH,
+            fitMode = com.vcamstudio.engine.render.model.FitMode.FILL,
+            mirrorX = overlayMirrored,
+        )
+    }
 
     /** r53: user-chosen target app (debug UI lists CAMERA-permission apps). */
     private val transportTarget = MutableStateFlow<String?>(null)
@@ -1580,13 +1643,31 @@ class StudioViewModel @Inject constructor(
 
     private fun commit(transition: TransitionSpec? = null) {
         val scene = scenes.value.firstOrNull { it.id == activeSceneId.value } ?: return
-        registerBitmapSources(scene)
+        // r64: compose the live swap patch as a TOP layer. Never stored in
+        // scene state — pure render-input, so preview, stage recording and
+        // any VD/transport tap of the scene all show the swap.
+        val sr = swapPatch
+        val eff = if (sr != null) {
+            runCatching { engine.registerBitmapSource(swapSourceId, sr.bitmap) }
+                .onFailure { Timber.e(it, "SWAP_SRC_REGISTER_FAIL") }
+            scene.copy(
+                layers = scene.layers + LayerDefinition.Image(
+                    id = swapLayerId,
+                    sourceId = swapSourceId,
+                    name = "Swap face",
+                    transform = sr.transform,
+                ),
+            )
+        } else {
+            scene
+        }
+        registerBitmapSources(eff)
         if (transition != null) engine.setTransition(transition)
         // Identical-scene re-commits (slider bursts, collector echoes) are
         // dropped engine-side too; skipping here avoids re-registering bitmaps.
-        if (scene != lastCommittedScene) {
-            engine.setScene(scene)
-            lastCommittedScene = scene
+        if (eff != lastCommittedScene) {
+            engine.setScene(eff)
+            lastCommittedScene = eff
         }
     }
 

@@ -378,7 +378,7 @@ object SwapTest {
                 frame.recycle()
             }
             val jpg = ByteArrayOutputStream().also { bos ->
-                swapped.compress(Bitmap.CompressFormat.JPEG, 88, bos)
+                swapped.compress(Bitmap.CompressFormat.JPEG, 92, bos) // r64: crisper patch
             }.toByteArray()
             swapped.recycle()
             val boxNorm = floatArrayOf(
