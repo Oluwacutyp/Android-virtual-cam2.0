@@ -375,8 +375,13 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
     }
 
     private fun clearNoInfer() {
-        if (!noInferSet) return
         noInferSet = false
+        // r60.1: unconditional delete. The in-memory guard is process-local,
+        // so a file written by a PREVIOUS :ai incarnation was never
+        // retracted by the new one (device proof: AI_NO_INFER=detector_null
+        // in the r60 dump while the detector was demonstrably running —
+        // 34 runs, FACE_BOX present). File.delete() on an absent file is a
+        // harmless no-op; the analyzed-frame rate is <=5 Hz.
         runCatching { java.io.File(service.filesDir, "ai_no_infer.txt").delete() }
     }
 

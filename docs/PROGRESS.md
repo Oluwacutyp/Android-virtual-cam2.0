@@ -3202,3 +3202,25 @@ alive).
  SWAP_TRACE= = died there. Owner wants: MODEL file= for both,
  MODEL_PROBE_inswapper_stub=ok, AI_NO_INFER=none, SWAP_STAGE/TRACE if run,
  NO MODEL_STUB_INSTALLED for w600k/inswapper, Phase-1 unchanged.
+
+### Round 60.1 — one bug found by the owner's r60 dump: stale AI_NO_INFER survives :ai process restarts
+
+DUMP VERDICT (everything else passed): real models INTACT (MODEL
+file=174383860 / 277680829 — the r60 data-loss fix holds; emap.bin
+file=1048576 carved); EMAP CARVE HASH-VERIFIED ON DEVICE
+(EMAP_CARVE=tag_found off=276618008 sha256=370af5bf... == the
+owner-verified contract, 7.4 s, cached afterwards); Phase-1 untouched
+during a 452 MB carve+session build (fps=58.8 HEALTHY recoveries=0);
+no MODEL_STUB_INSTALLED; no OOM anywhere (r59 streaming + r60 path-based
+sessions held); r55 fill_null never fired (SCRFD RUNNING, FACE_BOX
+0.837, KPS present — upright=480x640 pad=80,0 scale=1.000 exactly as
+predicted). Swap test was MID-STAGE-4 (ArcFace inference) at dump time:
+SWAP_STAGE marks are stage-START records; completion rewrites to
+stage=8_done result=ok (or the failing stage + SWAP_TRACE full stack) —
+awaiting the owner's post-completion dump.
+THE BUG: AI_NO_INFER=detector_null persisted while the detector was
+demonstrably running. Root cause: clearNoInfer()'s !noInferSet early-
+return is process-local — a file written by a PREVIOUS :ai incarnation
+is never retracted by the new one (fresh process starts with
+noInferSet=false). FIX: clearNoInfer() now always deletes (idempotent,
+<=5 Hz); the WRITE guard (one write per failure) is unchanged.
