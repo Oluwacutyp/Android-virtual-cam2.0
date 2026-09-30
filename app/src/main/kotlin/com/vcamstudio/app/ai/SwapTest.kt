@@ -394,7 +394,7 @@ object SwapTest {
                 boxNorm,
                 snap.lb.uprightW,
                 snap.lb.uprightH,
-                if (stored != null) "identity" else "self",
+                if (sourceEmbedding != null) "identity" else "self",
             )
         } catch (t: Throwable) {
             Timber.i("SWAP_LIVE=fail:%s", t.message ?: t.javaClass.simpleName)
