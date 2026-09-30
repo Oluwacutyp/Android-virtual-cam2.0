@@ -216,12 +216,14 @@ class AiDetectorBinder(private val service: AiInferenceService) : IAiDetector.St
                     if (ls != null) {
                         val out = runCatching { SwapTest.liveFrame(service, ls) }.getOrNull()
                         if (out != null) {
-                            runCatching { callback?.onSwapFrame(out.jpeg, out.w, out.h, out.boxNorm) }
-                            Timber.i("SWAP_LIVE_FRAME bytes=%d", out.jpeg.size)
+                            runCatching {
+                                callback?.onSwapFrame(out.jpeg, out.w, out.h, out.boxNorm, out.frameW, out.frameH)
+                            }
+                            Timber.i("SWAP_LIVE_FRAME bytes=%d src=%s", out.jpeg.size, out.src)
                         }
                     }
                     try {
-                        Thread.sleep(3000)
+                        Thread.sleep(2000) // r63: tighter live cadence
                     } catch (_: InterruptedException) {
                         break
                     }

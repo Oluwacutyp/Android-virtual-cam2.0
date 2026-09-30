@@ -658,7 +658,14 @@ class StudioViewModel @Inject constructor(
                     val bmp = android.graphics.BitmapFactory.decodeByteArray(
                         fr.jpeg, 0, fr.jpeg.size,
                     ) ?: return@collect
-                    _swapOverlay.value = SwapOverlay(bmp, fr.boxNorm, overlayMirrored)
+                    _swapOverlay.value = SwapOverlay(bmp, fr.boxNorm, overlayMirrored, fr.frameW, fr.frameH)
+                    // r63: hold the frame on screen BETWEEN updates (live
+                    // cadence is seconds, not 60 fps) — no more blinking.
+                    swapOverlayTtl?.cancel()
+                    swapOverlayTtl = viewModelScope.launch {
+                        delay(12_000)
+                        _swapOverlay.value = null
+                    }
                 }.onFailure { t -> Timber.e(t, "SWAP_OVERLAY_FAIL") }
             }
         }
@@ -1223,7 +1230,9 @@ class StudioViewModel @Inject constructor(
         overlayMirrored = mirrored
         _faceOverlay.value = box
         overlayExpiryJob = viewModelScope.launch {
-            delay(1500)
+            // r63: while a swap frame is on screen SCRFD runs ~1 fps (shared
+            // threads) — hold the box longer so the cyan overlay stays put.
+            delay(if (_swapOverlay.value != null) 5000L else 1500L)
             _faceOverlay.value = null
         }
     }
@@ -1238,10 +1247,13 @@ class StudioViewModel @Inject constructor(
         val bitmap: android.graphics.Bitmap,
         val boxNorm: FloatArray,
         val mirrored: Boolean,
+        val frameW: Int,
+        val frameH: Int,
     )
 
     private val _swapOverlay = MutableStateFlow<SwapOverlay?>(null)
     val swapOverlay: StateFlow<SwapOverlay?> = _swapOverlay.asStateFlow()
+    private var swapOverlayTtl: kotlinx.coroutines.Job? = null
 
     /** r53: user-chosen target app (debug UI lists CAMERA-permission apps). */
     private val transportTarget = MutableStateFlow<String?>(null)
@@ -1387,9 +1399,32 @@ class StudioViewModel @Inject constructor(
         viewModelScope.launch(dispatchers.io) {
             _swapFaceStatus.value = "working…"
             val bytes = runCatching {
-                val src = context.contentResolver.openInputStream(uri)?.use {
-                    android.graphics.BitmapFactory.decodeStream(it)
-                } ?: error("open failed")
+                val raw = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: error("open failed")
+                var src = android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size)
+                    ?: error("decode failed")
+                // r63: honour EXIF orientation — gallery JPEGs are often
+                // stored rotated; a sideways align crop yields a garbage
+                // identity embedding (silent, looks like "no swap").
+                runCatching {
+                    val exif = android.media.ExifInterface(java.io.ByteArrayInputStream(raw))
+                    val rot = when (
+                        exif.getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, 1)
+                    ) {
+                        android.media.ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                        android.media.ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                        android.media.ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                        else -> 0f
+                    }
+                    if (rot != 0f) {
+                        val up = android.graphics.Bitmap.createBitmap(
+                            src, 0, 0, src.width, src.height,
+                            android.graphics.Matrix().apply { postRotate(rot) }, true,
+                        )
+                        if (up !== src) src.recycle()
+                        src = up
+                    }
+                }
                 val s = minOf(640f / src.width, 640f / src.height).coerceAtMost(1f)
                 val scaled = if (s < 1f) {
                     android.graphics.Bitmap.createScaledBitmap(

@@ -118,9 +118,9 @@ class AiDetectorClient(private val context: Context) {
         }
 
         // r61: live-swap frames (:ai -> main, small JPEG payloads).
-        override fun onSwapFrame(jpeg: ByteArray?, w: Int, h: Int, boxNorm: FloatArray?) {
+        override fun onSwapFrame(jpeg: ByteArray?, w: Int, h: Int, boxNorm: FloatArray?, frameW: Int, frameH: Int) {
             if (jpeg != null && boxNorm != null) {
-                AiProcMonitor.noteSwapFrame(jpeg, w, h, boxNorm)
+                AiProcMonitor.noteSwapFrame(jpeg, w, h, boxNorm, frameW, frameH)
             }
         }
 

@@ -323,14 +323,16 @@ object AiProcMonitor {
         val w: Int,
         val h: Int,
         val boxNorm: FloatArray,
+        val frameW: Int,
+        val frameH: Int,
         val ts: Long,
     )
 
     private val _swapFrame = MutableStateFlow<SwapFrame?>(null)
     val swapFrame: StateFlow<SwapFrame?> = _swapFrame
 
-    fun noteSwapFrame(jpeg: ByteArray, w: Int, h: Int, boxNorm: FloatArray) {
-        _swapFrame.value = SwapFrame(jpeg, w, h, boxNorm, System.currentTimeMillis())
+    fun noteSwapFrame(jpeg: ByteArray, w: Int, h: Int, boxNorm: FloatArray, frameW: Int, frameH: Int) {
+        _swapFrame.value = SwapFrame(jpeg, w, h, boxNorm, frameW, frameH, System.currentTimeMillis())
     }
 
     /** r54-C: force a child session rebuild (debug toggle side effect). */

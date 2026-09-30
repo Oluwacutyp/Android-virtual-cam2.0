@@ -266,7 +266,15 @@ object SwapTest {
     }
 
     /** Live-swap output: JPEG of the swapped 128 crop + normalized box. */
-    data class SwapFrameOut(val jpeg: ByteArray, val w: Int, val h: Int, val boxNorm: FloatArray)
+    data class SwapFrameOut(
+        val jpeg: ByteArray,
+        val w: Int,
+        val h: Int,
+        val boxNorm: FloatArray,
+        val frameW: Int,
+        val frameH: Int,
+        val src: String,
+    )
 
     /**
      * ONE live frame. Same stages as the one-shot (same SwapMath — the
@@ -321,7 +329,12 @@ object SwapTest {
                 if (stored != null && stored.size == SwapMath.EMBED_DIM) {
                     SwapMath.project(stored, emap, latent)
                     SwapMath.l2norm(latent)
-                    Timber.i("SWAP_LIVE_SRC=identity")
+                    // r63: fingerprint so the dump PROVES which embedding fed
+                    // each frame (identity fp must differ from the self path).
+                    Timber.i(
+                        "SWAP_LIVE_SRC=identity fp=%.4f",
+                        latent[0] + 0.5f * latent[1] + 0.25f * latent[2],
+                    )
                 } else {
                     val aff112 = FaceAlign.estimate(src, SwapMath.ARC_SIZE)
                     if (aff112 == null) {
@@ -374,7 +387,15 @@ object SwapTest {
                 snap.box[2] / snap.lb.uprightW.coerceAtLeast(1),
                 snap.box[3] / snap.lb.uprightH.coerceAtLeast(1),
             )
-            return SwapFrameOut(jpg, SwapMath.SWAP_SIZE, SwapMath.SWAP_SIZE, boxNorm)
+            return SwapFrameOut(
+                jpg,
+                SwapMath.SWAP_SIZE,
+                SwapMath.SWAP_SIZE,
+                boxNorm,
+                snap.lb.uprightW,
+                snap.lb.uprightH,
+                if (stored != null) "identity" else "self",
+            )
         } catch (t: Throwable) {
             Timber.i("SWAP_LIVE=fail:%s", t.message ?: t.javaClass.simpleName)
             return null

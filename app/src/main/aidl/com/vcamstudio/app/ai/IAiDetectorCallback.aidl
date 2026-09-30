@@ -14,5 +14,7 @@ oneway interface IAiDetectorCallback {
     // r61 ADDITIVE (live swap): the swapped 128x128 crop as JPEG bytes +
     // its normalized box in upright-frame coordinates. Small payload
     // (tens of KB), oneway like the rest. Drives the preview overlay.
-    void onSwapFrame(in byte[] jpeg, int w, int h, in float[] boxNorm);
+    // r63: + frameW/frameH (upright frame dims) so the overlay can place
+    // the crop by ITS OWN box even when the SCRFD box is momentarily gone.
+    void onSwapFrame(in byte[] jpeg, int w, int h, in float[] boxNorm, int frameW, int frameH);
 }

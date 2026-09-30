@@ -67,7 +67,13 @@ fun FaceDebugOverlay(
         }
     }
 
-    if (box == null || box.frameWidth <= 0 || box.frameHeight <= 0) return
+    // r63: the swap image carries its OWN box, so it stays put even while
+    // the SCRFD box blinks (SCRFD ~1 fps while live swap shares threads).
+    val swapBox = swap?.let {
+        FaceBox(it.boxNorm[0], it.boxNorm[1], it.boxNorm[2], it.boxNorm[3], 1f, 0L, it.frameW, it.frameH)
+    }
+    val effBox = box ?: swapBox
+    if (effBox == null || effBox.frameWidth <= 0 || effBox.frameHeight <= 0) return
     Canvas(modifier.fillMaxSize()) {
         val viewW = size.width
         val viewH = size.height
@@ -75,7 +81,7 @@ fun FaceDebugOverlay(
         val rect: androidx.compose.ui.geometry.Rect = if (rawMode) {
             // RAW: the upright frame IS the stage content (PreviewView
             // FILL_CENTER) — fill-crop frame -> view.
-            mapNormalizedFillCrop(box, box.frameWidth.toFloat(), box.frameHeight.toFloat(), 0f, 0f, viewW, viewH)
+            mapNormalizedFillCrop(effBox, effBox.frameWidth.toFloat(), effBox.frameHeight.toFloat(), 0f, 0f, viewW, viewH)
         } else {
             // GL: frame -> camera layer quad -> scene px -> view.
             val cam = scene?.layers?.filterIsInstance<LayerDefinition.Camera>()?.firstOrNull() ?: return@Canvas
@@ -87,7 +93,7 @@ fun FaceDebugOverlay(
             val layerW = t.width * sceneW
             val layerH = t.height * sceneH
             val inLayer = mapNormalizedFillCrop(
-                box, box.frameWidth.toFloat(), box.frameHeight.toFloat(),
+                effBox, effBox.frameWidth.toFloat(), effBox.frameHeight.toFloat(),
                 layerX - layerW / 2f, layerY - layerH / 2f, layerW, layerH,
             )
             // scene px -> view (engine fill-crops the scene into the stage)
@@ -107,13 +113,15 @@ fun FaceDebugOverlay(
         val strokePx = 3.dp.toPx()
         val radiusPx = 8.dp.toPx()
         val textPx = 14.dp.toPx()
-        drawRoundRect(
-            color = SCRFD_CYAN,
-            topLeft = Offset(rect.left, rect.top),
-            size = Size(rect.width, rect.height),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(radiusPx, radiusPx),
-            style = Stroke(width = strokePx),
-        )
+        if (box != null) {
+            drawRoundRect(
+                color = SCRFD_CYAN,
+                topLeft = Offset(rect.left, rect.top),
+                size = Size(rect.width, rect.height),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(radiusPx, radiusPx),
+                style = Stroke(width = strokePx),
+            )
+        }
         // r61: live swap — the swapped 128 crop drawn INTO the detected box
         // rect (same geometry the cyan box uses). The crop corresponds to
         // the sensor frame; the front-camera preview is mirrored, so flip
@@ -131,19 +139,21 @@ fun FaceDebugOverlay(
                 )
             }
         }
-        drawIntoCanvas { canvas ->
-            val paint = android.graphics.Paint().apply {
-                color = android.graphics.Color.rgb(0x22, 0xD3, 0xEE)
-                textSize = textPx
-                isAntiAlias = true
-                setShadowLayer(2.dp.toPx(), 0f, 0f, android.graphics.Color.BLACK)
+        if (box != null) {
+            drawIntoCanvas { canvas ->
+                val paint = android.graphics.Paint().apply {
+                    color = android.graphics.Color.rgb(0x22, 0xD3, 0xEE)
+                    textSize = textPx
+                    isAntiAlias = true
+                    setShadowLayer(2.dp.toPx(), 0f, 0f, android.graphics.Color.BLACK)
+                }
+                canvas.nativeCanvas.drawText(
+                    "%.0f%%".format(box.score * 100),
+                    rect.left,
+                    (rect.top - 4.dp.toPx()).coerceAtLeast(textPx),
+                    paint,
+                )
             }
-            canvas.nativeCanvas.drawText(
-                "%.0f%%".format(box.score * 100),
-                rect.left,
-                (rect.top - 4.dp.toPx()).coerceAtLeast(textPx),
-                paint,
-            )
         }
     }
 }
