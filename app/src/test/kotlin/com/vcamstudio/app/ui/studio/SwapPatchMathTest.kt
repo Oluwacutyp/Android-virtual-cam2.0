@@ -16,7 +16,7 @@ import org.junit.Test
  *   y1px  = 0.628*1280 = 803.84         y2px = 1280
  *   cx = 441.6/720 = 0.6133333          cy = 1041.92/1280 = 0.814
  *   boxW = 420.48  boxH = 476.16  size = 476.16*1.25 = 595.2
- *   wfrac = 595.2/720 = 0.8266667
+ *   wfrac = 595.2/720 = 0.8266667   hfrac = 595.2/1280 = 0.465
  *   mirrored box x: [1-0.804, 1-0.366] = [0.196, 0.634]
  *     -> x1px = 68.16  x2px = 488.64  cx = 278.4/720 = 0.3866667
  */
@@ -36,15 +36,16 @@ class SwapPatchMathTest {
         val p = fullCam()!!
         assertEquals(0.6133333f, p.centerX, d)
         assertEquals(0.814f, p.centerY, d)
+        // Fractions are PER-AXIS: a 595.2 px square in 720x1280 is
+        // 595.2/720 = 0.8266667 wide and 595.2/1280 = 0.465 tall.
         assertEquals(0.8266667f, p.width, d)
-        assertEquals(0.8266667f, p.height, d)
-        assertEquals(false, p.mirrorX)
+        assertEquals(0.465f, p.height, d)
     }
 
     @Test
-    fun `patch is square regardless of box aspect`() {
+    fun `patch is square in PIXELS regardless of box aspect`() {
         val p = fullCam()!!
-        assertEquals(p.width, p.height, 1e-5f)
+        assertEquals(p.width * 720f, p.height * 1280f, 1e-2f)
     }
 
     @Test
@@ -57,6 +58,7 @@ class SwapPatchMathTest {
         assertEquals(0.3866667f, p.centerX, d)
         assertEquals(0.814f, p.centerY, d)
         assertEquals(0.8266667f, p.width, d)
+        assertEquals(0.465f, p.height, d)
         assertEquals(true, p.mirrorX)
     }
 
