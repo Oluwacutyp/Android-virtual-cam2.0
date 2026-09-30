@@ -320,7 +320,7 @@ object AiProcMonitor {
     )
 
     private val _swapFrame = MutableStateFlow<SwapFrame?>(null)
-    val swapFrame: StateFlow<SwapFrame?> = _swapFrame.asStateFlow()
+    val swapFrame: StateFlow<SwapFrame?> = _swapFrame
 
     fun noteSwapFrame(jpeg: ByteArray, w: Int, h: Int, boxNorm: FloatArray) {
         _swapFrame.value = SwapFrame(jpeg, w, h, boxNorm, System.currentTimeMillis())

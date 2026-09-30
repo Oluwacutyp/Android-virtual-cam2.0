@@ -653,11 +653,12 @@ class StudioViewModel @Inject constructor(
             // bitmap is intentionally NOT recycled (the overlay canvas may
             // still hold it for a frame); 64 KB per 3 s is negligible.
             com.vcamstudio.app.ai.AiProcMonitor.swapFrame.collect { f ->
+                val fr = f ?: return@collect
                 runCatching {
                     val bmp = android.graphics.BitmapFactory.decodeByteArray(
-                        f.jpeg, 0, f.jpeg.size,
+                        fr.jpeg, 0, fr.jpeg.size,
                     ) ?: return@collect
-                    _swapOverlay.value = SwapOverlay(bmp, f.boxNorm, overlayMirrored)
+                    _swapOverlay.value = SwapOverlay(bmp, fr.boxNorm, overlayMirrored)
                 }.onFailure { t -> Timber.e(t, "SWAP_OVERLAY_FAIL") }
             }
         }
