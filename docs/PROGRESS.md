@@ -3261,3 +3261,39 @@ expect SCRFD fps dip while swap runs, recovers on toggle-off).
  (swap verdict), then flip swap_live on with a face in frame: the swapped
  crop should appear INSIDE the cyan box ~3 s per frame. SCRFD fps dips
  while live swap runs (shared threads) — expected, recovers on toggle-off.
+
+### Round 62 — the trace paid off: stage-4 crash NAMED and fixed + the missing product piece: SOURCE FACE
+
+DUMP VERDICT (owner, two sessions): everything healthy — models real
+(file= 174383860 / 277680829 / 16923827), AI_NO_INFER=none (r60.1
+VERIFIED), Phase-1 fps=58.8 HEALTHY recoveries=0, SCRFD RUNNING with
+faces at score 0.85+. And the r60-P3 durable evidence caught its first
+real bug: SWAP_STAGE=stage=4_arcface_infer result=fail +
+SWAP_TRACE=ClassCastException: java.util.Optional cannot be cast to
+ai.onnxruntime.OnnxTensor at SwapTest.runInner(SwapTest.kt:178).
+ROOT CAUSE (mine, r58): ORT Java Result.get(String) returns
+Optional<OnnxValue>; all THREE output extractions ("683" x2, inswapper
+"output") cast it directly. The pipeline could never pass stage 4.
+FIX: Result.get(0) (index accessor returns the value; both models
+single-output, contracts verified r58).
+THE PRODUCT GAP (owner, rightly furious: "what do I upload, where?"):
+the pipeline was validated in SELF-SWAP mode (own face -> own face =
+visually nothing changes, BY DESIGN) and there was NO way to choose the
+identity to swap IN. r62 adds it:
+- AIDL setSourceFace(jpeg) (empty=clear) -> binder thread decodes,
+  squeezes to 640x640, SCRFD detectTop (same (x-127.5)/128 CHW), kps
+  mapped back to photo px, FaceAlign 112 + ArcFace embed (w600k via
+  acquireArc: reuse live cache or temp session), L2, stored in
+  SwapTest.sourceEmbedding. Verdict -> ai_source_face.txt -> dump
+  SOURCE_FACE=ok score= / fail:decode|no_detector|no_face|embed.
+- liveFrame: stored identity -> project -> latent (VISIBLE swap); no
+  identity -> self-swap (unchanged fallback). One-shot stays self-test.
+- UI: Models sheet "Swap face: pick photo…" (GetContent image/*) +
+  status line + "Clear source face". VM downscales to <=640 JPEG q88
+  (small binder payload).
+
+**r62 ledger**: 5e32968 (RED: smart-cast into runCatching lambda)
+-> 36cb232 = HEAD, GREEN run 36707764530 (7m27s), artifact
+11092449880 (21,460,023 B). OWNER FLOW: pick photo with one clear face -> "Face: ok
+score=0.xx" -> Live swap on -> the picked identity appears on your head
+inside the cyan box (~3 s refresh, first frame ~5 s).
