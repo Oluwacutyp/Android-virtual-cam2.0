@@ -3392,3 +3392,25 @@ of r64 before V2. Findings, all from code-only review:
 NEXT: owner device test r64.1 (fresh install, re-pick photo, live swap ON).
 V2 (speed) waits for that verdict so pipeline changes don't stack on an
 unproven base.
+
+### Round 65 — the patch melts into the feed: alpha feather + decor off (owner r64.1 verdict in)
+Owner tested r64.1 (screenshot + VCAM-DIAG v1): swap confirmed INSIDE the
+GL scene — FBO readback pixels flip camera-brown (112,72,53) to skin
+(173,134,132) exactly when the patch appears -> preview AND recording/
+transport outputs carry the swap. r64.1 mirror placement verified visually
+(patch sits on the mirrored face). Remaining complaints: hard rectangle
+edges around the patch + cyan SCRFD box breaking the look + CPU pace.
+r65:
+1. Shaders.textureFxFragment: sampler2D programs now respect texture
+   alpha (a *= t.a; premultiplied upload keeps blend exact). OES camera
+   programs byte-identical to r64.
+2. featherSwapBitmap: elliptical DST_IN feather per swap frame — opaque
+   to 80% of the half-diagonal (chin-safe), fading to 0 at the edge.
+3. swapPatchActive flow; FaceDebugOverlay hides cyan stroke + % while
+   live swap is on (decor returns on toggle-off).
+**r65 ledger**: 52aa043 = HEAD, GREEN run 36863554510, artifact
+vcam-studio-debug-apk (id fetched same round), probe-wedge ok.
+NEXT: owner device test r65 (fresh install warning). Then V2 = GPU
+experiment, CAREFULLY: XNNPACK stays CLOSED (native abort confirmed on
+this Adreno 730); candidate = NNAPI EP probe in :ai only, DEFAULT OFF,
+one-shot probe + auto-fallback to CPU; no main-process risk.
