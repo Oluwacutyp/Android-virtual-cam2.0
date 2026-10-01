@@ -3409,7 +3409,7 @@ r65:
 3. swapPatchActive flow; FaceDebugOverlay hides cyan stroke + % while
    live swap is on (decor returns on toggle-off).
 **r65 ledger**: 52aa043 = HEAD, GREEN run 36863554510, artifact
-vcam-studio-debug-apk (id fetched same round), probe-wedge ok.
+vcam-studio-debug-apk 11163277936 (21,468,901 B), probe-wedge 11162882550.
 NEXT: owner device test r65 (fresh install warning). Then V2 = GPU
 experiment, CAREFULLY: XNNPACK stays CLOSED (native abort confirmed on
 this Adreno 730); candidate = NNAPI EP probe in :ai only, DEFAULT OFF,
