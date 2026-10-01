@@ -113,12 +113,27 @@ uniform float uCornerPx;
             append(ROUNDED_ALPHA)
             append(APPLY_GRADE)
             append("void main() {\n")
-            append("    vec3 c = texture(uTex, vUV).rgb;\n")
+            // r65: bitmap sources (sampler2D) carry REAL alpha now — the
+            // feathered live-swap patch (and rasterized text). GLUtils
+            // uploads premultiplied, so multiplying rgb by the texture
+            // alpha keeps the premultiplied-over blend exact. The camera
+            // OES path is byte-identical to r64.
+            if (samplerType == "samplerExternalOES") {
+                append("    vec3 c = texture(uTex, vUV).rgb;\n")
+            } else {
+                append("    vec4 t = texture(uTex, vUV);\n")
+                append("    vec3 c = t.rgb;\n")
+                append("    float ta = t.a;\n")
+            }
             append(sharpen)
             append("    c = applyGrade(c);\n")
             if (withLut) append("    if (uLutMix > 0.001) c = mix(c, texture(uLut3d, c).rgb, uLutMix);\n")
             append(VIGNETTE)
-            append("    float a = uOpacity * roundedAlpha(vLocal, uQuadSizePx, uCornerPx);\n")
+            if (samplerType == "samplerExternalOES") {
+                append("    float a = uOpacity * roundedAlpha(vLocal, uQuadSizePx, uCornerPx);\n")
+            } else {
+                append("    float a = uOpacity * roundedAlpha(vLocal, uQuadSizePx, uCornerPx) * ta;\n")
+            }
             append("    fragColor = vec4(c * a, a);\n")
             append("}\n")
         }

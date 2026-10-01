@@ -42,6 +42,7 @@ fun FaceDebugOverlay(
     sceneRes: com.vcamstudio.app.settings.SceneResolution,
     modifier: Modifier = Modifier,
     swap: StudioViewModel.SwapOverlay? = null,
+    swapLive: Boolean = false,
 ) {
     val hasCamLayer = scene?.layers?.any { it is LayerDefinition.Camera } == true
     if (!hasCamLayer) return
@@ -113,7 +114,7 @@ fun FaceDebugOverlay(
         val strokePx = 3.dp.toPx()
         val radiusPx = 8.dp.toPx()
         val textPx = 14.dp.toPx()
-        if (box != null) {
+        if (box != null && !swapLive) {
             drawRoundRect(
                 color = SCRFD_CYAN,
                 topLeft = Offset(rect.left, rect.top),
@@ -139,7 +140,7 @@ fun FaceDebugOverlay(
                 )
             }
         }
-        if (box != null) {
+        if (box != null && !swapLive) {
             drawIntoCanvas { canvas ->
                 val paint = android.graphics.Paint().apply {
                     color = android.graphics.Color.rgb(0x22, 0xD3, 0xEE)

@@ -658,15 +658,21 @@ class StudioViewModel @Inject constructor(
             com.vcamstudio.app.ai.AiProcMonitor.swapFrame.collect { f ->
                 val fr = f ?: return@collect
                 runCatching {
-                    val bmp = android.graphics.BitmapFactory.decodeByteArray(
+                    val decoded = android.graphics.BitmapFactory.decodeByteArray(
                         fr.jpeg, 0, fr.jpeg.size,
                     ) ?: return@collect
+                    // r65: elliptical feather (classic deepfake blend) —
+                    // alpha 1.0 in the core, -> 0 across the outer band, so
+                    // the patch melts into the feed instead of pasting a
+                    // rectangle. Pairs with the r65 sampler2D shader alpha.
+                    val bmp = featherSwapBitmap(decoded)
                     val cam = scenes.value.firstOrNull { it.id == activeSceneId.value }
                         ?.layers?.filterIsInstance<LayerDefinition.Camera>()
                         ?.firstOrNull()?.transform ?: return@collect
                     val t = swapPatchTransform(fr.boxNorm, fr.frameW, fr.frameH, cam)
                         ?: return@collect
                     swapPatch = SwapPatch(bmp, t)
+                    _swapPatchActive.value = true
                     commit()
                 }.onFailure { t2 -> Timber.e(t2, "SWAP_SCENE_FAIL") }
             }
@@ -678,6 +684,7 @@ class StudioViewModel @Inject constructor(
                     swapPatch != null
                 ) {
                     swapPatch = null
+                    _swapPatchActive.value = false
                     commit()
                 }
             }
@@ -1267,6 +1274,10 @@ class StudioViewModel @Inject constructor(
     private val _swapOverlay = MutableStateFlow<SwapOverlay?>(null)
     val swapOverlay: StateFlow<SwapOverlay?> = _swapOverlay.asStateFlow()
 
+    /** r65: true while the swap patch rides the scene (hides SCRFD decor). */
+    private val _swapPatchActive = MutableStateFlow(false)
+    val swapPatchActive: StateFlow<Boolean> = _swapPatchActive.asStateFlow()
+
     // r64: the swap patch as an engine layer. Composed in commit(); never
     // part of the user's scene state (not editable, not persisted, removed
     // on toggle-off).
@@ -1278,6 +1289,38 @@ class StudioViewModel @Inject constructor(
     @Volatile private var swapPatch: SwapPatch? = null
     private val swapSourceId = newId("vcam-swap-src")
     private val swapLayerId = newId("vcam-swap-layer")
+
+    /**
+     * r65: elliptical alpha feather for the swap crop. Opaque to 80% of the
+     * half-diagonal, fading to 0 across the outer band — the chin (which
+     * sits at ~85-90% of the aligned crop) stays solid while the rectangle
+     * seam disappears. Source bitmap NOT recycled (GL may still reference
+     * the previous upload); ~64 KB per swap frame.
+     */
+    private fun featherSwapBitmap(src: android.graphics.Bitmap): android.graphics.Bitmap {
+        val w = src.width
+        val h = src.height
+        val out = src.copy(android.graphics.Bitmap.Config.ARGB_8888, true) ?: return src
+        val c = android.graphics.Canvas(out)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            shader = android.graphics.RadialGradient(
+                w / 2f, h / 2f, w.coerceAtMost(h) * 0.5f,
+                intArrayOf(
+                    android.graphics.Color.WHITE,
+                    android.graphics.Color.WHITE,
+                    android.graphics.Color.TRANSPARENT,
+                ),
+                floatArrayOf(0f, 0.80f, 1f),
+                android.graphics.Shader.TileMode.CLAMP,
+            )
+            xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN)
+        }
+        c.save()
+        c.scale(1f, h.toFloat() / w.toFloat(), w / 2f, h / 2f)
+        c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
+        c.restore()
+        return out
+    }
 
     /**
      * r64: map the swap frame's normalized box (upright camera frame) into
